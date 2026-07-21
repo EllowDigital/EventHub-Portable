@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Check-In Terminal | Tent Decor Expo 2026</title>
+    <style>
+        /* Strict Black, White, and Yellow Palette */
+        :root {
+            --color-black: #000000;
+            --color-white: #FFFFFF;
+            --color-yellow: #FFD600;
+            --color-error: #FF3333;
+            --border-faint: rgba(255, 255, 255, 0.15);
+            --bg-glass: rgba(255, 255, 255, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Inter', -apple-system, sans-serif;
+        }
+
+        body {
+            background-color: var(--color-black);
+            color: var(--color-white);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Top Header */
+        header {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            padding: 1rem 2rem;
+            background-color: var(--color-black);
+            border-bottom: 1px solid var(--border-faint);
+        }
+
+        .header-section { display: flex; align-items: center; gap: 0.75rem; }
+        .header-center { justify-content: center; font-weight: 800; color: var(--color-yellow); letter-spacing: 2px; }
+        .header-right { justify-content: flex-end; }
+
+        /* Status & Badges */
+        .badge {
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border-faint);
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--color-yellow);
+            box-shadow: 0 0 8px var(--color-yellow);
+        }
+        .status-dot.offline { background-color: transparent; border: 2px solid var(--color-white); box-shadow: none; }
+
+        /* Layout Grid */
+        main {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 1px;
+            background-color: var(--border-faint); /* Creates 1px borders between columns */
+        }
+
+        .panel {
+            background-color: var(--color-black);
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        /* Scanner Area */
+        .scanner-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .scanner-frame {
+            width: 320px;
+            height: 320px;
+            position: relative;
+            margin-bottom: 2rem;
+            background-color: #111;
+            overflow: hidden;
+            border: 2px solid var(--border-faint);
+        }
+
+        /* The Camera Video Stream */
+        #camera-stream {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+
+        /* Target Corners */
+        .scanner-frame::before, .scanner-frame::after,
+        .scanner-target::before, .scanner-target::after {
+            content: '';
+            position: absolute;
+            width: 40px; height: 40px;
+            border: 4px solid var(--color-yellow);
+            z-index: 10;
+        }
+
+        .scanner-frame::before { top: 0; left: 0; border-right: none; border-bottom: none; }
+        .scanner-frame::after { top: 0; right: 0; border-left: none; border-bottom: none; }
+        .scanner-target::before { bottom: 0; left: 0; border-right: none; border-top: none; }
+        .scanner-target::after { bottom: 0; right: 0; border-left: none; border-top: none; }
+
+        .scanner-target {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+        }
+
+        /* Scanning Laser Animation */
+        .laser {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 2px;
+            background: var(--color-yellow);
+            box-shadow: 0 0 15px var(--color-yellow);
+            animation: scan 2s linear infinite;
+            z-index: 11;
+        }
+
+        @keyframes scan {
+            0% { top: 0; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+
+        /* Forms & Buttons */
+        .manual-entry {
+            width: 100%;
+            max-width: 400px;
+            margin-top: 2rem;
+            border-top: 1px solid var(--border-faint);
+            padding-top: 2rem;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        input {
+            flex: 1;
+            background: transparent;
+            border: 2px solid var(--border-faint);
+            color: var(--color-white);
+            padding: 1rem;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        input:focus { border-color: var(--color-yellow); }
+
+        button {
+            background: transparent;
+            color: var(--color-white);
+            border: 2px solid var(--color-white);
+            padding: 1rem 2rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        button:hover { background: var(--color-yellow); color: var(--color-black); border-color: var(--color-yellow); }
+
+        /* Sidebar - Recent Check-ins */
+        .sidebar-title {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--color-white);
+            letter-spacing: 1px;
+            margin-bottom: 1.5rem;
+            text-transform: uppercase;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .recent-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .recent-item {
+            padding: 1rem;
+            border: 1px solid var(--border-faint);
+            background: var(--bg-glass);
+            animation: slideIn 0.3s ease-out forwards;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(20px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .item-name { font-weight: 700; color: var(--color-yellow); margin-bottom: 0.25rem; }
+        .item-id { font-size: 0.75rem; color: #888; }
+
+        /* Success Overlay */
+        .success-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 50;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+        .success-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+        .success-icon {
+            font-size: 4rem;
+            color: var(--color-yellow);
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 900px) {
+            main { grid-template-columns: 1fr; grid-template-rows: auto 300px; }
+            header { grid-template-columns: 1fr 1fr; gap: 1rem; }
+            .header-center { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-section">
+            <div class="badge">
+                <div class="status-dot" id="network-dot"></div>
+                <span id="network-text">Online</span>
+            </div>
+            <div class="badge" id="device-name">TERMINAL-1</div>
+        </div>
+        
+        <div class="header-center">TENT DECOR EXPO 2026</div>
+        
+        <div class="header-section header-right">
+            <div class="badge" style="border-color: var(--color-yellow); color: var(--color-yellow);">
+                TOTAL SCANNED: <span id="scan-count" style="margin-left: 5px;">0</span>
+            </div>
+            <a href="/" style="color: var(--color-white); text-decoration: none; font-size: 0.8rem; font-weight: bold;">EXIT</a>
+        </div>
+    </header>
+
+    <main>
+        <div class="panel">
+            <div class="scanner-container">
+                <div style="margin-bottom: 1rem; text-transform: uppercase; font-weight: bold; letter-spacing: 2px;">Align QR Code</div>
+                
+                <div class="scanner-frame" id="scanner-frame">
+                    <video id="camera-stream" autoplay playsinline></video>
+                    <div class="scanner-target"><div class="laser" id="laser"></div></div>
+                    
+                    <div class="success-overlay" id="success-overlay">
+                        <div class="success-icon">✓</div>
+                        <h2 id="success-name">ACCEPTED</h2>
+                        <p style="color: #888; font-size: 0.8rem; margin-top: 10px;">Resuming scanner...</p>
+                    </div>
+                </div>
+
+                <div class="manual-entry">
+                    <div style="margin-bottom: 1rem; font-size: 0.8rem; color: #888; text-transform: uppercase;">Manual Override (If QR Fails)</div>
+                    <form id="manual-form" class="input-group">
+                        <input type="text" id="manual-input" placeholder="Attendee ID or Phone" autocomplete="off" required>
+                        <button type="submit">CHECK-IN</button>
+                    </form>
+                </div>
+                
+                <button onclick="processCheckIn('QR-8892', 'John Doe')" style="margin-top: 20px; font-size: 0.7rem; padding: 0.5rem; border-color: #333;">[TEST: SIMULATE QR SCAN]</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <div class="sidebar-title">
+                Recent Scans
+                <span style="color: var(--color-yellow);">Live</span>
+            </div>
+            <div class="recent-list" id="recent-list">
+                </div>
+        </div>
+    </main>
+
+    <script>
+        // 1. Header Logic (Network & Device)
+        function updateNetworkStatus() {
+            const isOnline = navigator.onLine;
+            document.getElementById('network-text').textContent = isOnline ? 'ONLINE' : 'OFFLINE';
+            document.getElementById('network-dot').className = isOnline ? 'status-dot' : 'status-dot offline';
+        }
+        window.addEventListener('online', updateNetworkStatus);
+        window.addEventListener('offline', updateNetworkStatus);
+        updateNetworkStatus();
+
+        // Generate a pseudo-device name based on platform
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        document.getElementById('device-name').textContent = isMobile ? 'MOBILE-SCANNER' : 'DESKTOP-TERM-A';
+
+        // 2. Camera Initialization Logic
+        async function startCamera() {
+            const video = document.getElementById('camera-stream');
+            try {
+                // Request back camera specifically if available (ideal for mobile)
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                video.srcObject = stream;
+            } catch (err) {
+                console.error("Camera access denied or unavailable", err);
+                // Note: In a real app, show a UI warning here.
+            }
+        }
+        startCamera();
+
+        // 3. Check-In Processing Logic
+        let scanCount = 0;
+        const recentList = document.getElementById('recent-list');
+        const successOverlay = document.getElementById('success-overlay');
+        const laser = document.getElementById('laser');
+        let isScanning = true;
+
+        function processCheckIn(id, name) {
+            if (!isScanning) return;
+            isScanning = false; // Pause scanner
+            
+            // 3a. Update UI for Success
+            document.getElementById('success-name').textContent = name || 'VERIFIED';
+            successOverlay.classList.add('active');
+            laser.style.display = 'none'; // stop laser
+
+            // 3b. Update Counter
+            scanCount++;
+            document.getElementById('scan-count').textContent = scanCount;
+
+            // 3c. Add to Recent List
+            const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const itemHTML = `
+                <div class="recent-item">
+                    <div class="item-name">${name || 'Manual Entry'}</div>
+                    <div class="item-id">ID: ${id} • ${time}</div>
+                </div>
+            `;
+            recentList.insertAdjacentHTML('afterbegin', itemHTML);
+
+            // Keep list max 10 items
+            if (recentList.children.length > 10) {
+                recentList.removeChild(recentList.lastChild);
+            }
+
+            // 3d. Auto-reopen scanner after 1.5 seconds
+            setTimeout(() => {
+                successOverlay.classList.remove('active');
+                laser.style.display = 'block';
+                document.getElementById('manual-input').value = ''; // clear input
+                isScanning = true;
+            }, 1500);
+        }
+
+        // 4. Manual Form Submit
+        document.getElementById('manual-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const inputVal = document.getElementById('manual-input').value;
+            if (inputVal) {
+                processCheckIn(inputVal, 'Manual Attendee');
+            }
+        });
+
+        /* Note for Flask Integration: 
+        To read actual QR codes, integrate a library like 'html5-qrcode' 
+        in this script block. You will capture the QR string, 
+        send an AJAX/fetch POST request to your Flask backend, 
+        and call processCheckIn() upon a 200 OK response. 
+        */
+    </script>
+</body>
+</html>
