@@ -1,821 +1,598 @@
-"""
-sync_manager.py — EventHub Portable (TDE UP 2026)
-═══════════════════════════════════════════════════════════════════════════
-
-STEP 2 of 3 in the EventHub Portable roadmap:
-    -> Step 1: schema.py         (DONE — DatabaseManager, DDL)
-    -> Step 2: sync_manager.py   (THIS FILE — bridge to Supabase/Sheets)
-    -> Step 3: server_hub.py
-
-WHY THIS FILE IS "ON-DEMAND ONLY":
-    There is no background thread, no `while True: sleep(...)` poll loop,
-    and no scheduler in this file. The cloud is unreliable/absent for most
-    of a 3-day offline event, so touching it is treated as a deliberate,
-    user-initiated action — a button in the (future) UI calls
-    `SyncManager.trigger_full_sync()` exactly once per click. Everything
-    else in this module exists to make that single call safe, observable,
-    and non-blocking to the rest of the kiosk system.
-
-STATE MACHINE:
-    IDLE     -> nothing running, safe to trigger a sync.
-    SYNCING  -> a trigger_full_sync() call is currently in progress.
-    ERROR    -> the most recent sync attempt failed. This state is STICKY:
-                it persists until the next trigger_full_sync() call is
-                made (which immediately flips to SYNCING), so a status
-                endpoint in server_hub.py can show "last sync failed" to
-                the person running the check-in desk instead of the error
-                disappearing the instant the function returns.
-
-SYNC SEQUENCE (per trigger_full_sync() call):
-    1. Local Sync      : SQLite (local_modified=1) -> MySQL, then MySQL -> SQLite mirror.
-    2. Cloud Push      : MySQL (needs_cloud_sync=1) -> Supabase.
-    3. Cloud Pull      : Supabase (new online registrations) -> MySQL -> SQLite.
-    4. Sheets Sync     : MySQL (needs_sheet_sync=1) -> Google Sheets webhook / edge function.
-
-Every external call (MySQL, Supabase, Sheets webhook) is wrapped so that a
-dead connection is logged and skipped, never raised past this module in a
-way that could take down the Flask kiosk server.
-"""
-
 import os
 import json
 import logging
-import sqlite3
 import threading
-import uuid
 from datetime import datetime, timezone
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from supabase import create_client, Client
+from sqlalchemy.orm import sessionmaker
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from ttkbootstrap.dialogs import Messagebox
 
-from app.schema import get_manager
-
-# ─────────────────────────────────────────────────────────────────────────
-# Optional dependencies — this module must import cleanly and run in
-# SQLite-only / no-internet mode even if these packages aren't installed.
-# ─────────────────────────────────────────────────────────────────────────
+# Import models and DB initialization from your schema
 try:
-    from supabase import create_client, Client
-    SUPABASE_SDK_AVAILABLE = True
-except ImportError:  # pragma: no cover - environment dependent
-    create_client = None   # type: ignore
-    Client = None           # type: ignore
-    SUPABASE_SDK_AVAILABLE = False
+    from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
+except ModuleNotFoundError:
+    from schema import Attendee, OfflineKioskAttendee, get_database_sessions
 
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    requests = None  # type: ignore
-    REQUESTS_AVAILABLE = False
+# ==============================================================================
+# PATHS & CONFIG
+# ==============================================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_DIR = os.path.join(BASE_DIR, 'config')
+SECRETS_PATH = os.path.join(CONFIG_DIR, 'secrets.json')
+SCHEMA_PATH = os.path.join(CONFIG_DIR, 'schema.json')
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
 
-try:
-    from mysql.connector.errors import Error as MySQLError
-except ImportError:  # pragma: no cover
-    MySQLError = Exception  # type: ignore
+os.makedirs(CONFIG_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
 
+# ==============================================================================
+# CUSTOM LOGGING HANDLER FOR TKINTER
+# ==============================================================================
+class TkinterLogHandler(logging.Handler):
+    """Streams logs directly into the GUI Treeview safely."""
+    def __init__(self, treeview):
+        super().__init__()
+        self.treeview = treeview
 
-# ═══════════════════════════════════════════════════════════════════
-#  LOGGING
-# ═══════════════════════════════════════════════════════════════════
-logger = logging.getLogger("eventhub.sync_manager")
-if not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    ))
-    logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
+    def emit(self, record):
+        msg = self.format(record)
+        time_str = datetime.fromtimestamp(record.created).strftime('%H:%M:%S')
+        
+        tag = 'info'
+        if record.levelno >= logging.ERROR: tag = 'error'
+        elif record.levelno >= logging.WARNING: tag = 'warning'
+        
+        self.treeview.after(0, self._insert_log, time_str, record.levelname, msg, tag)
+        
+    def _insert_log(self, time_str, level, msg, tag):
+        self.treeview.insert('', END, values=(time_str, level, msg), tags=(tag,))
+        self.treeview.yview_moveto(1)
 
+logging.basicConfig(
+    filename=os.path.join(LOG_DIR, 'sync.log'),
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
 
-# ═══════════════════════════════════════════════════════════════════
-#  CONSTANTS — shared column list for attendees / offline_kiosk_attendees
-# ═══════════════════════════════════════════════════════════════════
-ATTENDEE_COLUMNS: List[str] = [
-    "id", "attendee_id", "full_name", "mobile", "email", "gender",
-    "attendee_type", "business_name", "business_category", "other_category",
-    "address", "city", "state", "pincode", "attendance_days", "photo_url",
-    "created_at", "updated_at", "checkin_history", "needs_cloud_sync",
-    "needs_sheet_sync", "local_modified", "device_name",
-]
+def load_supabase_client() -> Client:
+    """Loads credentials and creates a fresh client ONLY when called."""
+    if not os.path.exists(SECRETS_PATH):
+        raise FileNotFoundError("Supabase credentials missing.")
+    
+    with open(SECRETS_PATH, 'r') as f:
+        secrets = json.load(f)
+    
+    url = secrets.get("SUPABASE_URL")
+    key = secrets.get("SUPABASE_KEY")
+    
+    if not url or not key:
+        raise ValueError("Invalid Supabase credentials")
+        
+    return create_client(url, key)
 
-# Both local tables share the same column layout (see schema.py).
-SYNC_TABLES: List[str] = ["attendees", "offline_kiosk_attendees"]
-
-# Which Supabase table each local table pushes into. Kiosk walk-in
-# registrations are assumed to land in the same online "attendees" table
-# as normal registrations once synced — adjust here if your Supabase
-# schema keeps them separate.
-CLOUD_TABLE_MAP: Dict[str, str] = {
-    "attendees": "attendees",
-    "offline_kiosk_attendees": "attendees",
-}
-
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # .../app
-DEFAULT_SECRETS_PATH = os.path.join(_BASE_DIR, "config", "secrets.json")
-
-_JSON_COLUMNS = ("attendance_days", "checkin_history")
-_INTERNAL_ONLY_COLUMNS = ("needs_cloud_sync", "needs_sheet_sync", "local_modified", "device_name")
-
-
-class SyncState(str, Enum):
-    IDLE = "IDLE"
-    SYNCING = "SYNCING"
-    ERROR = "ERROR"
-
-
+# ==============================================================================
+# CORE SYNC MANAGER CLASS
+# ==============================================================================
 class SyncManager:
-    """
-    On-demand bridge between the local databases (via schema.DatabaseManager)
-    and the cloud (Supabase + Google Sheets). Nothing in this class runs
-    unless trigger_full_sync() is called explicitly — no timers, no polling.
-    """
+    def __init__(self):
+        self.SessionMySQL = None
+        self.SessionSQLite = None
+        self.connect_local_dbs()
 
-    def __init__(self, secrets_path: Optional[str] = None) -> None:
-        self.db = get_manager()
-
-        self.state: SyncState = SyncState.IDLE
-        self.last_error: Optional[str] = None
-        self.last_sync_summary: Dict[str, Any] = {}
-
-        # Guards against a double-click firing two syncs concurrently.
-        self._run_lock = threading.Lock()
-
-        self.secrets_path = secrets_path or DEFAULT_SECRETS_PATH
-        self._secrets = self._load_secrets()
-        self.supabase_url: Optional[str] = self._secrets.get("SUPABASE_URL")
-        self.supabase_key: Optional[str] = self._secrets.get("SUPABASE_KEY")
-        self.sheets_webhook_url: Optional[str] = self._secrets.get("SHEETS_WEBHOOK_URL")
-        self.sheets_edge_function: Optional[str] = self._secrets.get(
-            "SHEETS_EDGE_FUNCTION", "sync-sheets"
-        )
-
-    # ─────────────────────────────────────────────────────────────
-    # PUBLIC STATUS HELPERS (for the future /sync/status route)
-    # ─────────────────────────────────────────────────────────────
-    def get_state(self) -> str:
-        return self.state.value
-
-    def is_busy(self) -> bool:
-        return self.state == SyncState.SYNCING
-
-    def get_last_summary(self) -> Dict[str, Any]:
-        return self.last_sync_summary
-
-    # ─────────────────────────────────────────────────────────────
-    # SECRETS LOADING — never crashes, never blocks startup
-    # ─────────────────────────────────────────────────────────────
-    def _load_secrets(self) -> Dict[str, Any]:
+    def connect_local_dbs(self):
+        """Connects ONLY to the local databases on startup. Supabase remains completely offline."""
         try:
-            with open(self.secrets_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if not isinstance(data, dict):
-                raise ValueError("secrets.json must contain a JSON object")
-            return data
-        except FileNotFoundError:
-            logger.error(
-                "Secrets file not found at %s — cloud sync will be skipped "
-                "until it's created (needs SUPABASE_URL / SUPABASE_KEY).",
-                self.secrets_path,
-            )
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error("secrets.json is malformed (%s) — cloud sync disabled.", e)
-        except OSError as e:
-            logger.error("Could not read secrets.json: %s", e)
-        return {}
-
-    # ─────────────────────────────────────────────────────────────
-    # SUPABASE CLIENT LIFECYCLE — created and torn down per sync
-    # ─────────────────────────────────────────────────────────────
-    def _get_supabase_client(self):
-        if not SUPABASE_SDK_AVAILABLE:
-            logger.error("supabase-py is not installed — skipping cloud steps this sync.")
-            return None
-        if not self.supabase_url or not self.supabase_key:
-            logger.warning(
-                "SUPABASE_URL/SUPABASE_KEY missing from secrets.json — "
-                "skipping cloud steps this sync."
-            )
-            return None
-        try:
-            return create_client(self.supabase_url, self.supabase_key)
+            sessions = get_database_sessions()
+            self.SessionMySQL = sessions.get('mysql')
+            self.SessionSQLite = sessions.get('sqlite')
+            logging.info("Local databases verified. Cloud connection is IDLE.")
         except Exception as e:
-            logger.error("Could not create Supabase client (offline / bad creds?): %s", e)
-            return None
+            logging.error(f"Local Database Connection Failed: {e}")
 
-    def _close_supabase_client(self, client) -> None:
-        """
-        Best-effort release of the underlying HTTP session(s) so memory
-        doesn't accumulate across repeated button clicks. supabase-py wraps
-        httpx clients inside postgrest-py / gotrue-py / storage3, and the
-        exact attribute path has shifted between SDK versions — every path
-        tried here is optional, and failures are swallowed on purpose.
-        """
-        if client is None:
-            return
-        for attr_path in (("postgrest", "session"), ("_postgrest", "session")):
-            obj = client
-            try:
-                for attr in attr_path:
-                    obj = getattr(obj, attr)
-                obj.close()
-            except Exception:
-                continue
-        del client
+    def _merge_checkin_history(self, local_history, cloud_history) -> dict:
+        if isinstance(local_history, str): local_history = json.loads(local_history) if local_history else {}
+        if isinstance(cloud_history, str): cloud_history = json.loads(cloud_history) if cloud_history else {}
+        if not isinstance(local_history, dict): local_history = {}
+        if not isinstance(cloud_history, dict): cloud_history = {}
+        
+        merged = cloud_history.copy()
+        merged.update(local_history)
+        return merged
 
-    # ─────────────────────────────────────────────────────────────
-    # THE MAIN ENTRY POINT — call this from the UI button handler
-    # ─────────────────────────────────────────────────────────────
-    def trigger_full_sync(self) -> Dict[str, Any]:
-        """
-        Runs the full sync sequence exactly once:
-            Local Sync -> Cloud Push -> Cloud Pull -> Sheets Sync
-        Always returns a summary dict. Never raises — any failure is
-        caught, logged, and reflected in the returned summary and in
-        self.state (ERROR), so the caller (a Flask route, in Step 3)
-        can report it to the UI without the process crashing.
-        """
-        if not self._run_lock.acquire(blocking=False):
-            logger.warning("trigger_full_sync() called while a sync is already running.")
-            return {"status": "already_running", "state": self.state.value}
-
-        self.state = SyncState.SYNCING
-        self.last_error = None
-        started_at = datetime.now(timezone.utc)
-        summary: Dict[str, Any] = {
-            "started_at": started_at.isoformat(),
-            "local_sync": {},
-            "cloud_push": {},
-            "cloud_pull": {},
-            "sheets_sync": {},
-            "success": False,
-        }
-        history_id = self._start_sync_history_record()
-        supabase_client = None
-
+    def mirror_mysql_to_sqlite(self):
+        """Lightning-fast bulk mirror to prevent SQLite locks and corruption."""
+        if not self.SessionSQLite or not self.SessionMySQL: return
+        logging.info("Starting MySQL -> SQLite mirror process...")
+        
+        mysql_session = self.SessionMySQL()
+        sqlite_session = self.SessionSQLite()
+        
         try:
-            # ── Step 1: Local Sync (SQLite <-> MySQL) ──────────────────
-            summary["local_sync"] = self._sync_local_sqlite_mysql()
+            mysql_attendees = mysql_session.query(Attendee).all()
+            
+            # Serialize for bulk insertion
+            data_dicts = []
+            for m_att in mysql_attendees:
+                row_data = {c.name: getattr(m_att, c.name) for c in m_att.__table__.columns}
+                data_dicts.append(row_data)
 
-            # Cloud steps need MySQL as the hub-of-record in the middle,
-            # per the required flow. If MySQL is down there is nothing
-            # meaningful to push/pull yet — skip cleanly and try again
-            # next click.
-            if not self.db.mysql_available:
-                reason = "MySQL hub database unavailable"
-                summary["cloud_push"] = {"skipped": True, "reason": reason}
-                summary["cloud_pull"] = {"skipped": True, "reason": reason}
-                summary["sheets_sync"] = {"skipped": True, "reason": reason}
-            else:
-                supabase_client = self._get_supabase_client()
-                if supabase_client is None:
-                    reason = "Supabase not configured or unreachable"
-                    summary["cloud_push"] = {"skipped": True, "reason": reason}
-                    summary["cloud_pull"] = {"skipped": True, "reason": reason}
-                    summary["sheets_sync"] = {"skipped": True, "reason": reason}
-                else:
-                    # ── Step 2: Cloud Push (MySQL -> Supabase) ─────────
-                    summary["cloud_push"] = self._push_pending_to_supabase(supabase_client)
-
-                    # ── Step 3: Cloud Pull (Supabase -> MySQL -> SQLite)
-                    summary["cloud_pull"] = self._pull_new_from_supabase(supabase_client)
-
-                    # ── Step 4: Google Sheets Sync ──────────────────────
-                    summary["sheets_sync"] = self._sync_google_sheets(supabase_client)
-
-            summary["success"] = True
-            self.state = SyncState.IDLE
-
+            # Flush and replace for a true 1:1 mirror
+            sqlite_session.query(Attendee).delete()
+            if data_dicts:
+                sqlite_session.bulk_insert_mappings(Attendee, data_dicts)
+                
+            sqlite_session.commit()
+            logging.info(f"Mirror complete: {len(data_dicts)} records safely backed up.")
         except Exception as e:
-            # Catches anything unexpected (including internet-down errors
-            # that slipped past an inner try/except) so the kiosk server
-            # never crashes because of a sync click.
-            logger.error("trigger_full_sync() failed: %s", e, exc_info=True)
-            self.last_error = str(e)
-            summary["success"] = False
-            summary["error"] = str(e)
-            self.state = SyncState.ERROR
-
+            sqlite_session.rollback()
+            logging.error(f"Mirror error: {e}")
         finally:
-            ended_at = datetime.now(timezone.utc)
-            summary["ended_at"] = ended_at.isoformat()
-            summary["duration_seconds"] = (ended_at - started_at).total_seconds()
-            summary["state"] = self.state.value
-            self._finish_sync_history_record(history_id, summary)
-            self.last_sync_summary = summary
-            self._close_supabase_client(supabase_client)
-            self._run_lock.release()
+            mysql_session.close()
+            sqlite_session.close()
 
-        return summary
-
-    # ─────────────────────────────────────────────────────────────
-    # STEP 1: LOCAL SYNC (SQLite <-> MySQL)
-    # ─────────────────────────────────────────────────────────────
-    def _sync_local_sqlite_mysql(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
-        for table in SYNC_TABLES:
-            push_result = self._push_local_changes_for_table(table)
-            pull_result = self._pull_hub_changes_for_table(table)
-            result[table] = {"push": push_result, "pull": pull_result}
-        return result
-
-    def _push_local_changes_for_table(self, table: str) -> Dict[str, Any]:
-        """SQLite rows with local_modified=1 -> upsert into MySQL."""
+    def push_to_cloud(self):
+        """Executes manual push. ONLY connects to Supabase for the duration of this function."""
+        logging.info("--- Starting PUSH to Cloud ---")
+        if not self.SessionMySQL:
+            logging.error("Cannot push: Local MySQL is offline.")
+            return False
+            
         try:
-            with self.db.sqlite_session() as sconn:
-                rows = sconn.execute(
-                    f"SELECT {', '.join(ATTENDEE_COLUMNS)} FROM {table} "
-                    f"WHERE local_modified = 1;"
-                ).fetchall()
-        except sqlite3.Error as e:
-            logger.error("Reading local changes from %s failed: %s", table, e)
-            return {"pushed": 0, "failed": 0, "error": str(e)}
-
-        if not rows:
-            return {"pushed": 0, "failed": 0}
-
-        pushed_ids: List[str] = []
-        failed = 0
-
-        with self.db.mysql_session() as mconn:
-            if mconn is None:
-                logger.warning("Skipping push for %s: MySQL unavailable.", table)
-                return {"pushed": 0, "failed": len(rows), "skipped": True}
-
-            cursor = mconn.cursor()
-            placeholders = ", ".join(["%s"] * len(ATTENDEE_COLUMNS))
-            update_clause = ", ".join(
-                f"{c}=VALUES({c})" for c in ATTENDEE_COLUMNS if c not in ("id", "created_at")
-            )
-            upsert_sql = (
-                f"INSERT INTO {table} ({', '.join(ATTENDEE_COLUMNS)}) "
-                f"VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {update_clause};"
-            )
-            for row in rows:
-                try:
-                    cursor.execute(upsert_sql, tuple(row[c] for c in ATTENDEE_COLUMNS))
-                    pushed_ids.append(row["id"])
-                except MySQLError as e:
-                    logger.error("Failed to push %s row %s to MySQL: %s", table, row["id"], e)
-                    failed += 1
-            cursor.close()
-
-        if pushed_ids:
-            try:
-                with self.db.sqlite_session() as sconn:
-                    qmarks = ", ".join(["?"] * len(pushed_ids))
-                    sconn.execute(
-                        f"UPDATE {table} SET local_modified = 0 WHERE id IN ({qmarks});",
-                        pushed_ids,
-                    )
-            except sqlite3.Error as e:
-                logger.error("Could not clear local_modified flags on %s: %s", table, e)
-
-        return {"pushed": len(pushed_ids), "failed": failed}
-
-    def _pull_hub_changes_for_table(self, table: str) -> Dict[str, Any]:
-        """MySQL rows newer than our last pull -> mirror into SQLite."""
-        meta_key = f"last_pull_{table}"
-        try:
-            with self.db.sqlite_session() as sconn:
-                meta_row = sconn.execute(
-                    "SELECT value FROM sync_meta WHERE key = ?;", (meta_key,)
-                ).fetchone()
-        except sqlite3.Error as e:
-            logger.error("Could not read sync_meta cursor for %s: %s", table, e)
-            return {"pulled": 0, "error": str(e)}
-
-        since = meta_row["value"] if meta_row else "1970-01-01 00:00:00"
-
-        with self.db.mysql_session() as mconn:
-            if mconn is None:
-                return {"pulled": 0, "skipped": True}
-            try:
-                cursor = mconn.cursor(dictionary=True)
-                cursor.execute(
-                    f"SELECT {', '.join(ATTENDEE_COLUMNS)} FROM {table} "
-                    f"WHERE updated_at > %s ORDER BY updated_at ASC;",
-                    (since,),
-                )
-                rows = cursor.fetchall()
-                cursor.close()
-            except MySQLError as e:
-                logger.error("Pulling hub changes for %s failed: %s", table, e)
-                return {"pulled": 0, "error": str(e)}
-
-        if not rows:
-            return {"pulled": 0}
-
-        # NOTE: the SQLite trigger trg_*_updated_at stamps updated_at with
-        # CURRENT_TIMESTAMP on every UPDATE, including this mirroring write.
-        # That means SQLite's updated_at will not exactly equal MySQL's
-        # after this runs — expected, and harmless, because our real
-        # sync cursor (last_pull_{table}) is tracked from MySQL's own
-        # updated_at values below, not from SQLite's.
-        set_clause = ", ".join(
-            f"{c} = excluded.{c}" for c in ATTENDEE_COLUMNS if c not in ("id", "local_modified")
-        )
-        placeholders = ", ".join(["?"] * len(ATTENDEE_COLUMNS))
-        upsert_sql = (
-            f"INSERT INTO {table} ({', '.join(ATTENDEE_COLUMNS)}) VALUES ({placeholders}) "
-            f"ON CONFLICT(id) DO UPDATE SET {set_clause} "
-            f"WHERE excluded.updated_at > {table}.updated_at;"
-        )
-
-        try:
-            with self.db.sqlite_session() as sconn:
-                for row in rows:
-                    sconn.execute(upsert_sql, tuple(row[c] for c in ATTENDEE_COLUMNS))
-        except sqlite3.Error as e:
-            logger.error("Mirroring hub changes into SQLite (%s) failed: %s", table, e)
-            return {"pulled": 0, "error": str(e)}
-
-        max_updated = max(str(r["updated_at"]) for r in rows)
-        try:
-            with self.db.sqlite_session() as sconn:
-                sconn.execute(
-                    "INSERT INTO sync_meta (key, value) VALUES (?, ?) "
-                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
-                    (meta_key, max_updated),
-                )
-        except sqlite3.Error as e:
-            logger.warning("Could not advance sync_meta cursor for %s: %s", table, e)
-
-        return {"pulled": len(rows)}
-
-    # ─────────────────────────────────────────────────────────────
-    # STEP 2: CLOUD PUSH (MySQL -> Supabase)
-    # ─────────────────────────────────────────────────────────────
-    def _push_pending_to_supabase(self, supabase_client) -> Dict[str, Any]:
-        details: Dict[str, Any] = {}
-        total_pushed = total_failed = 0
-
-        for local_table, cloud_table in CLOUD_TABLE_MAP.items():
-            with self.db.mysql_session() as mconn:
-                if mconn is None:
-                    details[local_table] = {"skipped": True, "reason": "MySQL unavailable"}
-                    continue
-                try:
-                    cursor = mconn.cursor(dictionary=True)
-                    cursor.execute(
-                        f"SELECT {', '.join(ATTENDEE_COLUMNS)} FROM {local_table} "
-                        f"WHERE needs_cloud_sync = 1;"
-                    )
-                    rows = cursor.fetchall()
-                    cursor.close()
-                except MySQLError as e:
-                    logger.error("Reading pending cloud rows from %s failed: %s", local_table, e)
-                    details[local_table] = {"pushed": 0, "failed": 0, "error": str(e)}
-                    continue
-
-            if not rows:
-                details[local_table] = {"pushed": 0, "failed": 0}
-                continue
-
-            pushed_ids: List[str] = []
-            failed = 0
-            for row in rows:
-                payload = self._row_to_cloud_payload(row)
-                try:
-                    supabase_client.table(cloud_table).upsert(
-                        payload, on_conflict="attendee_id"
-                    ).execute()
-                    pushed_ids.append(row["id"])
-                except Exception as e:
-                    # Covers httpx timeouts/connection errors (internet down)
-                    # as well as Supabase-side validation errors.
-                    logger.error(
-                        "Supabase push failed for %s (attendee_id=%s): %s",
-                        local_table, row.get("attendee_id"), e,
-                    )
-                    failed += 1
-
-            if pushed_ids:
-                self._mark_cloud_synced(local_table, pushed_ids)
-
-            details[local_table] = {"pushed": len(pushed_ids), "failed": failed}
-            total_pushed += len(pushed_ids)
-            total_failed += failed
-
-        return {"by_table": details, "total_pushed": total_pushed, "total_failed": total_failed}
-
-    def _mark_cloud_synced(self, table: str, ids: List[str]) -> None:
-        if not ids:
-            return
-        with self.db.mysql_session() as mconn:
-            if mconn is not None:
-                try:
-                    cursor = mconn.cursor()
-                    fmt = ", ".join(["%s"] * len(ids))
-                    cursor.execute(
-                        f"UPDATE {table} SET needs_cloud_sync = 0 WHERE id IN ({fmt});", ids
-                    )
-                    cursor.close()
-                except MySQLError as e:
-                    logger.error("Could not clear needs_cloud_sync in MySQL %s: %s", table, e)
-        try:
-            with self.db.sqlite_session() as sconn:
-                fmt = ", ".join(["?"] * len(ids))
-                sconn.execute(
-                    f"UPDATE {table} SET needs_cloud_sync = 0 WHERE id IN ({fmt});", ids
-                )
-        except sqlite3.Error as e:
-            logger.error("Could not clear needs_cloud_sync in SQLite %s: %s", table, e)
-
-    # ─────────────────────────────────────────────────────────────
-    # STEP 3: CLOUD PULL (Supabase -> MySQL -> SQLite)
-    # ─────────────────────────────────────────────────────────────
-    def _pull_new_from_supabase(self, supabase_client) -> Dict[str, Any]:
-        meta_key = "last_cloud_pull_attendees"
-        try:
-            with self.db.sqlite_session() as sconn:
-                meta_row = sconn.execute(
-                    "SELECT value FROM sync_meta WHERE key = ?;", (meta_key,)
-                ).fetchone()
-        except sqlite3.Error as e:
-            logger.error("Could not read cloud-pull cursor: %s", e)
-            return {"pulled": 0, "error": str(e)}
-
-        since = meta_row["value"] if meta_row else "1970-01-01T00:00:00+00:00"
-
-        try:
-            response = (
-                supabase_client.table("attendees")
-                .select("*")
-                .gt("updated_at", since)
-                .order("updated_at")
-                .execute()
-            )
-            cloud_rows = response.data or []
+            supabase = load_supabase_client()
+            logging.info("Successfully established temporary cloud connection.")
         except Exception as e:
-            # Internet down / Supabase unreachable — log and move on.
-            logger.error("Supabase pull failed (offline?): %s", e)
-            return {"pulled": 0, "error": str(e)}
+            logging.error(f"Failed to connect to Supabase: {e}")
+            return False
 
-        if not cloud_rows:
-            return {"pulled": 0}
-
-        inserted = self._upsert_cloud_rows_into_mysql_and_sqlite(cloud_rows)
-
-        updated_values = [r.get("updated_at") for r in cloud_rows if r.get("updated_at")]
-        if updated_values:
-            max_updated = max(str(v) for v in updated_values)
-            try:
-                with self.db.sqlite_session() as sconn:
-                    sconn.execute(
-                        "INSERT INTO sync_meta (key, value) VALUES (?, ?) "
-                        "ON CONFLICT(key) DO UPDATE SET value = excluded.value;",
-                        (meta_key, max_updated),
-                    )
-            except sqlite3.Error as e:
-                logger.warning("Could not advance cloud-pull cursor: %s", e)
-
-        return {"pulled": inserted}
-
-    def _upsert_cloud_rows_into_mysql_and_sqlite(self, cloud_rows: List[Dict[str, Any]]) -> int:
-        count = 0
-
-        with self.db.mysql_session() as mconn:
-            if mconn is None:
-                logger.warning(
-                    "MySQL unavailable — new cloud registrations will be "
-                    "re-fetched and retried on the next sync."
-                )
-                return 0
-            try:
-                cursor = mconn.cursor()
-                placeholders = ", ".join(["%s"] * len(ATTENDEE_COLUMNS))
-                update_clause = ", ".join(
-                    f"{c}=VALUES({c})" for c in ATTENDEE_COLUMNS if c not in ("id", "created_at")
-                )
-                upsert_sql = (
-                    f"INSERT INTO attendees ({', '.join(ATTENDEE_COLUMNS)}) "
-                    f"VALUES ({placeholders}) ON DUPLICATE KEY UPDATE {update_clause};"
-                )
-                for crow in cloud_rows:
-                    try:
-                        values = self._cloud_row_to_local_values(crow)
-                        cursor.execute(upsert_sql, values)
-                        count += 1
-                    except MySQLError as e:
-                        logger.error(
-                            "Failed to mirror cloud row %s into MySQL: %s",
-                            crow.get("attendee_id"), e,
-                        )
-                cursor.close()
-            except MySQLError as e:
-                logger.error("Cloud-pull mirroring into MySQL failed: %s", e)
-                return count
-
-        if count:
-            try:
-                with self.db.sqlite_session() as sconn:
-                    set_clause = ", ".join(
-                        f"{c} = excluded.{c}" for c in ATTENDEE_COLUMNS
-                        if c not in ("id", "local_modified")
-                    )
-                    placeholders = ", ".join(["?"] * len(ATTENDEE_COLUMNS))
-                    upsert_sql = (
-                        f"INSERT INTO attendees ({', '.join(ATTENDEE_COLUMNS)}) "
-                        f"VALUES ({placeholders}) ON CONFLICT(id) DO UPDATE SET {set_clause};"
-                    )
-                    for crow in cloud_rows:
-                        try:
-                            values = self._cloud_row_to_local_values(crow)
-                            sconn.execute(upsert_sql, values)
-                        except sqlite3.Error as e:
-                            logger.error(
-                                "Failed to mirror cloud row %s into SQLite: %s",
-                                crow.get("attendee_id"), e,
-                            )
-            except sqlite3.Error as e:
-                logger.error("Cloud-pull mirroring into SQLite failed: %s", e)
-
-        return count
-
-    def _cloud_row_to_local_values(self, crow: Dict[str, Any]) -> Tuple[Any, ...]:
-        """Maps a Supabase attendee row onto our local ATTENDEE_COLUMNS order."""
-
-        def as_json_text(value, default):
-            if value is None:
-                return json.dumps(default)
-            if isinstance(value, str):
-                return value  # already JSON text
-            return json.dumps(value)
-
-        mapped = {
-            "id": crow.get("id") or str(uuid.uuid4()),
-            "attendee_id": crow.get("attendee_id"),
-            "full_name": crow.get("full_name"),
-            "mobile": crow.get("mobile"),
-            "email": crow.get("email"),
-            "gender": crow.get("gender"),
-            "attendee_type": crow.get("attendee_type", "GENERAL"),
-            "business_name": crow.get("business_name"),
-            "business_category": crow.get("business_category"),
-            "other_category": crow.get("other_category"),
-            "address": crow.get("address"),
-            "city": crow.get("city"),
-            "state": crow.get("state"),
-            "pincode": crow.get("pincode"),
-            "attendance_days": as_json_text(crow.get("attendance_days"), []),
-            "photo_url": crow.get("photo_url"),
-            "created_at": crow.get("created_at"),
-            "updated_at": crow.get("updated_at"),
-            "checkin_history": as_json_text(crow.get("checkin_history"), {}),
-            # It came FROM the cloud, so it's already the source of truth —
-            # no need to push it right back up.
-            "needs_cloud_sync": 0,
-            "needs_sheet_sync": int(bool(crow.get("needs_sheet_sync", 0))),
-            "local_modified": 0,
-            "device_name": crow.get("device_name"),
-        }
-        return tuple(mapped[c] for c in ATTENDEE_COLUMNS)
-
-    # ─────────────────────────────────────────────────────────────
-    # STEP 4: GOOGLE SHEETS SYNC
-    # ─────────────────────────────────────────────────────────────
-    def _sync_google_sheets(self, supabase_client) -> Dict[str, Any]:
-        with self.db.mysql_session() as mconn:
-            if mconn is None:
-                return {"skipped": True, "reason": "MySQL unavailable"}
-            try:
-                cursor = mconn.cursor(dictionary=True)
-                cursor.execute(
-                    f"SELECT {', '.join(ATTENDEE_COLUMNS)} FROM attendees "
-                    f"WHERE needs_sheet_sync = 1;"
-                )
-                rows = cursor.fetchall()
-                cursor.close()
-            except MySQLError as e:
-                logger.error("Reading rows pending Sheets sync failed: %s", e)
-                return {"pushed": 0, "error": str(e)}
-
-        if not rows:
-            return {"pushed": 0}
-
-        payloads = [self._row_to_cloud_payload(r) for r in rows]
-
+        mysql_session = self.SessionMySQL()
         try:
-            if self.sheets_webhook_url and REQUESTS_AVAILABLE:
-                resp = requests.post(
-                    self.sheets_webhook_url, json={"records": payloads}, timeout=10
-                )
-                resp.raise_for_status()
-            elif SUPABASE_SDK_AVAILABLE and hasattr(supabase_client, "functions"):
-                supabase_client.functions.invoke(
-                    self.sheets_edge_function,
-                    invoke_options={"body": {"records": payloads}},
-                )
+            pending = mysql_session.query(Attendee).filter_by(needs_cloud_sync=True).all()
+            if not pending:
+                logging.info("No records require pushing. Disconnecting from cloud.")
+                return True
+
+            batch_payload = []
+            for record in pending:
+                batch_payload.append({
+                    "id": record.id,
+                    "attendee_id": record.attendee_id,
+                    "full_name": record.full_name,
+                    "mobile": record.mobile,
+                    "email": record.email,
+                    "gender": record.gender.name if hasattr(record.gender, 'name') else record.gender,
+                    "attendee_type": record.attendee_type.name if hasattr(record.attendee_type, 'name') else record.attendee_type,
+                    "business_name": record.business_name,
+                    "address": record.address,
+                    "city": record.city,
+                    "state": record.state,
+                    "pincode": record.pincode,
+                    "attendance_days": record.attendance_days,
+                    "checkin_history": record.checkin_history,
+                    "updated_at": record.updated_at.isoformat() if record.updated_at else datetime.now(timezone.utc).isoformat(),
+                    "needs_cloud_sync": False 
+                })
+
+            response = supabase.table('attendees').upsert(batch_payload).execute()
+            
+            if response.data:
+                for record in pending:
+                    record.needs_cloud_sync = False
+                mysql_session.commit()
+                logging.info(f"Successfully pushed {len(batch_payload)} records in batch.")
+                self.mirror_mysql_to_sqlite()
+                return True
             else:
-                logger.warning(
-                    "No SHEETS_WEBHOOK_URL configured and no usable Supabase "
-                    "edge function client — skipping Sheets sync."
-                )
-                return {"skipped": True, "reason": "Not configured"}
+                logging.warning("Cloud upload rejected the batch payload.")
+                return False
+
         except Exception as e:
-            # Covers webhook timeouts, DNS failures, edge function errors —
-            # i.e. the internet-down case for this step specifically.
-            logger.error("Google Sheets sync failed (offline?): %s", e)
-            return {"pushed": 0, "failed": len(rows), "error": str(e)}
+            mysql_session.rollback()
+            logging.error(f"Push failed: {e}")
+            return False
+        finally:
+            mysql_session.close()
 
-        ids = [r["id"] for r in rows]
-        with self.db.mysql_session() as mconn:
-            if mconn is not None:
-                try:
-                    cursor = mconn.cursor()
-                    fmt = ", ".join(["%s"] * len(ids))
-                    cursor.execute(
-                        f"UPDATE attendees SET needs_sheet_sync = 0 WHERE id IN ({fmt});", ids
+    def pull_from_cloud(self):
+        """Executes manual pull. ONLY connects to Supabase for the duration of this function."""
+        logging.info("--- Starting PULL from Cloud ---")
+        if not self.SessionMySQL:
+            logging.error("Cannot pull: Local MySQL is offline.")
+            return False
+            
+        try:
+            supabase = load_supabase_client()
+            logging.info("Successfully established temporary cloud connection.")
+        except Exception as e:
+            logging.error(f"Failed to connect to Supabase: {e}")
+            return False
+
+        mysql_session = self.SessionMySQL()
+        try:
+            cloud_records = []
+            page_size = 1000
+            offset = 0
+            
+            while True:
+                response = supabase.table('attendees').select("*").range(offset, offset + page_size - 1).execute()
+                data = response.data
+                if not data: break
+                cloud_records.extend(data)
+                if len(data) < page_size: break
+                offset += page_size
+
+            if not cloud_records:
+                logging.info("Cloud is empty. Disconnecting.")
+                return True
+
+            pulled = 0
+            for cloud_data in cloud_records:
+                local_record = mysql_session.query(Attendee).filter_by(id=cloud_data['id']).first()
+                
+                raw_updated = cloud_data.get('updated_at')
+                if raw_updated:
+                    try:
+                        cloud_updated_at = datetime.fromisoformat(raw_updated.replace('Z', '+00:00')).replace(tzinfo=None)
+                    except Exception:
+                        cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                else:
+                    cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+                if local_record:
+                    merged = self._merge_checkin_history(local_record.checkin_history, cloud_data.get('checkin_history', {}))
+                    local_record.checkin_history = merged
+                    
+                    if local_record.needs_cloud_sync: continue 
+                    
+                    if not local_record.updated_at or cloud_updated_at > local_record.updated_at:
+                        local_record.full_name = cloud_data.get('full_name') or local_record.full_name
+                        local_record.mobile = cloud_data.get('mobile') or local_record.mobile
+                        local_record.email = cloud_data.get('email') or local_record.email
+                        local_record.gender = cloud_data.get('gender') or local_record.gender
+                        local_record.attendee_type = cloud_data.get('attendee_type') or local_record.attendee_type
+                        local_record.address = cloud_data.get('address') or local_record.address
+                        local_record.city = cloud_data.get('city') or local_record.city
+                        local_record.state = cloud_data.get('state') or local_record.state
+                        local_record.pincode = cloud_data.get('pincode') or local_record.pincode
+                        local_record.updated_at = cloud_updated_at
+                        pulled += 1
+                else:
+                    new_attendee = Attendee(
+                        id=cloud_data['id'],
+                        attendee_id=cloud_data['attendee_id'],
+                        full_name=cloud_data.get('full_name') or 'Unknown',
+                        mobile=cloud_data.get('mobile') or '0000000000',
+                        email=cloud_data.get('email'),
+                        gender=cloud_data.get('gender') or 'OTHER',
+                        attendee_type=cloud_data.get('attendee_type') or 'GENERAL',
+                        business_name=cloud_data.get('business_name'),
+                        address=cloud_data.get('address') or 'N/A',
+                        city=cloud_data.get('city') or 'N/A',
+                        state=cloud_data.get('state') or 'N/A',
+                        pincode=cloud_data.get('pincode') or '000000',
+                        checkin_history=self._merge_checkin_history({}, cloud_data.get('checkin_history')),
+                        updated_at=cloud_updated_at,
+                        needs_cloud_sync=False
                     )
-                    cursor.close()
-                except MySQLError as e:
-                    logger.error("Could not clear needs_sheet_sync in MySQL: %s", e)
-        try:
-            with self.db.sqlite_session() as sconn:
-                fmt = ", ".join(["?"] * len(ids))
-                sconn.execute(
-                    f"UPDATE attendees SET needs_sheet_sync = 0 WHERE id IN ({fmt});", ids
-                )
-        except sqlite3.Error as e:
-            logger.error("Could not clear needs_sheet_sync in SQLite: %s", e)
+                    mysql_session.add(new_attendee)
+                    pulled += 1
+                    
+            mysql_session.commit()
+            logging.info(f"Pulled {pulled} new updates from cloud.")
+            self.mirror_mysql_to_sqlite()
+            return True
+            
+        except Exception as e:
+            mysql_session.rollback()
+            logging.error(f"Pull failed: {e}")
+            return False
+        finally:
+            mysql_session.close()
 
-        return {"pushed": len(ids)}
+# ==============================================================================
+# CONFIGURATION GUI DIALOG
+# ==============================================================================
+class ConfigDialog(ttk.Toplevel):
+    def __init__(self, parent):
+        super().__init__()
+        self.title("Configure Databases")
+        self.transient(parent) 
+        self.geometry("500x520")
+        self.position_center()
+        
+        self.secrets = {}
+        if os.path.exists(SECRETS_PATH):
+            with open(SECRETS_PATH, 'r') as f: self.secrets = json.load(f)
+            
+        self.schema = {"mysql": {}, "sqlite": {}}
+        if os.path.exists(SCHEMA_PATH):
+            with open(SCHEMA_PATH, 'r') as f: self.schema = json.load(f)
 
-    # ─────────────────────────────────────────────────────────────
-    # SHARED HELPERS
-    # ─────────────────────────────────────────────────────────────
-    def _row_to_cloud_payload(self, row) -> Dict[str, Any]:
-        """Converts one local DB row into a JSON-ready dict for Supabase."""
-        payload = dict(row)
-        for json_col in _JSON_COLUMNS:
-            raw = payload.get(json_col)
-            if isinstance(raw, str):
-                try:
-                    payload[json_col] = json.loads(raw)
-                except (json.JSONDecodeError, TypeError):
-                    pass  # send it as-is rather than dropping the whole record
-        for internal_col in _INTERNAL_ONLY_COLUMNS:
-            payload.pop(internal_col, None)
-        return payload
+        frame = ttk.Frame(self, padding=20)
+        frame.pack(fill=BOTH, expand=True)
+        
+        ttk.Label(frame, text="Supabase Cloud Settings", font="-weight bold").pack(anchor=W, pady=(0, 10))
+        self.ent_sb_url = self._make_input(frame, "SUPABASE_URL", self.secrets.get("SUPABASE_URL", ""))
+        self.ent_sb_key = self._make_input(frame, "SUPABASE_KEY", self.secrets.get("SUPABASE_KEY", ""), show="*")
+        
+        ttk.Separator(frame).pack(fill=X, pady=15)
+        
+        ttk.Label(frame, text="MySQL Settings (Local Hub)", font="-weight bold").pack(anchor=W, pady=(0, 10))
+        my_conf = self.schema.get("mysql", {})
+        self.ent_my_host = self._make_input(frame, "Host", my_conf.get("host", "localhost"))
+        self.ent_my_user = self._make_input(frame, "User", my_conf.get("user", "root"))
+        self.ent_my_pass = self._make_input(frame, "Password", my_conf.get("password", ""), show="*")
+        self.ent_my_db   = self._make_input(frame, "Database", my_conf.get("database", "eventhub_db"))
 
-    # ─────────────────────────────────────────────────────────────
-    # SYNC HISTORY BOOKKEEPING (uses the sync_history table from schema.py)
-    # ─────────────────────────────────────────────────────────────
-    def _start_sync_history_record(self) -> Optional[int]:
-        try:
-            with self.db.sqlite_session() as sconn:
-                cur = sconn.execute(
-                    "INSERT INTO sync_history (op_type, started_at, status) "
-                    "VALUES (?, ?, 'RUNNING');",
-                    ("FULL_SYNC", datetime.now(timezone.utc).isoformat()),
-                )
-                return cur.lastrowid
-        except sqlite3.Error as e:
-            logger.warning("Could not create sync_history record: %s", e)
-            return None
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(fill=X, pady=20)
+        ttk.Button(btn_frame, text="Save Settings", bootstyle=SUCCESS, command=self.save).pack(side=RIGHT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(side=RIGHT)
 
-    def _finish_sync_history_record(self, record_id: Optional[int], summary: Dict[str, Any]) -> None:
-        if record_id is None:
+    def _make_input(self, parent, label, default, show=None):
+        row = ttk.Frame(parent)
+        row.pack(fill=X, pady=3)
+        ttk.Label(row, text=label, width=15).pack(side=LEFT)
+        ent = ttk.Entry(row, show=show)
+        ent.insert(0, default)
+        ent.pack(side=LEFT, fill=X, expand=True)
+        return ent
+
+    def save(self):
+        with open(SECRETS_PATH, 'w') as f:
+            json.dump({
+                "SUPABASE_URL": self.ent_sb_url.get().strip(),
+                "SUPABASE_KEY": self.ent_sb_key.get().strip()
+            }, f, indent=4)
+            
+        with open(SCHEMA_PATH, 'w') as f:
+            self.schema["mysql"]["host"] = self.ent_my_host.get().strip()
+            self.schema["mysql"]["user"] = self.ent_my_user.get().strip()
+            self.schema["mysql"]["password"] = self.ent_my_pass.get().strip()
+            self.schema["mysql"]["database"] = self.ent_my_db.get().strip()
+            self.schema["mysql"]["port"] = 3306
+            self.schema["mysql"]["enabled"] = True
+            
+            self.schema["sqlite"]["enabled"] = True
+            self.schema["sqlite"]["folder_name"] = "db"
+            self.schema["sqlite"]["file_name"] = "eventhub_local.db"
+            json.dump(self.schema, f, indent=4)
+            
+        Messagebox.show_info("Settings saved. Re-initializing local connections.", "Saved", parent=self)
+        self.master.reinitialize_manager()
+        self.destroy()
+
+# ==============================================================================
+# MAIN DASHBOARD GUI
+# ==============================================================================
+class SyncDashboard(ttk.Window):
+    def __init__(self):
+        super().__init__(themename="cyborg", title="TDE UP 2026 — Sync Manager v4.0")
+        self.geometry("1500x850")
+        
+        self.sync_manager = SyncManager()
+        self.is_syncing = False
+        
+        self.build_ui()
+        self.refresh_stats()
+
+    def reinitialize_manager(self):
+        self.sync_manager = SyncManager()
+        self.refresh_stats()
+
+    def build_ui(self):
+        main_paned = ttk.Panedwindow(self, orient=HORIZONTAL)
+        main_paned.pack(fill=BOTH, expand=True)
+
+        # --- LEFT SIDEBAR ---
+        sidebar = ttk.Frame(main_paned, width=300, padding=20)
+        main_paned.add(sidebar, weight=0)
+
+        ttk.Label(sidebar, text="TDE UP 2026", font="-size 20 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
+        ttk.Label(sidebar, text="Sync Manager v4.0\n", font="-size 10", foreground="gray").pack(anchor=W, pady=(0,20))
+
+        ttk.Label(sidebar, text="CONNECTION STATUS", font="-size 8 -weight bold").pack(anchor=W, pady=(10,5))
+        
+        self.lbl_supa = ttk.Label(sidebar, text="● Supabase Cloud: Idle", bootstyle=SECONDARY)
+        self.lbl_supa.pack(anchor=W, pady=2)
+        self.lbl_mysql = ttk.Label(sidebar, text="● MySQL (Primary): Checking...", bootstyle=INFO)
+        self.lbl_mysql.pack(anchor=W, pady=2)
+        self.lbl_sqlite = ttk.Label(sidebar, text="● SQLite (Fallback): Checking...", bootstyle=INFO)
+        self.lbl_sqlite.pack(anchor=W, pady=2)
+        
+        ttk.Button(sidebar, text="⟳ Refresh Connections", bootstyle="outline-secondary", command=self.reinitialize_manager).pack(fill=X, pady=15)
+        ttk.Separator(sidebar).pack(fill=X, pady=20)
+        
+        ttk.Button(sidebar, text="⚙ Configure Databases", bootstyle="outline-light", command=lambda: ConfigDialog(self)).pack(fill=X, side=BOTTOM, pady=20)
+
+        # --- RIGHT CONTENT AREA ---
+        content = ttk.Frame(main_paned, padding=20)
+        main_paned.add(content, weight=1)
+
+        ttk.Label(content, text="Database Synchronisation Dashboard", font="-size 16 -weight bold").pack(anchor=W, pady=(0, 20))
+
+        # --- TELEMETRY CARDS (2 ROWS, 4 COLS) ---
+        self.stat_vars = {} # Stores references to the variables for easy updating
+        
+        # ROW 1 (Database Health & Sync)
+        cards_row1 = ttk.Frame(content)
+        cards_row1.pack(fill=X, pady=(0,10))
+        
+        self._create_stat_card(cards_row1, "👥 MYSQL (PRIMARY)", "0", PRIMARY, var_name="mysql_total")
+        self._create_stat_card(cards_row1, "💾 SQLITE (MIRROR)", "0", INFO, var_name="sqlite_total")
+        self._create_stat_card(cards_row1, "⏳ PENDING PUSH", "0", WARNING, var_name="pending_push")
+        self._create_stat_card(cards_row1, "🖥️ KIOSK REG.", "0", SECONDARY, var_name="kiosk_reg")
+
+        # ROW 2 (Event Operations)
+        cards_row2 = ttk.Frame(content)
+        cards_row2.pack(fill=X, pady=(0,20))
+        
+        self._create_stat_card(cards_row2, "✔ TOTAL CHECKED IN", "0", SUCCESS, var_name="checked_in")
+        self._create_stat_card(cards_row2, "📅 30 AUGUST 2026", "0", LIGHT, var_name="day_1")
+        self._create_stat_card(cards_row2, "📅 31 AUGUST 2026", "0", LIGHT, var_name="day_2")
+        self._create_stat_card(cards_row2, "📅 1 SEPTEMBER 2026", "0", LIGHT, var_name="day_3")
+
+        # --- CONTROLS ---
+        controls_frame = ttk.Frame(content)
+        controls_frame.pack(fill=X, pady=10)
+        
+        self.btn_pull = ttk.Button(controls_frame, text="↓ Pull from Cloud", bootstyle=PRIMARY, width=20, command=self.run_pull)
+        self.btn_pull.pack(side=LEFT, padx=(0,10))
+        
+        self.btn_push = ttk.Button(controls_frame, text="↑ Push to Cloud", bootstyle=SUCCESS, width=20, command=self.run_push)
+        self.btn_push.pack(side=LEFT, padx=(0,10))
+
+        self.progress = ttk.Progressbar(controls_frame, mode='indeterminate', bootstyle=INFO)
+        self.progress.pack(side=LEFT, fill=X, expand=True, padx=10)
+        
+        self.lbl_status = ttk.Label(controls_frame, text="Ready.")
+        self.lbl_status.pack(side=LEFT, padx=10)
+
+        # --- LOGS ---
+        notebook = ttk.Notebook(content)
+        notebook.pack(fill=BOTH, expand=True, pady=(20,0))
+        
+        log_tab = ttk.Frame(notebook)
+        notebook.add(log_tab, text="Activity Log")
+        
+        cols = ("Time", "Level", "Message")
+        self.log_tree = ttk.Treeview(log_tab, columns=cols, show="headings", bootstyle=INFO)
+        self.log_tree.heading("Time", text="TIME", anchor=W)
+        self.log_tree.heading("Level", text="LEVEL", anchor=W)
+        self.log_tree.heading("Message", text="MESSAGE", anchor=W)
+        self.log_tree.column("Time", width=100, stretch=False)
+        self.log_tree.column("Level", width=100, stretch=False)
+        
+        self.log_tree.tag_configure('error', foreground='#ff4444')
+        self.log_tree.tag_configure('warning', foreground='#ffbb33')
+        self.log_tree.tag_configure('info', foreground='white')
+        
+        scrollbar = ttk.Scrollbar(log_tab, orient=VERTICAL, command=self.log_tree.yview)
+        self.log_tree.configure(yscrollcommand=scrollbar.set)
+        
+        self.log_tree.pack(side=LEFT, fill=BOTH, expand=True)
+        scrollbar.pack(side=RIGHT, fill=Y)
+
+        gui_logger = TkinterLogHandler(self.log_tree)
+        gui_logger.setFormatter(logging.Formatter('%(message)s'))
+        logging.getLogger().addHandler(gui_logger)
+
+    def _create_stat_card(self, parent, title, initial_value, style, var_name):
+        """Creates a modern telemetry card inside a 4-column grid."""
+        # Using a solid relief frame creates the nice "card" boundary in Cyborg theme
+        frame = ttk.Frame(parent, borderwidth=1, relief="solid", padding=20)
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
+        
+        ttk.Label(frame, text=title, font="-size 9 -weight bold", bootstyle=style).pack(anchor=W)
+        val_lbl = ttk.Label(frame, text=initial_value, font="-size 26 -weight bold")
+        val_lbl.pack(anchor=W, pady=(10,0))
+        
+        self.stat_vars[var_name] = val_lbl # Store reference to update the label directly
+        return val_lbl
+
+    def refresh_stats(self):
+        """Calculates advanced metrics directly in Python to avoid database locking/syntax issues."""
+        if not self.sync_manager.SessionMySQL:
+            self.lbl_mysql.configure(text="● MySQL (Primary): Offline", bootstyle=DANGER)
+            self.lbl_sqlite.configure(text="● SQLite (Fallback): Check Config", bootstyle=DANGER)
             return
-        status = "SUCCESS" if summary.get("success") else "FAILED"
+            
+        self.lbl_mysql.configure(text="● MySQL (Primary): Online", bootstyle=SUCCESS)
+        self.lbl_sqlite.configure(text="● SQLite (Fallback): Ready", bootstyle=SUCCESS if self.sync_manager.SessionSQLite else DANGER)
+        self.lbl_supa.configure(text="● Supabase Cloud: Idle", bootstyle=SECONDARY)
+        
+        mysql_session = self.sync_manager.SessionMySQL()
+        sqlite_session = self.sync_manager.SessionSQLite() if self.sync_manager.SessionSQLite else None
+        
         try:
-            with self.db.sqlite_session() as sconn:
-                sconn.execute(
-                    "UPDATE sync_history SET ended_at = ?, status = ? WHERE id = ?;",
-                    (datetime.now(timezone.utc).isoformat(), status, record_id),
-                )
-        except sqlite3.Error as e:
-            logger.warning("Could not finalize sync_history record: %s", e)
+            # 1. Fetch raw data from MySQL
+            attendees = mysql_session.query(Attendee).all()
+            kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
+            
+            # 2. Python-side Analytics for Speed & Compatibility
+            total_mysql = len(attendees)
+            pending_push = 0
+            checked_in = 0
+            day1_count = 0
+            day2_count = 0
+            day3_count = 0
+            
+            for att in attendees:
+                if att.needs_cloud_sync:
+                    pending_push += 1
+                
+                # Check-in Logic
+                history = att.checkin_history
+                if isinstance(history, str):
+                    try:
+                        history = json.loads(history)
+                    except:
+                        history = {}
+                        
+                if history and len(history) > 0:
+                    checked_in += 1
+                    # Parse the timestamps for the specific event days
+                    history_str = json.dumps(history)
+                    if "2026-08-30" in history_str: day1_count += 1
+                    if "2026-08-31" in history_str: day2_count += 1
+                    if "2026-09-01" in history_str: day3_count += 1
 
+            # 3. Fetch SQLite Backup Count
+            total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
 
-# ═══════════════════════════════════════════════════════════════════
-#  SHARED SINGLETON — mirrors schema.get_manager() so server_hub.py can
-#  do `from sync_manager import get_sync_manager` and share one instance.
-# ═══════════════════════════════════════════════════════════════════
-_sync_manager_instance: Optional[SyncManager] = None
-_sync_manager_lock = threading.Lock()
+            # 4. Update the GUI labels directly
+            self.stat_vars["mysql_total"].configure(text=str(total_mysql))
+            self.stat_vars["sqlite_total"].configure(text=str(total_sqlite))
+            self.stat_vars["pending_push"].configure(text=str(pending_push))
+            self.stat_vars["kiosk_reg"].configure(text=str(kiosk_regs))
+            
+            self.stat_vars["checked_in"].configure(text=str(checked_in))
+            self.stat_vars["day_1"].configure(text=str(day1_count))
+            self.stat_vars["day_2"].configure(text=str(day2_count))
+            self.stat_vars["day_3"].configure(text=str(day3_count))
 
+        except Exception as e:
+            logging.error(f"Stat refresh failed: {e}")
+        finally:
+            mysql_session.close()
+            if sqlite_session: sqlite_session.close()
 
-def get_sync_manager(secrets_path: Optional[str] = None) -> SyncManager:
-    global _sync_manager_instance
-    if _sync_manager_instance is None:
-        with _sync_manager_lock:
-            if _sync_manager_instance is None:
-                _sync_manager_instance = SyncManager(secrets_path=secrets_path)
-    return _sync_manager_instance
+    def _lock_ui(self, mode="syncing"):
+        self.is_syncing = True
+        self.btn_pull.configure(state=DISABLED)
+        self.btn_push.configure(state=DISABLED)
+        self.progress.start(10)
+        self.lbl_supa.configure(text=f"● Supabase Cloud: {mode.title()}...", bootstyle=INFO)
+        
+    def _unlock_ui(self, msg="Ready."):
+        self.is_syncing = False
+        self.btn_pull.configure(state=NORMAL)
+        self.btn_push.configure(state=NORMAL)
+        self.progress.stop()
+        self.lbl_status.configure(text=msg)
+        self.refresh_stats()
 
+    def run_push(self):
+        if self.is_syncing: return
+        self._lock_ui(mode="pushing")
+        self.lbl_status.configure(text="Connecting to cloud and pushing data...")
+        threading.Thread(target=self._thread_push, daemon=True).start()
 
-# ═══════════════════════════════════════════════════════════════════
-#  MANUAL TEST — run `python sync_manager.py` to fire one sync by hand
-# ═══════════════════════════════════════════════════════════════════
+    def _thread_push(self):
+        success = self.sync_manager.push_to_cloud()
+        self.after(0, lambda: self._unlock_ui("Push Complete." if success else "Push Failed."))
+
+    def run_pull(self):
+        if self.is_syncing: return
+        self._lock_ui(mode="pulling")
+        self.lbl_status.configure(text="Connecting to cloud and pulling data...")
+        threading.Thread(target=self._thread_pull, daemon=True).start()
+
+    def _thread_pull(self):
+        success = self.sync_manager.pull_from_cloud()
+        self.after(0, lambda: self._unlock_ui("Pull Complete." if success else "Pull Failed."))
+
 if __name__ == "__main__":
-    print("EventHub Portable — Step 2: sync_manager.py self-test\n")
-
-    manager = get_sync_manager()
-    print(f"Initial state: {manager.get_state()}")
-
-    result = manager.trigger_full_sync()
-    print("\nSync summary:")
-    print(json.dumps(result, indent=2, default=str))
-
-    print(f"\nFinal state: {manager.get_state()}")
+    app = SyncDashboard()
+    app.mainloop()

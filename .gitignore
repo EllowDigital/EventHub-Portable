@@ -8,8 +8,10 @@ app/config/secrets.json
 # =========================
 # Databases & Local Data
 # =========================
-# Ignore the live offline database to prevent merge conflicts and data leaks
-app/eventhub_local.db
+# Ignore the live offline databases to prevent merge conflicts and data leaks
+# The .keep file ensures the empty 'db' folder is still copied to new PCs
+app/db/*
+!app/db/.keep
 *.db
 *.sqlite
 *.sqlite3
@@ -24,13 +26,7 @@ app/attendee_photos/*
 # =========================
 # Generated Files
 # =========================
-# Ignore automatic backups, exports, and logs
-app/backups/*
-!app/backups/.keep
-
-app/exports/*
-!app/exports/.keep
-
+# Ignore application and error logs
 app/logs/*
 !app/logs/.keep
 *.log

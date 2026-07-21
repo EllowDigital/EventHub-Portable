@@ -10,9 +10,9 @@ EVENTHUB-PORTABLE/
 │   │   ├── server_hub.json   # Server settings (IP, port, etc.)
 │   │   └── sync.json         # Sync configuration
 │   │
-│   ├── backups/              # Automatic database backups
-│   ├── exports/              # Exported Excel/CSV/PDF files
-│   ├── eventhub_local.db     # Local SQLite offline database
+│   ├── db/                   # Dedicated folder for all SQLite databases
+│   │   └── eventhub_local.db # Local SQLite offline database
+│   │
 │   ├── logs/                 # Application & error logs
 │   │
 │   ├── templates/            # HTML pages served to mobile devices
@@ -27,8 +27,7 @@ EVENTHUB-PORTABLE/
 │   ├── check_in.py           # QR code scanning and attendee check-in module
 │   ├── explorer.py           # Search & attendee database explorer
 │   ├── photo_down.py         # Script to batch-download attendee photos
-│   ├── sync_manager.py       # Engine syncing SQLite ↔ MySQL
-│   └── utils.py              # Shared helper functions
+│   └── sync_manager.py       # Engine syncing SQLite ↔ MySQL
 │
 ├── main.py                   # Application entry point to initialize and launch
 ├── requirements.txt          # Python dependencies
