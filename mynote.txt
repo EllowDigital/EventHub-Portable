@@ -1,0 +1,1 @@
+local_modified and device_name is not resent in supabase

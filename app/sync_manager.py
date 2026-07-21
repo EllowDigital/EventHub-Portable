@@ -155,6 +155,8 @@ class SyncManager:
 
             batch_payload = []
             for record in pending:
+                # Build payload matching 100% of Supabase columns
+                # Exclude `local_modified` and `device_name` as they are local-only
                 batch_payload.append({
                     "id": record.id,
                     "attendee_id": record.attendee_id,
@@ -164,12 +166,17 @@ class SyncManager:
                     "gender": record.gender.name if hasattr(record.gender, 'name') else record.gender,
                     "attendee_type": record.attendee_type.name if hasattr(record.attendee_type, 'name') else record.attendee_type,
                     "business_name": record.business_name,
+                    "business_category": record.business_category,
+                    "other_category": record.other_category,
                     "address": record.address,
                     "city": record.city,
                     "state": record.state,
                     "pincode": record.pincode,
                     "attendance_days": record.attendance_days,
+                    "photo_url": record.photo_url,
                     "checkin_history": record.checkin_history,
+                    "needs_sheet_sync": record.needs_sheet_sync,
+                    "created_at": record.created_at.isoformat() if record.created_at else datetime.now(timezone.utc).isoformat(),
                     "updated_at": record.updated_at.isoformat() if record.updated_at else datetime.now(timezone.utc).isoformat(),
                     "needs_cloud_sync": False 
                 })
@@ -230,6 +237,7 @@ class SyncManager:
             for cloud_data in cloud_records:
                 local_record = mysql_session.query(Attendee).filter_by(id=cloud_data['id']).first()
                 
+                # Parse updated_at securely
                 raw_updated = cloud_data.get('updated_at')
                 if raw_updated:
                     try:
@@ -238,6 +246,16 @@ class SyncManager:
                         cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 else:
                     cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                    
+                # Parse created_at securely
+                raw_created = cloud_data.get('created_at')
+                if raw_created:
+                    try:
+                        cloud_created_at = datetime.fromisoformat(raw_created.replace('Z', '+00:00')).replace(tzinfo=None)
+                    except Exception:
+                        cloud_created_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                else:
+                    cloud_created_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
                 if local_record:
                     merged = self._merge_checkin_history(local_record.checkin_history, cloud_data.get('checkin_history', {}))
@@ -246,18 +264,29 @@ class SyncManager:
                     if local_record.needs_cloud_sync: continue 
                     
                     if not local_record.updated_at or cloud_updated_at > local_record.updated_at:
+                        # Update all fields to match cloud
                         local_record.full_name = cloud_data.get('full_name') or local_record.full_name
                         local_record.mobile = cloud_data.get('mobile') or local_record.mobile
                         local_record.email = cloud_data.get('email') or local_record.email
                         local_record.gender = cloud_data.get('gender') or local_record.gender
                         local_record.attendee_type = cloud_data.get('attendee_type') or local_record.attendee_type
+                        local_record.business_name = cloud_data.get('business_name') or local_record.business_name
+                        local_record.business_category = cloud_data.get('business_category') or local_record.business_category
+                        local_record.other_category = cloud_data.get('other_category') or local_record.other_category
                         local_record.address = cloud_data.get('address') or local_record.address
                         local_record.city = cloud_data.get('city') or local_record.city
                         local_record.state = cloud_data.get('state') or local_record.state
                         local_record.pincode = cloud_data.get('pincode') or local_record.pincode
+                        local_record.photo_url = cloud_data.get('photo_url') or local_record.photo_url
+                        local_record.needs_sheet_sync = cloud_data.get('needs_sheet_sync', local_record.needs_sheet_sync)
+                        
+                        if not local_record.created_at:
+                            local_record.created_at = cloud_created_at
+                            
                         local_record.updated_at = cloud_updated_at
                         pulled += 1
                 else:
+                    # New Insert - All Supabase columns mapped, local-only set to defaults
                     new_attendee = Attendee(
                         id=cloud_data['id'],
                         attendee_id=cloud_data['attendee_id'],
@@ -267,13 +296,22 @@ class SyncManager:
                         gender=cloud_data.get('gender') or 'OTHER',
                         attendee_type=cloud_data.get('attendee_type') or 'GENERAL',
                         business_name=cloud_data.get('business_name'),
+                        business_category=cloud_data.get('business_category'),
+                        other_category=cloud_data.get('other_category'),
                         address=cloud_data.get('address') or 'N/A',
                         city=cloud_data.get('city') or 'N/A',
                         state=cloud_data.get('state') or 'N/A',
                         pincode=cloud_data.get('pincode') or '000000',
+                        attendance_days=cloud_data.get('attendance_days', []),
+                        photo_url=cloud_data.get('photo_url'),
                         checkin_history=self._merge_checkin_history({}, cloud_data.get('checkin_history')),
+                        created_at=cloud_created_at,
                         updated_at=cloud_updated_at,
-                        needs_cloud_sync=False
+                        needs_cloud_sync=False,
+                        needs_sheet_sync=cloud_data.get('needs_sheet_sync', False),
+                        # Keep local-only columns clean
+                        local_modified=False,
+                        device_name=None
                     )
                     mysql_session.add(new_attendee)
                     pulled += 1
@@ -413,7 +451,7 @@ class SyncDashboard(ttk.Window):
         ttk.Label(content, text="Database Synchronisation Dashboard", font="-size 16 -weight bold").pack(anchor=W, pady=(0, 20))
 
         # --- TELEMETRY CARDS (2 ROWS, 4 COLS) ---
-        self.stat_vars = {} # Stores references to the variables for easy updating
+        self.stat_vars = {} 
         
         # ROW 1 (Database Health & Sync)
         cards_row1 = ttk.Frame(content)
@@ -479,8 +517,6 @@ class SyncDashboard(ttk.Window):
         logging.getLogger().addHandler(gui_logger)
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        """Creates a modern telemetry card inside a 4-column grid."""
-        # Using a solid relief frame creates the nice "card" boundary in Cyborg theme
         frame = ttk.Frame(parent, borderwidth=1, relief="solid", padding=20)
         frame.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
         
@@ -488,11 +524,10 @@ class SyncDashboard(ttk.Window):
         val_lbl = ttk.Label(frame, text=initial_value, font="-size 26 -weight bold")
         val_lbl.pack(anchor=W, pady=(10,0))
         
-        self.stat_vars[var_name] = val_lbl # Store reference to update the label directly
+        self.stat_vars[var_name] = val_lbl 
         return val_lbl
 
     def refresh_stats(self):
-        """Calculates advanced metrics directly in Python to avoid database locking/syntax issues."""
         if not self.sync_manager.SessionMySQL:
             self.lbl_mysql.configure(text="● MySQL (Primary): Offline", bootstyle=DANGER)
             self.lbl_sqlite.configure(text="● SQLite (Fallback): Check Config", bootstyle=DANGER)
@@ -506,11 +541,9 @@ class SyncDashboard(ttk.Window):
         sqlite_session = self.sync_manager.SessionSQLite() if self.sync_manager.SessionSQLite else None
         
         try:
-            # 1. Fetch raw data from MySQL
             attendees = mysql_session.query(Attendee).all()
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
             
-            # 2. Python-side Analytics for Speed & Compatibility
             total_mysql = len(attendees)
             pending_push = 0
             checked_in = 0
@@ -522,7 +555,6 @@ class SyncDashboard(ttk.Window):
                 if att.needs_cloud_sync:
                     pending_push += 1
                 
-                # Check-in Logic
                 history = att.checkin_history
                 if isinstance(history, str):
                     try:
@@ -532,16 +564,13 @@ class SyncDashboard(ttk.Window):
                         
                 if history and len(history) > 0:
                     checked_in += 1
-                    # Parse the timestamps for the specific event days
                     history_str = json.dumps(history)
                     if "2026-08-30" in history_str: day1_count += 1
                     if "2026-08-31" in history_str: day2_count += 1
                     if "2026-09-01" in history_str: day3_count += 1
 
-            # 3. Fetch SQLite Backup Count
             total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
 
-            # 4. Update the GUI labels directly
             self.stat_vars["mysql_total"].configure(text=str(total_mysql))
             self.stat_vars["sqlite_total"].configure(text=str(total_sqlite))
             self.stat_vars["pending_push"].configure(text=str(pending_push))
