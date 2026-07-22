@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Network & Device Stats - TDE UP 2026</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+
+        .btn-back {
+            color: #aaaaaa;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 12px;
+            background: #2a2a2a;
+            border-radius: 6px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 35px;
+        }
+
+        .card {
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .card h3 {
+            margin: 0 0 10px 0;
+            color: #00d2ff;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .card p {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+
+        .section-title {
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+            color: #fff;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            background: #1e1e1e;
+            border-radius: 12px;
+            border: 1px solid #333;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 15px;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        th {
+            color: #aaa;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            background: #1a1a1a;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .btn-edit {
+            background: #00d2ff;
+            color: #000;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 0.85rem;
+            transition: background 0.2s;
+        }
+
+        .btn-edit:hover {
+            background: #00a8cc;
+        }
+
+        .status-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .status-good { background: #00e676; box-shadow: 0 0 8px #00e676; }
+        .status-fair { background: #ffbb33; box-shadow: 0 0 8px #ffbb33; }
+        .status-poor { background: #ff4444; box-shadow: 0 0 8px #ff4444; }
+        .status-offline { background: #757575; }
+
+        .latency-badge {
+            background: #2a2a2a;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 600px) {
+            .grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <a href="/" class="btn-back">⬅ Back to Hub</a>
+        <h2 style="margin:0;">Dashboard & Telemetry</h2>
+        <div class="status-wrapper">
+            <span id="hub-status-text" style="font-size: 0.85rem; color: #aaa;">Syncing...</span>
+            <span id="hub-status-dot" class="status-dot status-offline"></span>
+        </div>
+    </div>
+
+    <div class="grid">
+        <div class="card">
+            <h3>Kiosk Registrations</h3>
+            <p id="tot-reg">0</p>
+        </div>
+        <div class="card">
+            <h3>Total Scans (All Time)</h3>
+            <p id="tot-scans">0</p>
+        </div>
+        <div class="card">
+            <h3>Today's Check-ins</h3>
+            <p id="today-scans">0</p>
+        </div>
+    </div>
+
+    <h3 class="section-title">Active Devices on Network</h3>
+    <div class="table-container">
+        <table id="device-table">
+            <thead>
+                <tr>
+                    <th>Connection</th>
+                    <th>Device Name</th>
+                    <th>IP Address</th>
+                    <th>Latency</th>
+                    <th>Check-ins Today</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Rows injected by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        async function fetchStats() {
+            const start = performance.now();
+            try {
+                const res = await fetch('/api/network-data');
+                const data = await res.json();
+                
+                // Calculate network round-trip time for latency
+                const latency = Math.round(performance.now() - start);
+
+                // Update Hub Status
+                document.getElementById('hub-status-text').innerText = "Live";
+                document.getElementById('hub-status-dot').className = "status-dot status-good";
+
+                // Update Global Stats Cards
+                document.getElementById('tot-reg').innerText = data.global_stats.total_registrations;
+                document.getElementById('tot-scans').innerText = data.global_stats.total_scans;
+                document.getElementById('today-scans').innerText = data.global_stats.today_scans;
+
+                // Update Device Table
+                const tbody = document.querySelector('#device-table tbody');
+                tbody.innerHTML = '';
+
+                if (Object.keys(data.active_devices).length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:#aaa;">No active devices found on the network.</td></tr>';
+                    return;
+                }
+
+                for (const [ip, info] of Object.entries(data.active_devices)) {
+                    const tr = document.createElement('tr');
+                    
+                    const secondsAgo = Math.round((Date.now()/1000) - info.last_seen);
+                    let statusClass = 'status-good';
+                    let statusText = 'Online';
+                    
+                    if (secondsAgo > 10) {
+                        statusClass = 'status-fair';
+                        statusText = 'Lagging';
+                    }
+                    if (secondsAgo > 25) {
+                        statusClass = 'status-poor';
+                        statusText = 'Dropping';
+                    }
+
+                    const scansToday = data.device_scans[info.name] || 0;
+
+                    tr.innerHTML = `
+                        <td>
+                            <div class="status-wrapper">
+                                <span class="status-dot ${statusClass}"></span> 
+                                <span style="font-size: 0.85rem;">${statusText} (${secondsAgo}s)</span>
+                            </div>
+                        </td>
+                        <td><strong>${info.name}</strong></td>
+                        <td style="font-family: monospace; color: #aaa;">${ip}</td>
+                        <td><span class="latency-badge">${latency} ms</span></td>
+                        <td>${scansToday}</td>
+                        <td>
+                            <button class="btn-edit" onclick="renameDevice('${ip}', '${info.name.replace(/'/g, "\'")}')">Edit Name</button>
+                        </td>
+                    `;
+                    tbody.appendChild(tr);
+                }
+            } catch (e) {
+                document.getElementById('hub-status-text').innerText = "Hub Offline";
+                document.getElementById('hub-status-dot').className = "status-dot status-poor";
+                console.error("Network disconnected.");
+            }
+        }
+
+        async function renameDevice(ip, oldName) {
+            const newName = prompt(`Enter a new custom name for the device at ${ip}:`, oldName);
+            if (newName && newName.trim() !== '' && newName !== oldName) {
+                try {
+                    await fetch('/api/device/rename', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ip: ip, new_name: newName.trim() })
+                    });
+                    fetchStats(); // Instantly refresh table
+                } catch (err) {
+                    alert('Failed to rename device. Check server connection.');
+                }
+            }
+        }
+
+        // Poll the server every 3 seconds
+        setInterval(fetchStats, 3000);
+        fetchStats();
+    </script>
+</body>
+</html>

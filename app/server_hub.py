@@ -6,6 +6,10 @@ import subprocess
 import socket
 import random
 import platform
+import re
+import time
+import uuid
+import queue  # <-- IMPORTED FOR THREAD-SAFE GUI UPDATES
 from datetime import datetime, timezone
 
 # GUI Imports
@@ -16,14 +20,10 @@ import qrcode
 from PIL import Image, ImageTk
 import webbrowser
 
-# Flask Imports (Integrated API Engine)
+# Flask Imports
 from flask import Flask, render_template, request, jsonify
 from werkzeug.serving import make_server
-import random 
 
-# ==============================================================================
-# DPI AWARENESS (Auto-scaling for HD, 2K, 4K displays)
-# ==============================================================================
 if platform.system() == "Windows":
     try:
         from ctypes import windll
@@ -31,36 +31,32 @@ if platform.system() == "Windows":
     except Exception:
         pass
 
-# Import models and DB initialization from your schema
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
 except ModuleNotFoundError:
     from schema import Attendee, OfflineKioskAttendee, get_database_sessions
 
-# ==============================================================================
-# PATHS & CONFIG
-# ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
 FLASK_PORT = 5000
 
-# ==============================================================================
-# GLOBAL APP & LIVE LOGGING HOOK
-# ==============================================================================
-app = Flask(__name__)
-gui_log_callback = None  # Hook to stream Flask requests directly to the GUI
+template_dir = os.path.join(BASE_DIR, 'templates')
+static_dir = os.path.join(BASE_DIR, 'static')
+app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
-# Global Server-Side Testing State (Controlled by ServerHub Desktop UI)
+gui_log_callback = None
 SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
+ACTIVE_DEVICES = {}
+
 @app.after_request
 def log_request(response):
-    """Intercepts every HTTP request and sends detailed logs to the GUI."""
-    if request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
-        return response  # Skip noisy static assets
+    """Intercepts HTTP requests and sends detailed logs to the GUI, hiding background noise."""
+    if request.path in ['/api/status', '/api/network-data'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
+        return response  
         
     current_time_str = datetime.now().strftime('%H:%M:%S')
     log_msg = f"[{current_time_str}] {request.method} {request.path} — Status: {response.status_code}"
@@ -70,56 +66,66 @@ def log_request(response):
 
 # --- HTML Template Routes ---
 @app.route('/')
-def index():
-    return render_template('index.html')
+def index(): return render_template('index.html')
 
 @app.route('/scanner')
-def scanner():
-    return render_template('check_in.html')
+def scanner(): return render_template('check_in.html')
 
 @app.route('/register')
-def register():
-    return render_template('registration.html')
+def register(): return render_template('registration.html')
 
 @app.route('/stats')
-def stats():
-    return render_template('network_stats.html')
+def stats(): return render_template('network_stats.html')
 
 # --- API Endpoints ---
 @app.route('/api/status', methods=['GET'])
 def get_server_status():
-    """Provides global testing state to all connected mobile scanners."""
-    return jsonify({
-        "test_mode": SERVER_TEST_MODE,
-        "test_date": SERVER_TEST_DATE
-    }), 200
+    ip = request.remote_addr
+    custom_device_name = request.args.get('device_name', 'Unknown Device')
+    
+    if custom_device_name and custom_device_name != "null":
+        ACTIVE_DEVICES[ip] = {
+            'last_seen': time.time(),
+            'name': custom_device_name
+        }
+
+    return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
 
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
     global SERVER_TEST_MODE, SERVER_TEST_DATE
     data = request.json
-    raw_id = data.get('attendee_id')
-    device_name = data.get('device', 'Local-Kiosk')
     
-    if not raw_id:
-        return jsonify({"status": "error", "message": "No ID provided"}), 400
+    identifier = str(data.get('attendee_id', '')).strip()
+    search_type = data.get('search_type', 'id')
+    device_name = data.get('device_name', f"Scanner ({request.remote_addr})")
+    
+    if not identifier:
+        return jsonify({"status": "error", "message": "No ID or Phone provided"}), 400
 
-    scanned_id = raw_id
-    if isinstance(raw_id, str):
+    if search_type == 'id' and "{" in identifier:
         try:
-            parsed_json = json.loads(raw_id)
-            if isinstance(parsed_json, dict):
-                scanned_id = parsed_json.get('attendeeId') or parsed_json.get('attendee_id') or parsed_json.get('id') or raw_id
-        except Exception:
-            pass
+            parsed_json = json.loads(identifier)
+            identifier = parsed_json.get('attendeeId', parsed_json.get('attendee_id', parsed_json.get('id', identifier)))
+        except Exception: pass
 
     sessions = get_database_sessions()
     session = sessions.get('mysql')()
     
     try:
-        attendee = session.query(Attendee).filter_by(attendee_id=scanned_id).first()
+        attendee = None
+        if search_type == 'phone':
+            attendee = session.query(Attendee).filter_by(mobile=identifier).first()
+            if not attendee:
+                attendee = session.query(OfflineKioskAttendee).filter_by(mobile=identifier).first()
+        else:
+            attendee = session.query(Attendee).filter_by(attendee_id=identifier).first()
+            if not attendee:
+                attendee = session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).first()
+
         if not attendee:
-            return jsonify({"status": "error", "message": f"ID not found: {scanned_id}"}), 404
+            search_label = "Phone" if search_type == 'phone' else "ID"
+            return jsonify({"status": "error", "message": f"{search_label} not found: {identifier}"}), 404
 
         history = attendee.checkin_history
         if isinstance(history, str):
@@ -127,34 +133,17 @@ def process_checkin():
             except: history = {}
         if not history: history = {}
 
-        # Use server-enforced testing date if active, otherwise real UTC date
-        if SERVER_TEST_MODE:
-            today_date = SERVER_TEST_DATE
-        else:
-            today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-
-        # --- RESTRICT TO VALID EVENT DAYS ---
+        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
+        
         if today_date not in valid_event_days:
-            return jsonify({
-                "status": "error", 
-                "message": f"Scan rejected: {today_date} is not an official event day."
-            }), 400
+            return jsonify({"status": "error", "message": f"Scan rejected: {today_date} is not an official event day."}), 400
 
-        # --- PREVENT DOUBLE CHECK-IN ON THE SAME DAY ---
         if today_date in history:
-            return jsonify({
-                "status": "error", 
-                "message": f"Already checked in today: {attendee.full_name}"
-            }), 400
+            return jsonify({"status": "error", "message": f"Already checked in today: {attendee.full_name}"}), 400
 
         iso_timestamp = datetime.now(timezone.utc).isoformat()
-
-        history[today_date] = {
-            "device": device_name,
-            "status": "CHECKED_IN",
-            "timestamp": iso_timestamp
-        }
+        history[today_date] = {"device": device_name, "status": "CHECKED_IN", "timestamp": iso_timestamp}
 
         attendee.checkin_history = json.dumps(history)
         attendee.needs_cloud_sync = True
@@ -163,8 +152,7 @@ def process_checkin():
         session.commit()
         
         success_msg = f"Checked in: {attendee.full_name}"
-        if SERVER_TEST_MODE:
-            success_msg += f" (Test: {today_date})"
+        if SERVER_TEST_MODE: success_msg += f" (Test: {today_date})"
             
         return jsonify({"status": "success", "message": success_msg, "time": iso_timestamp}), 200
 
@@ -174,39 +162,50 @@ def process_checkin():
     finally:
         session.close()
 
-
 @app.route('/api/register', methods=['POST'])
 def process_registration():
+    global SERVER_TEST_MODE, SERVER_TEST_DATE
     data = request.json
     sessions = get_database_sessions()
     session = sessions.get('mysql')()
     
-    def gen_id(att_type: str) -> str:
-        """Generates a unique TDE26 ID based on attendee type."""
-        prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
-        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-        for _ in range(5000):
-            code = "".join(random.choices(chars, k=6))
-            aid = f"TDE26-{prefix}-{code}"
-            
-            # Check BOTH tables to guarantee 100% uniqueness
-            main_exists = session.query(Attendee).filter_by(attendee_id=aid).first()
-            kiosk_exists = session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first()
-            
-            if not main_exists and not kiosk_exists:
-                return aid
-        raise RuntimeError("ID generation failed after 5000 tries")
+    mobile_number = data.get('mobile', '').strip()
+    
+    req_ip = request.remote_addr
+    req_os = request.user_agent.platform or "Unknown"
+    device_label = data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})")
 
     try:
-        # Generate the smart ID using your custom logic
+        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
+        if existing_main: return jsonify({"status": "already_registered", "message": "Found in main DB.", "attendee_id": existing_main.attendee_id}), 200
+
+        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
+        if existing_kiosk: return jsonify({"status": "already_registered", "message": "Found in kiosk DB.", "attendee_id": existing_kiosk.attendee_id}), 200
+
+        def gen_id(att_type: str) -> str:
+            prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
+            chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+            for _ in range(5000):
+                code = "".join(random.choices(chars, k=6))
+                aid = f"TDE26-{prefix}-{code}"
+                if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first():
+                    return aid
+            raise RuntimeError("ID generation failed")
+
         new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
         
-        # Save all the data from the new registration form
+        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
+        
+        checkin_history_dict = {}
+        if today_date in valid_event_days:
+            checkin_history_dict[today_date] = {"device": device_label, "status": "CHECKED_IN", "timestamp": datetime.now(timezone.utc).isoformat()}
+
         new_kiosk_reg = OfflineKioskAttendee(
-            temp_uuid=new_attendee_id, # Stored as the primary identifying UUID
-            attendee_id=new_attendee_id, # Safely map to the cloud expected ID column
+            id=str(uuid.uuid4()), 
+            attendee_id=new_attendee_id, 
             full_name=data.get('full_name'),
-            mobile=data.get('mobile'),
+            mobile=mobile_number,
             email=data.get('email', ''),
             gender=data.get('gender'),
             attendee_type=data.get('attendee_type'),
@@ -217,24 +216,66 @@ def process_registration():
             city=data.get('city', ''),
             state=data.get('state', ''),
             pincode=data.get('pincode', ''),
+            attendance_days=data.get('attendance_days', []),
+            photo_url=None, 
+            checkin_history=json.dumps(checkin_history_dict), 
+            device_name=device_label,
             needs_cloud_sync=True,
             needs_sheet_sync=True
         )
         session.add(new_kiosk_reg)
         session.commit()
-        
-        # Send the generated ID back to the HTML to display on the success modal
-        return jsonify({
-            "status": "success", 
-            "message": "Registration saved locally.",
-            "attendee_id": new_attendee_id
-        }), 200
+        return jsonify({"status": "success", "message": "Registration saved locally.", "attendee_id": new_attendee_id}), 200
 
     except Exception as e:
         session.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         session.close()
+
+@app.route('/api/network-data', methods=['GET'])
+def get_network_data():
+    current_time = time.time()
+    active_devices = {}
+    for ip, data in list(ACTIVE_DEVICES.items()):
+        if current_time - data['last_seen'] < 30: active_devices[ip] = data
+        else: del ACTIVE_DEVICES[ip]
+
+    sessions = get_database_sessions()
+    session = sessions.get('mysql')()
+    global_stats = {"total_scans": 0, "total_registrations": 0, "today_scans": 0}
+    device_stats = {}
+    
+    try:
+        global_stats["total_registrations"] = session.query(OfflineKioskAttendee).count()
+        attendees = session.query(Attendee).all()
+        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        
+        for att in attendees:
+            history = att.checkin_history
+            if isinstance(history, str):
+                try: history = json.loads(history)
+                except: history = {}
+            if history:
+                global_stats["total_scans"] += len(history)
+                if today_date in history:
+                    global_stats["today_scans"] += 1
+                    device_name = history[today_date].get("device", "Unknown Device")
+                    device_stats[device_name] = device_stats.get(device_name, 0) + 1
+    except Exception: pass
+    finally: session.close()
+
+    return jsonify({"active_devices": active_devices, "global_stats": global_stats, "device_scans": device_stats}), 200
+
+@app.route('/api/device/rename', methods=['POST'])
+def rename_device():
+    data = request.json or {}
+    ip = data.get('ip')
+    new_name = data.get('new_name')
+    if ip in ACTIVE_DEVICES and new_name:
+        ACTIVE_DEVICES[ip]['name'] = new_name
+        return jsonify({"status": "success", "message": "Device renamed successfully"}), 200
+    return jsonify({"status": "error", "message": "Device not found or invalid name"}), 404
 
 # ==============================================================================
 # FLASK THREAD CONTROLLER
@@ -246,11 +287,8 @@ class FlaskServerThread(threading.Thread):
         self.ctx = app.app_context()
         self.ctx.push()
 
-    def run(self):
-        self.server.serve_forever()
-
-    def shutdown(self):
-        self.server.shutdown()
+    def run(self): self.server.serve_forever()
+    def shutdown(self): self.server.shutdown()
 
 def get_local_ip():
     try:
@@ -259,25 +297,24 @@ def get_local_ip():
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except Exception:
-        return "127.0.0.1"
+    except Exception: return "127.0.0.1"
 
 def generate_qr_image(data, size=150):
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
     qr.add_data(data)
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
-    img = img.resize((size, size), Image.Resampling.LANCZOS)
-    return ImageTk.PhotoImage(img)
+    return ImageTk.PhotoImage(img.resize((size, size), Image.Resampling.LANCZOS))
 
 # ==============================================================================
 # MAIN SERVER HUB GUI
 # ==============================================================================
 class ServerHub(ttk.Window):
     def __init__(self):
-        super().__init__(themename="cyborg", title="TDE UP 2026 — Event Hub V1.0")
+        # Used 'darkly' for a flatter, more VSCode-like foundation instead of cyborg
+        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V1.0")
         self.geometry("1600x950")
-        self.minsize(900, 600)
+        self.minsize(1000, 700)
         
         self.local_ip = get_local_ip()
         self.flask_url = f"https://{self.local_ip}:{FLASK_PORT}"
@@ -288,11 +325,16 @@ class ServerHub(ttk.Window):
         self.connect_db()
 
         self.flask_thread = None
+        self.cf_process = None 
+        
+        # --- THE FIX: THREAD-SAFE GUI QUEUE ---
+        self.gui_queue = queue.Queue()
         
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         
         self.build_ui()
+        self.process_gui_queue() # Start polling the queue safely
         self.refresh_stats()
 
     def connect_db(self):
@@ -302,6 +344,29 @@ class ServerHub(ttk.Window):
             self.SessionSQLite = sessions.get('sqlite')
         except Exception as e:
             logging.error(f"Database Connection Failed: {e}")
+
+    # --- QUEUE PROCESSOR ---
+    def process_gui_queue(self):
+        """Safely executes GUI updates pushed by background threads (Flask, Cloudflare)"""
+        while not self.gui_queue.empty():
+            try:
+                task = self.gui_queue.get_nowait()
+                task() # Execute the GUI command safely in the main thread
+            except queue.Empty:
+                break
+        self.after(50, self.process_gui_queue)
+
+    def _append_log(self, scrolled_text_widget, message):
+        """Pushes the log update into the safe queue."""
+        def append():
+            scrolled_text_widget.text.configure(state=NORMAL)
+            scrolled_text_widget.text.insert(END, message + "\n")
+            scrolled_text_widget.text.see(END)
+            scrolled_text_widget.text.configure(state=DISABLED)
+        self.gui_queue.put(append)
+
+    def log_flask_event(self, message):
+        self._append_log(self.log_flask, message)
 
     def copy_to_clipboard(self, text):
         if not text or text == "Offline": return
@@ -315,9 +380,6 @@ class ServerHub(ttk.Window):
         webbrowser.open(url)
         self._append_log(self.log_network, f"[BROWSER] Opened URL: {url}")
 
-    def log_flask_event(self, message):
-        self._append_log(self.log_flask, message)
-
     def build_ui(self):
         self.root_container = ttk.Frame(self)
         self.root_container.pack(fill=BOTH, expand=True)
@@ -326,7 +388,6 @@ class ServerHub(ttk.Window):
         self.h_scrollbar = ttk.Scrollbar(self.root_container, orient=HORIZONTAL)
 
         self.canvas = ttk.Canvas(self.root_container, highlightthickness=0, background=self.style.colors.bg)
-        
         self.v_scrollbar.configure(command=self.canvas.yview)
         self.h_scrollbar.configure(command=self.canvas.xview)
         self.canvas.configure(yscrollcommand=self.v_scrollbar.set, xscrollcommand=self.h_scrollbar.set)
@@ -337,66 +398,61 @@ class ServerHub(ttk.Window):
 
         self.main_frame = ttk.Frame(self.canvas)
         self.canvas_window = self.canvas.create_window((0, 0), window=self.main_frame, anchor="nw")
-
         self.main_frame.bind("<Configure>", self.on_frame_configure)
         self.canvas.bind("<Configure>", self.on_canvas_configure)
 
-        sidebar = ttk.Frame(self.main_frame, width=300, padding=15)
+        # --- SIDEBAR ---
+        sidebar = ttk.Frame(self.main_frame, width=320, padding=20)
         sidebar.pack(side=LEFT, fill=Y)
         sidebar.pack_propagate(False)
 
-        ttk.Label(sidebar, text="NETWORK CONTROLS", font="-size 14 -weight bold", bootstyle=INFO).pack(pady=(0, 15), anchor=W)
+        ttk.Label(sidebar, text="NETWORK & ROUTING", font="-size 13 -weight bold", bootstyle=INFO).pack(pady=(0, 15), anchor=W)
 
-        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 Local API Engine ", padding=10)
+        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 Local API Engine ", padding=15)
         flask_frame.pack(fill=X, pady=5)
         
-        self.btn_start_flask = ttk.Button(flask_frame, text="▶ Start API Engine", bootstyle=SUCCESS, command=self.start_flask)
+        self.btn_start_flask = ttk.Button(flask_frame, text="▶ Start Engine", bootstyle=SUCCESS, command=self.start_flask)
         self.btn_start_flask.pack(fill=X, pady=3)
-        self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ Stop API Engine", bootstyle=DANGER, state=DISABLED, command=self.stop_flask)
+        self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ Stop Engine", bootstyle=DANGER, state=DISABLED, command=self.stop_flask)
         self.btn_stop_flask.pack(fill=X, pady=3)
         
-        ttk.Label(flask_frame, text="Local Network QR:", font="-weight bold", foreground="gray").pack(pady=(10, 5))
+        ttk.Label(flask_frame, text="Local Network QR:", font="-size 9 -weight bold", foreground="#888").pack(pady=(15, 5))
         self.lbl_flask_qr = ttk.Label(flask_frame)
         self.lbl_flask_qr.pack()
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
-        self.lbl_flask_link = ttk.Label(flask_frame, text="Server Offline", font="-size 8", foreground="gray", cursor="hand2")
-        self.lbl_flask_link.pack(pady=5)
+        self.lbl_flask_link = ttk.Label(flask_frame, text="Server Offline", font="-size 9", foreground="gray", cursor="hand2")
+        self.lbl_flask_link.pack(pady=8)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.flask_url) if self.flask_thread else None)
         
         flask_btn_row = ttk.Frame(flask_frame)
-        flask_btn_row.pack(fill=X, pady=(0, 5))
-        ttk.Button(flask_btn_row, text="Copy Link", bootstyle="outline-light", 
-                   command=lambda: self.copy_to_clipboard(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
-        ttk.Button(flask_btn_row, text="Browser", bootstyle="outline-info", 
-                   command=lambda: self.open_browser(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        flask_btn_row.pack(fill=X, pady=(5, 5))
+        ttk.Button(flask_btn_row, text="Copy Link", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        ttk.Button(flask_btn_row, text="Browser", bootstyle="outline-info", command=lambda: self.open_browser(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
 
-        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=10)
-        cf_frame.pack(fill=X, pady=15)
+        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=15)
+        cf_frame.pack(fill=X, pady=20)
         
         self.btn_start_cf = ttk.Button(cf_frame, text="▶ Start Tunnel", bootstyle=PRIMARY, state=DISABLED, command=self.start_cf)
         self.btn_start_cf.pack(fill=X, pady=3)
         self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ Stop Tunnel", bootstyle=DANGER, state=DISABLED, command=self.stop_cf)
         self.btn_stop_cf.pack(fill=X, pady=3)
 
-        ttk.Label(cf_frame, text="Public Tunnel QR:", font="-weight bold", foreground="gray").pack(pady=(10, 5))
+        ttk.Label(cf_frame, text="Public Tunnel QR:", font="-size 9 -weight bold", foreground="#888").pack(pady=(15, 5))
         self.lbl_cf_qr = ttk.Label(cf_frame)
         self.lbl_cf_qr.pack()
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         
-        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font="-size 8", foreground="gray", cursor="hand2")
-        self.lbl_cf_link.pack(pady=5)
+        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font="-size 9", foreground="gray", cursor="hand2")
+        self.lbl_cf_link.pack(pady=8)
         self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url != "Offline" else None)
 
         cf_btn_row = ttk.Frame(cf_frame)
-        cf_btn_row.pack(fill=X, pady=(0, 5))
-        ttk.Button(cf_btn_row, text="Copy Link", bootstyle="outline-light", 
-                   command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
-        ttk.Button(cf_btn_row, text="Browser", bootstyle="outline-info", 
-                   command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        cf_btn_row.pack(fill=X, pady=(5, 5))
+        ttk.Button(cf_btn_row, text="Copy Link", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        ttk.Button(cf_btn_row, text="Browser", bootstyle="outline-info", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
 
-        # --- TESTING MODE ---
-        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=10)
+        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=15)
         test_frame.pack(fill=X, pady=5)
         
         self.test_mode = ttk.BooleanVar(value=False)
@@ -406,23 +462,20 @@ class ServerHub(ttk.Window):
         self.chk_test.pack(anchor=W, pady=5)
         
         self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
-        self.cb_test_date.pack(fill=X)
+        self.cb_test_date.pack(fill=X, pady=(10, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
-        content = ttk.Frame(self.main_frame, padding=20)
+        # --- MAIN CONTENT AREA ---
+        content = ttk.Frame(self.main_frame, padding=25)
         content.pack(side=LEFT, fill=BOTH, expand=True)
 
         header = ttk.Frame(content)
-        header.pack(fill=X, pady=(0, 20))
+        header.pack(fill=X, pady=(0, 25))
         
-        ttk.Label(header, text="TDE UP 2026 — COMMAND CENTER", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(side=LEFT)
+        ttk.Label(header, text="TDE UP 2026 — COMMAND CENTER", font="-size 20 -weight bold", bootstyle=PRIMARY).pack(side=LEFT)
         
         status_frame = ttk.Frame(header)
         status_frame.pack(side=RIGHT)
-        
-        self.theme_var = ttk.BooleanVar(value=False)
-        self.chk_theme = ttk.Checkbutton(status_frame, text="☀️ Light Mode", variable=self.theme_var, bootstyle="light-round-toggle", command=self.toggle_theme)
-        self.chk_theme.pack(side=LEFT, padx=(0, 20))
         
         self.lbl_stat_cf = ttk.Label(status_frame, text="● Cloudflare: OFFLINE", bootstyle=SECONDARY, font="-weight bold")
         self.lbl_stat_cf.pack(side=LEFT, padx=10)
@@ -431,9 +484,13 @@ class ServerHub(ttk.Window):
         self.lbl_stat_mysql = ttk.Label(status_frame, text="● MYSQL: CHECKING", bootstyle=INFO, font="-weight bold")
         self.lbl_stat_mysql.pack(side=LEFT, padx=10)
 
-        ttk.Label(content, text="DATABASE TELEMETRY", font="-weight bold").pack(anchor=W, pady=(0, 5))
+        ttk.Label(content, text="📡 ACTIVE CONNECTED DEVICES", font="-size 11 -weight bold", bootstyle=INFO).pack(anchor=W, pady=(5, 5))
+        self.lbl_devices = ttk.Label(content, text="Awaiting connections...", font=("Consolas", 11), bootstyle=SUCCESS)
+        self.lbl_devices.pack(anchor=W, pady=(0, 20))
+
+        ttk.Label(content, text="🗄️ DATABASE TELEMETRY", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 10))
         row1 = ttk.Frame(content)
-        row1.pack(fill=X, pady=(0, 20))
+        row1.pack(fill=X, pady=(0, 25))
         self.stat_vars = {}
         
         self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
@@ -441,9 +498,9 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
         self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
 
-        ttk.Label(content, text="EVENT CHECK-IN METRICS", font="-weight bold").pack(anchor=W, pady=(5, 5))
+        ttk.Label(content, text="📅 EVENT CHECK-IN METRICS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 10))
         row2 = ttk.Frame(content)
-        row2.pack(fill=X, pady=(0, 20))
+        row2.pack(fill=X, pady=(0, 25))
         
         self._create_stat_card(row2, "TODAY CHECK-IN", "0", SUCCESS, "chk_today")
         self._create_stat_card(row2, "30th Aug Check-ins", "0", LIGHT, "chk_30")
@@ -451,7 +508,7 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-        ttk.Label(content, text="SYSTEM EVENT LOGS", font="-weight bold").pack(anchor=W, pady=(5, 5))
+        ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 10))
         logs_frame = ttk.Frame(content)
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
         
@@ -460,20 +517,11 @@ class ServerHub(ttk.Window):
         self.log_cf = self._create_log_box(logs_frame, "Cloudflare Tunnel Status")
 
         footer = ttk.Frame(content)
-        footer.pack(fill=X, pady=(10, 0))
-        ttk.Label(footer, text="Engineered for Event Resilience • Powered by EllowDigital", font="-size 8", foreground="gray").pack(side=RIGHT)
+        footer.pack(fill=X, pady=(15, 0))
+        ttk.Label(footer, text="Engineered for Event Resilience • Powered by EllowDigital", font="-size 9", foreground="#666").pack(side=RIGHT)
 
         self._append_log(self.log_network, f"System Boot: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self._append_log(self.log_network, f"Local Network IP Address Detected: {self.local_ip}")
-
-    def toggle_theme(self):
-        if self.theme_var.get():
-            self.style.theme_use('flatly')
-            self.chk_theme.configure(text="🌙 Dark Mode", bootstyle="dark-round-toggle")
-        else:
-            self.style.theme_use('cyborg')
-            self.chk_theme.configure(text="☀️ Light Mode", bootstyle="light-round-toggle")
-        self.canvas.configure(background=self.style.colors.bg)
 
     def on_frame_configure(self, event):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -491,57 +539,34 @@ class ServerHub(ttk.Window):
     def check_scrollbars(self):
         bbox = self.canvas.bbox("all")
         if bbox:
-            if bbox[3] - bbox[1] > self.canvas.winfo_height():
-                self.v_scrollbar.pack(side=RIGHT, fill=Y)
-            else:
-                self.v_scrollbar.pack_forget()
-            if bbox[2] - bbox[0] > self.canvas.winfo_width():
-                self.h_scrollbar.pack(side=BOTTOM, fill=X)
-            else:
-                self.h_scrollbar.pack_forget()
-
-    def on_mousewheel(self, event):
-        try:
-            widget_under_cursor = self.winfo_containing(event.x_root, event.y_root)
-            if isinstance(widget_under_cursor, ttk.Text): return
-            bbox = self.canvas.bbox("all")
-            if bbox and (bbox[3] - bbox[1] > self.canvas.winfo_height()):
-                if event.num == 4 or getattr(event, 'delta', 0) > 0:
-                    self.canvas.yview_scroll(-1, "units")
-                elif event.num == 5 or getattr(event, 'delta', 0) < 0:
-                    self.canvas.yview_scroll(1, "units")
-        except Exception:
-            pass
+            if bbox[3] - bbox[1] > self.canvas.winfo_height(): self.v_scrollbar.pack(side=RIGHT, fill=Y)
+            else: self.v_scrollbar.pack_forget()
+            if bbox[2] - bbox[0] > self.canvas.winfo_width(): self.h_scrollbar.pack(side=BOTTOM, fill=X)
+            else: self.h_scrollbar.pack_forget()
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        frame = ttk.Frame(parent, borderwidth=1, relief="solid", padding=20)
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
-        ttk.Label(frame, text=title, font="-size 9 -weight bold", bootstyle=style).pack(anchor=CENTER)
-        val_lbl = ttk.Label(frame, text=initial_value, font="-size 24 -weight bold")
-        val_lbl.pack(anchor=CENTER, pady=(10,0))
+        frame = ttk.Frame(parent, borderwidth=1, relief="solid", padding=20, bootstyle="dark")
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
+        ttk.Label(frame, text=title, font="-size 9 -weight bold", foreground="#AAA").pack(anchor=CENTER)
+        val_lbl = ttk.Label(frame, text=initial_value, font="-size 28 -weight bold", bootstyle=style)
+        val_lbl.pack(anchor=CENTER, pady=(12,0))
         self.stat_vars[var_name] = val_lbl
 
     def _create_log_box(self, parent, title):
-        frame = ttk.Frame(parent, borderwidth=1, relief="solid")
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
-        ttk.Label(frame, text=title, font="-weight bold", padding=8, bootstyle=SECONDARY).pack(anchor=W, fill=X)
-        log_box = ScrolledText(frame, font=("Consolas", 9))
-        log_box.pack(fill=BOTH, expand=True, padx=5, pady=5)
-        log_box.text.configure(state=DISABLED) 
+        frame = ttk.Frame(parent, borderwidth=1, relief="solid", bootstyle="dark")
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
+        ttk.Label(frame, text=title, font="-size 10 -weight bold", padding=10, background="#252526", foreground="#CCC").pack(anchor=W, fill=X)
+        
+        # Exact VSCode Editor Colors
+        log_box = ScrolledText(frame, font=("Consolas", 10))
+        log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
+        log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0) 
         return log_box
 
     def update_qr(self, label, data):
-        img = generate_qr_image(data, size=150)
+        img = generate_qr_image(data, size=160)
         label.configure(image=img)
         label.image = img
-
-    def _append_log(self, scrolled_text_widget, message):
-        def append():
-            scrolled_text_widget.text.configure(state=NORMAL)
-            scrolled_text_widget.text.insert(END, message + "\n")
-            scrolled_text_widget.text.see(END)
-            scrolled_text_widget.text.configure(state=DISABLED)
-        self.after(0, append)
 
     def toggle_test_mode(self):
         global SERVER_TEST_MODE
@@ -563,16 +588,26 @@ class ServerHub(ttk.Window):
         self.refresh_stats()
 
     def refresh_stats(self):
-        global SERVER_TEST_MODE, SERVER_TEST_DATE
-        if self.SessionMySQL:
-            self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
-        else:
-            self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
+        global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES
+        
+        current_time = time.time()
+        active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < 15]
+        
+        self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
+        
+        device_strings = []
+        for ip in active_ips:
+            name_str = ACTIVE_DEVICES[ip]['name']
+            device_strings.append(f"📱 {name_str} ({ip})")
+            
+        if device_strings: self.lbl_devices.configure(text="  |  ".join(device_strings), bootstyle=SUCCESS)
+        else: self.lbl_devices.configure(text="No external devices connected. Awaiting connections...", bootstyle=WARNING)
 
-        if self.SessionSQLite:
-            self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS)
-        else:
-            self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
+        if self.SessionMySQL: self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
+        else: self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
+
+        if self.SessionSQLite: self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS)
+        else: self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
 
         if not self.SessionMySQL: return
         
@@ -586,15 +621,8 @@ class ServerHub(ttk.Window):
             total_mysql = len(attendees)
             total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
             
-            chk_30, chk_31, chk_01 = 0, 0, 0
-            total_checkins = 0
-            
-            if SERVER_TEST_MODE:
-                today_str = SERVER_TEST_DATE
-            else:
-                today_str = datetime.now().strftime('%Y-%m-%d')
-                
-            chk_today = 0
+            chk_30, chk_31, chk_01, chk_today, total_checkins = 0, 0, 0, 0, 0
+            today_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now().strftime('%Y-%m-%d')
             
             for att in attendees:
                 history = att.checkin_history
@@ -603,7 +631,7 @@ class ServerHub(ttk.Window):
                     except: history = {}
                         
                 if history:
-                    total_checkins += 1
+                    total_checkins += len(history)
                     history_str = json.dumps(history)
                     if "2026-08-30" in history_str: chk_30 += 1
                     if "2026-08-31" in history_str: chk_31 += 1
@@ -613,7 +641,6 @@ class ServerHub(ttk.Window):
             self.stat_vars["total_att"].configure(text=str(total_mysql))
             self.stat_vars["kiosk_reg"].configure(text=str(kiosk_regs))
             self.stat_vars["sqlite_total"].configure(text=str(total_sqlite))
-            
             self.stat_vars["chk_30"].configure(text=str(chk_30))
             self.stat_vars["chk_31"].configure(text=str(chk_31))
             self.stat_vars["chk_01"].configure(text=str(chk_01))
@@ -634,15 +661,14 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.configure(state=NORMAL)
         self.flask_url = f"https://{self.local_ip}:{FLASK_PORT}"
         self.update_qr(self.lbl_flask_qr, self.flask_url)
-        self.lbl_flask_link.configure(text=self.flask_url, foreground="cyan")
+        self.lbl_flask_link.configure(text=self.flask_url, foreground="#4D9CE6")
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting secure HTTPS API Engine...")
         self.flask_thread = FlaskServerThread(app, '0.0.0.0', FLASK_PORT)
         self.flask_thread.start()
         self._append_log(self.log_flask, f"[SYSTEM] Secure API Engine listening natively on {self.flask_url}")
         
     def stop_flask(self):
-        if self.btn_stop_cf['state'] == NORMAL:
-            self.stop_cf()
+        if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
         self.btn_stop_flask.configure(state=DISABLED)
         self.btn_start_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=DISABLED)
@@ -658,18 +684,53 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.configure(state=DISABLED)
         self.btn_stop_cf.configure(state=NORMAL)
         self.lbl_stat_cf.configure(text="● Cloudflare: CONNECTING", bootstyle=WARNING)
-        random_hash = random.randint(1000,9999)
-        self.cloudflare_url = f"https://eventhub-{random_hash}.trycloudflare.com"
-        self.update_qr(self.lbl_cf_qr, self.cloudflare_url)
-        self.lbl_cf_link.configure(text=self.cloudflare_url, foreground="cyan")
-        self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS)
-        self._append_log(self.log_cf, f"[SUCCESS] Traffic successfully bridged to: {self.cloudflare_url}")
+        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel to Edge network...")
+
+        def _run_cf():
+            try:
+                cmd = ["cloudflared", "tunnel", "--url", f"https://127.0.0.1:{FLASK_PORT}", "--no-tls-verify"]
+                creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+                
+                self.cf_process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=creationflags
+                )
+
+                url_found = False
+                for line in self.cf_process.stdout:
+                    self._append_log(self.log_cf, line.strip())
+                    if not url_found:
+                        match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
+                        if match:
+                            self.cloudflare_url = match.group(0)
+                            url_found = True
+                            
+                            # --- THE FIX: QUEUED GUI UPDATES FROM BACKGROUND THREAD ---
+                            self.gui_queue.put(lambda: self.update_qr(self.lbl_cf_qr, self.cloudflare_url))
+                            self.gui_queue.put(lambda: self.lbl_cf_link.configure(text=self.cloudflare_url, foreground="#4D9CE6"))
+                            self.gui_queue.put(lambda: self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS))
+                            self._append_log(self.log_cf, f"[SUCCESS] Traffic successfully bridged to: {self.cloudflare_url}")
+            except FileNotFoundError:
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, "[ERROR] 'cloudflared' not found. Is it installed and in your system PATH?")
+            except Exception as e:
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, f"[ERROR] Cloudflare Tunnel failed: {str(e)}")
+
+        threading.Thread(target=_run_cf, daemon=True).start()
         
     def stop_cf(self):
         self.btn_stop_cf.configure(state=DISABLED)
-        if self.btn_stop_flask['state'] == NORMAL:
-            self.btn_start_cf.configure(state=NORMAL)
+        if self.btn_stop_flask['state'] == NORMAL: self.btn_start_cf.configure(state=NORMAL)
         self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
+        
+        if hasattr(self, 'cf_process') and self.cf_process:
+            try:
+                self.cf_process.terminate()
+                self.cf_process.wait(timeout=2)
+            except Exception: pass
+            finally: self.cf_process = None
+
+        self.cloudflare_url = "Offline"
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel connection closed.")

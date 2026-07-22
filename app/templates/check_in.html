@@ -37,7 +37,6 @@
             border-radius: 6px;
         }
 
-        /* Live Network Status Pill */
         .network-pill {
             font-size: 0.75rem;
             padding: 5px 10px;
@@ -55,7 +54,50 @@
         .net-poor { background: #ff4444; box-shadow: 0 0 8px #ff4444; }
         .net-offline { background: #757575; }
 
-        /* Server-driven Testing Banner */
+        /* Tabs UI */
+        .tabs {
+            display: flex;
+            width: 100%;
+            max-width: 500px;
+            background: #1a1a1a;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            overflow: hidden;
+            border: 1px solid #333;
+        }
+        .tab-btn {
+            flex: 1;
+            padding: 12px;
+            background: transparent;
+            color: #aaa;
+            border: none;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            background: #00d2ff;
+            color: #000;
+        }
+
+        /* Device Identity Display */
+        .device-identity {
+            width: 100%;
+            max-width: 500px;
+            text-align: center;
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-bottom: 15px;
+            cursor: pointer;
+            padding: 5px;
+            background: #1a1a1a;
+            border-radius: 6px;
+            border: 1px solid #333;
+            box-sizing: border-box;
+        }
+        .device-identity span { color: #00d2ff; font-weight: bold; }
+
         #test-banner {
             width: 100%;
             max-width: 500px;
@@ -72,20 +114,27 @@
             box-shadow: 0 0 15px rgba(255, 152, 0, 0.4);
         }
 
-        /* Scanner Container */
         .scanner-wrapper {
             width: 100%;
             max-width: 500px;
             position: relative;
         }
 
-        #reader {
+        /* Improved Scanner Box & Laser Animation */
+        .scanner-box {
+            position: relative;
             width: 100%;
             border-radius: 12px;
             overflow: hidden;
-            border: 2px solid #333 !important;
+            border: 2px solid #333;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             background: #000;
+            min-height: 250px;
+        }
+
+        #reader {
+            width: 100%;
+            border: none !important;
         }
 
         #reader__dashboard_section_csr button, 
@@ -94,12 +143,53 @@
             display: none !important;
         }
 
-        /* Samsung-style Zoom Bar Overlay */
+        .scan-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 10;
+            pointer-events: none;
+            display: none; /* Toggled via JS */
+        }
+        
+        .scan-laser {
+            width: 100%;
+            height: 3px;
+            background-color: #00d2ff;
+            box-shadow: 0 0 15px #00d2ff, 0 0 30px #00d2ff;
+            position: absolute;
+            animation: scan 2.5s infinite ease-in-out;
+        }
+
+        @keyframes scan {
+            0%, 100% { top: 5%; opacity: 0; }
+            10%, 90% { opacity: 1; }
+            50% { top: 95%; }
+        }
+
+        /* Camera Power Controls */
+        .camera-toggle-btn {
+            width: 100%;
+            padding: 12px;
+            background: #ffbb33;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background 0.2s;
+        }
+        .camera-toggle-btn.paused {
+            background: #00e676; /* Turns green when ready to resume */
+            color: #000;
+        }
+
         .zoom-toolbar {
             display: flex;
             justify-content: center;
             gap: 10px;
-            margin-top: 10px;
+            margin-top: 15px;
             width: 100%;
         }
 
@@ -115,10 +205,90 @@
             transition: background 0.2s;
         }
 
-        .zoom-btn:active {
+        .zoom-btn:active, .zoom-btn.active {
             background: #00d2ff;
             color: #000;
         }
+
+        /* Manual Entry Form */
+        .manual-wrapper {
+            width: 100%;
+            max-width: 500px;
+            display: none;
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            box-sizing: border-box;
+        }
+        
+        .input-group {
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .input-group label {
+            font-size: 0.85rem;
+            color: #00d2ff;
+            margin-bottom: 8px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .input-group input {
+            background: #121212;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 12px 15px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            transition: border-color 0.2s;
+            font-family: monospace;
+            letter-spacing: 1px;
+            text-align: center;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #00d2ff;
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 12px;
+            background: #2a2a2a;
+            color: #fff;
+            border: 1px solid #444;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-submit:hover, .btn-submit:active {
+            background: #00d2ff;
+            color: #000;
+            border-color: #00d2ff;
+        }
+
+        .divider {
+            text-align: center;
+            margin: 20px 0;
+            color: #555;
+            position: relative;
+        }
+        .divider::before, .divider::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            width: 40%;
+            height: 1px;
+            background: #333;
+        }
+        .divider::before { left: 0; }
+        .divider::after { right: 0; }
 
         #result-card {
             margin-top: 15px;
@@ -135,6 +305,25 @@
 
         .success { background-color: #00e676; color: #000; }
         .error { background-color: #ff1744; color: #fff; }
+
+        /* Device Name Registration Modal */
+        #device-modal {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9);
+            z-index: 9999; align-items: center; justify-content: center;
+        }
+        .dev-modal-content {
+            background: #1e1e1e; padding: 30px; border-radius: 12px;
+            border: 1px solid #00d2ff; width: 90%; max-width: 350px; text-align: center;
+        }
+        .dev-modal-content input {
+            width: 100%; padding: 12px; background: #121212; color: #fff;
+            border: 1px solid #444; border-radius: 6px; box-sizing: border-box;
+            margin-bottom: 15px; font-size: 1rem; text-align: center;
+        }
+        .dev-modal-content button {
+            width: 100%; padding: 12px; background: #00d2ff; color: #000;
+            font-weight: bold; border: none; border-radius: 6px; cursor: pointer;
+        }
     </style>
 </head>
 
@@ -142,30 +331,263 @@
     <div class="header">
         <a href="/" class="btn-back">⬅ Back</a>
         <h3 style="margin:0;">QR Check-in</h3>
-        <!-- Live Network Quality Widget -->
         <div id="network-pill" class="network-pill">
             <span id="net-dot" class="net-dot net-offline"></span>
             <span id="net-text">Checking...</span>
         </div>
     </div>
 
-    <!-- Auto-reflecting Server Test Mode Banner -->
+    <div class="device-identity" onclick="promptDeviceName()">
+        Scanner Name: <span id="display-device-name">Loading...</span> ✏️
+    </div>
+    
     <div id="test-banner">🧪 TESTING MODE ACTIVE: Simulating Date <span id="banner-date"></span></div>
 
-    <div class="scanner-wrapper">
-        <div id="reader"></div>
-        <!-- Samsung-Style Zoom Toolbar -->
+    <!-- Mode Tabs -->
+    <div class="tabs">
+        <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">📷 QR Scanner</button>
+        <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">⌨️ Manual Entry</button>
+    </div>
+
+    <!-- QR Scanner View -->
+    <div class="scanner-wrapper" id="qr-view">
+        <div class="scanner-box">
+            <div id="reader"></div>
+            <!-- Laser Animation Overlay -->
+            <div class="scan-overlay" id="scan-overlay">
+                <div class="scan-laser"></div>
+            </div>
+        </div>
+
+        <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
+            ⏸ Pause Scanner (Save Battery)
+        </button>
+
         <div class="zoom-toolbar" id="zoom-controls" style="display:none;">
-            <button class="zoom-btn" onclick="adjustZoom(1)">1x (Reset)</button>
-            <button class="zoom-btn" onclick="adjustZoom(2)">2x Zoom</button>
-            <button class="zoom-btn" onclick="adjustZoom(3)">3x Zoom</button>
+            <button class="zoom-btn" id="btn-zoom-1" onclick="adjustZoom(1)">1x</button>
+            <button class="zoom-btn active" id="btn-zoom-2" onclick="adjustZoom(2)">2x Auto</button>
+            <button class="zoom-btn" id="btn-zoom-3" onclick="adjustZoom(3)">3x</button>
+        </div>
+    </div>
+
+    <!-- Manual Entry View -->
+    <div class="manual-wrapper" id="manual-view">
+        <div class="input-group">
+            <label>Find by Attendee ID</label>
+            <input type="text" id="manual-id" placeholder="TDE26-G-XXXXXX" oninput="formatID(this)" maxlength="14">
+            <button class="btn-submit" style="margin-top: 10px;" onclick="submitManual('id')">Check In by ID</button>
+        </div>
+
+        <div class="divider">OR</div>
+
+        <div class="input-group">
+            <label>Find by Phone Number</label>
+            <input type="tel" id="manual-phone" placeholder="10-digit number" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <button class="btn-submit" style="margin-top: 10px;" onclick="submitManual('phone')">Check In by Phone</button>
         </div>
     </div>
 
     <div id="result-card"></div>
 
+    <!-- Device Registry Modal -->
+    <div id="device-modal">
+        <div class="dev-modal-content">
+            <h3 style="margin-top:0; color:#00d2ff;">Identify Scanner</h3>
+            <p style="font-size:0.9rem; color:#aaa; margin-bottom:20px;">Name this device so the Hub can track it.</p>
+            <input type="text" id="device-name-input" placeholder="e.g. Gate 1, VIP Scanner">
+            <button onclick="saveDeviceName()">Save Device Name</button>
+        </div>
+    </div>
+
     <script>
-        // --- AUDIO FEEDBACK ENGINE ---
+        // --- HARDWARE POWER MANAGEMENT ---
+        let html5QrCode = null;
+        let isCameraActive = false;
+        let isProcessing = false;
+
+        async function startHardware() {
+            if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
+            
+            if (!isCameraActive) {
+                const btn = document.getElementById('camera-toggle-btn');
+                btn.innerHTML = '⏳ Starting Camera...';
+                btn.classList.remove('paused');
+
+                const config = { 
+                    fps: 20, 
+                    qrbox: { width: 220, height: 220 }, 
+                    aspectRatio: 1.0,
+                    videoConstraints: { facingMode: "environment", focusMode: "continuous" }
+                };
+
+                try {
+                    await html5QrCode.start(config.videoConstraints, config, onScanSuccess);
+                    isCameraActive = true;
+                    btn.innerHTML = '⏸ Pause Scanner (Save Battery)';
+                    document.getElementById('scan-overlay').style.display = 'block';
+
+                    setTimeout(() => {
+                        try {
+                            const videoTrack = html5QrCode.getRunningTrack();
+                            if (videoTrack) {
+                                const capabilities = videoTrack.getCapabilities();
+                                if (capabilities && capabilities.zoom) {
+                                    document.getElementById('zoom-controls').style.display = 'flex';
+                                    adjustZoom(2); 
+                                }
+                            }
+                        } catch (err) {}
+                    }, 1000);
+                } catch (err) {
+                    showResult("Camera permission denied.", false);
+                    btn.innerHTML = '▶ Camera Failed';
+                    btn.classList.add('paused');
+                }
+            }
+        }
+
+        async function stopHardware() {
+            if (html5QrCode && isCameraActive) {
+                try {
+                    if (html5QrCode.getState() === 2) { // 2 = SCANNING state
+                        await html5QrCode.stop();
+                    }
+                    isCameraActive = false;
+                    const btn = document.getElementById('camera-toggle-btn');
+                    btn.innerHTML = '▶ Resume Scanner';
+                    btn.classList.add('paused');
+                    document.getElementById('scan-overlay').style.display = 'none';
+                    document.getElementById('zoom-controls').style.display = 'none';
+                } catch(e) { console.error("Failed to stop hardware", e); }
+            }
+        }
+
+        async function toggleCamera() {
+            if (isCameraActive) await stopHardware();
+            else await startHardware();
+        }
+
+        // --- UI TOGGLE LOGIC ---
+        async function switchMode(mode) {
+            document.getElementById('result-card').style.display = 'none';
+            if (mode === 'qr') {
+                document.getElementById('tab-qr').classList.add('active');
+                document.getElementById('tab-manual').classList.remove('active');
+                document.getElementById('qr-view').style.display = 'block';
+                document.getElementById('manual-view').style.display = 'none';
+                await startHardware(); // Automatically resume camera when switching back to scanner tab
+            } else {
+                document.getElementById('tab-manual').classList.add('active');
+                document.getElementById('tab-qr').classList.remove('active');
+                document.getElementById('manual-view').style.display = 'block';
+                document.getElementById('qr-view').style.display = 'none';
+                await stopHardware();  // Automatically kill hardware to save battery when typing manually
+            }
+        }
+
+        // --- SMART ID FORMATTER ---
+        function formatID(input) {
+            let val = input.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+            
+            if (val.length > 0 && !val.startsWith("TDE26-")) {
+                if ("TDE26-".startsWith(val)) return; 
+                val = "TDE26-" + val.replace(/-/g, '');
+            }
+            
+            if (val.length === 7 && !val.endsWith('-')) {
+                val = val + '-';
+            }
+            
+            input.value = val;
+        }
+
+        function submitManual(type) {
+            let payloadValue = "";
+            let searchType = "";
+
+            if (type === 'id') {
+                const idInput = document.getElementById('manual-id').value.trim();
+                const idPattern = /^TDE26-[BGME]-[A-Z0-9]{6}$/i;
+                if (!idPattern.test(idInput)) {
+                    showResult("Invalid Format. Must be TDE26-[B/G/M/E]-XXXXXX", false);
+                    return;
+                }
+                payloadValue = idInput;
+                searchType = "id";
+            } else {
+                const phoneInput = document.getElementById('manual-phone').value.trim();
+                if (phoneInput.length !== 10) {
+                    showResult("Phone number must be exactly 10 digits", false);
+                    return;
+                }
+                payloadValue = phoneInput;
+                searchType = "phone";
+            }
+
+            processCheckin(payloadValue, searchType);
+            
+            document.getElementById('manual-id').value = '';
+            document.getElementById('manual-phone').value = '';
+        }
+
+        // --- DEVICE REGISTRY LOGIC ---
+        function getDeviceName() { return localStorage.getItem('hub_device_name') || 'Unnamed Scanner'; }
+        function initDeviceName() {
+            let name = localStorage.getItem('hub_device_name');
+            if (!name) document.getElementById('device-modal').style.display = 'flex';
+            else document.getElementById('display-device-name').textContent = name;
+        }
+        function saveDeviceName() {
+            let val = document.getElementById('device-name-input').value.trim();
+            if (val) {
+                localStorage.setItem('hub_device_name', val);
+                document.getElementById('display-device-name').textContent = val;
+                document.getElementById('device-modal').style.display = 'none';
+            } else alert("Please enter a valid scanner name.");
+        }
+        function promptDeviceName() {
+            document.getElementById('device-name-input').value = localStorage.getItem('hub_device_name') || '';
+            document.getElementById('device-modal').style.display = 'flex';
+        }
+
+        // --- LIVE NETWORK & SERVER POLLING ---
+        async function syncServerStatus() {
+            const banner = document.getElementById('test-banner');
+            const bannerDate = document.getElementById('banner-date');
+            const dot = document.getElementById('net-dot');
+            const text = document.getElementById('net-text');
+
+            if (!navigator.onLine) {
+                dot.className = "net-dot net-offline"; text.textContent = "Offline"; return;
+            }
+
+            const startTime = performance.now();
+            try {
+                const currentDevice = encodeURIComponent(getDeviceName());
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 2000);
+                
+                const res = await fetch(`/api/status?device_name=${currentDevice}`, { cache: 'no-store', signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                const duration = performance.now() - startTime;
+                if (duration < 150) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
+                else if (duration < 500) { dot.className = "net-dot net-fair"; text.textContent = "Fair"; }
+                else { dot.className = "net-dot net-poor"; text.textContent = "Poor"; }
+
+                const data = await res.json();
+                if (data.test_mode) {
+                    bannerDate.textContent = data.test_date;
+                    banner.style.display = 'block';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (e) {
+                dot.className = "net-dot net-poor"; text.textContent = "Unstable";
+            }
+        }
+
+        // --- AUDIO ENGINE ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playBeep(isSuccess) {
             try {
@@ -182,97 +604,18 @@
             } catch (e) { }
         }
 
-        // --- LIVE NETWORK SPEED MONITOR ---
-        async function checkNetworkQuality() {
-            const dot = document.getElementById('net-dot');
-            const text = document.getElementById('net-text');
-            
-            if (!navigator.onLine) {
-                dot.className = "net-dot net-offline";
-                text.textContent = "Disconnected";
-                return;
-            }
+        // --- CORE CHECKIN API CALL ---
+        function processCheckin(identifier, type = "id") {
+            if (isProcessing) return;
+            isProcessing = true;
 
-            const startTime = performance.now();
-            try {
-                await fetch('/favicon.ico?' + startTime, { method: 'HEAD', cache: 'no-store' });
-                const duration = performance.now() - startTime;
-
-                if (duration < 250) {
-                    dot.className = "net-dot net-excellent";
-                    text.textContent = "Excellent";
-                } else if (duration < 700) {
-                    dot.className = "net-dot net-fair";
-                    text.textContent = "Fair";
-                } else {
-                    dot.className = "net-dot net-poor";
-                    text.textContent = "Poor";
-                }
-            } catch (e) {
-                dot.className = "net-dot net-poor";
-                text.textContent = "Unstable";
-            }
-        }
-        setInterval(checkNetworkQuality, 4000);
-        window.addEventListener('online', checkNetworkQuality);
-        window.addEventListener('error', checkNetworkQuality);
-        checkNetworkQuality();
-
-        // --- SYNC SERVER TESTING STATE ---
-        async function syncServerStatus() {
-            const banner = document.getElementById('test-banner');
-            const bannerDate = document.getElementById('banner-date');
-            try {
-                const res = await fetch('/api/status');
-                const data = await res.json();
-                if (data.test_mode) {
-                    bannerDate.textContent = data.test_date;
-                    banner.style.display = 'block';
-                } else {
-                    banner.style.display = 'none';
-                }
-            } catch (e) {
-                // Keep banner state if temporary network hiccup occurs
-            }
-        }
-        setInterval(syncServerStatus, 3000);
-        syncServerStatus();
-
-        // --- CAMERA & ZOOM CONTROLLER ---
-        let html5QrCode;
-        const resultCard = document.getElementById('result-card');
-        let isScanning = true;
-
-        function showResult(message, isSuccess) {
-            resultCard.textContent = message;
-            resultCard.className = isSuccess ? 'success' : 'error';
-            resultCard.style.display = 'block';
-            playBeep(isSuccess);
-
-            setTimeout(() => {
-                resultCard.style.display = 'none';
-                isScanning = true;
-            }, 2500);
-        }
-
-        function onScanSuccess(decodedText, decodedResult) {
-            if (!isScanning) return;
-            isScanning = false;
-
-            let attendeeId = decodedText.trim();
-            try {
-                const parsedData = JSON.parse(decodedText);
-                if (typeof parsedData === 'object' && parsedData !== null) {
-                    attendeeId = parsedData.attendeeId || parsedData.attendee_id || parsedData.id || parsedData.uuid || decodedText;
-                }
-            } catch (e) {}
-
-            // Send ID to Flask API (Server handles testing mode date automatically)
             fetch('/api/checkin', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    attendee_id: attendeeId
+                    attendee_id: identifier, 
+                    search_type: type,       
+                    device_name: getDeviceName()
                 })
             })
             .then(response => response.json())
@@ -284,46 +627,63 @@
             });
         }
 
-        async function startScanner() {
-            html5QrCode = new Html5Qrcode("reader");
-            const config = { fps: 20, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
+        function showResult(message, isSuccess) {
+            const resultCard = document.getElementById('result-card');
+            resultCard.textContent = message;
+            resultCard.className = isSuccess ? 'success' : 'error';
+            resultCard.style.display = 'block';
+            playBeep(isSuccess);
 
+            setTimeout(() => {
+                resultCard.style.display = 'none';
+                isProcessing = false;
+            }, 2500);
+        }
+
+        function onScanSuccess(decodedText) {
+            if (isProcessing) return;
+
+            let attendeeId = decodedText.trim();
             try {
-                await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess);
-                setTimeout(() => {
-                    try {
-                        const videoTrack = html5QrCode.getRunningTrack();
-                        if (videoTrack) {
-                            const capabilities = videoTrack.getCapabilities();
-                            if (capabilities && capabilities.zoom) {
-                                document.getElementById('zoom-controls').style.display = 'flex';
-                            }
-                        }
-                    } catch (err) {}
-                }, 1000);
-            } catch (err) {
-                showResult("Camera permission denied or unavailable.", false);
-            }
+                const parsedData = JSON.parse(decodedText);
+                if (typeof parsedData === 'object' && parsedData !== null) {
+                    attendeeId = parsedData.attendeeId || parsedData.attendee_id || parsedData.id || parsedData.uuid || decodedText;
+                }
+            } catch (e) {}
+
+            processCheckin(attendeeId, "id");
         }
 
         async function adjustZoom(level) {
-            if (!html5QrCode) return;
+            if (!html5QrCode || !isCameraActive) return;
+            
+            document.querySelectorAll('.zoom-btn').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(`btn-zoom-${level}`).classList.add('active');
+
             try {
                 const videoTrack = html5QrCode.getRunningTrack();
                 if (!videoTrack) return;
                 const capabilities = videoTrack.getCapabilities();
                 if (capabilities && capabilities.zoom) {
-                    const minZoom = capabilities.zoom.min;
-                    const maxZoom = capabilities.zoom.max;
-                    let targetZoom = minZoom + (level - 1) * ((maxZoom - minZoom) / 2);
+                    const minZoom = capabilities.zoom.min || 1;
+                    const maxZoom = capabilities.zoom.max || 3;
+                    
+                    let targetZoom = minZoom;
+                    if (level === 2) targetZoom = minZoom + ((maxZoom - minZoom) * 0.35); // Native 2x scale
+                    if (level === 3) targetZoom = maxZoom; 
+                    
                     targetZoom = Math.min(Math.max(targetZoom, minZoom), maxZoom);
                     await videoTrack.applyConstraints({ advanced: [{ zoom: targetZoom }] });
                 }
             } catch (e) {}
         }
 
-        window.addEventListener('load', startScanner);
+        window.addEventListener('load', () => {
+            initDeviceName();
+            startHardware();
+            setInterval(syncServerStatus, 3000);
+            syncServerStatus();
+        });
     </script>
 </body>
-
 </html>
