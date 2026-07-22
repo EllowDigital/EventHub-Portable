@@ -34,11 +34,6 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # The three event days - change here if the event dates ever move.
 EVENT_DAYS = ["2026-08-30", "2026-08-31", "2026-09-01"]
 
-# Fields compared between local and cloud versions of an attendee record to
-# detect a genuine conflict and to display a field-by-field diff.
-# checkin_history is intentionally excluded: it is always safely union-merged
-# rather than treated as a conflict (two devices checking someone in on
-# different days is not a contradiction).
 COMPARABLE_FIELDS = [
     "full_name", "mobile", "email", "gender", "attendee_type",
     "business_name", "business_category", "other_category",
@@ -49,7 +44,6 @@ COMPARABLE_FIELDS = [
 # CUSTOM LOGGING HANDLER FOR TKINTER
 # ==============================================================================
 class TkinterLogHandler(logging.Handler):
-    """Streams logs directly into the GUI Treeview safely."""
     def __init__(self, treeview):
         super().__init__()
         self.treeview = treeview
@@ -75,7 +69,6 @@ logging.basicConfig(
 )
 
 def load_supabase_client() -> Client:
-    """Loads credentials and creates a fresh client ONLY when called."""
     if not os.path.exists(SECRETS_PATH):
         raise FileNotFoundError("Supabase credentials missing.")
 
@@ -102,7 +95,6 @@ class SyncState(enum.Enum):
 # DISPLAY / FORMATTING HELPERS
 # ==============================================================================
 def _format_day_label(iso_date):
-    """'2026-08-30' -> '📅 30 AUGUST 2026'"""
     try:
         dt = datetime.strptime(iso_date, "%Y-%m-%d")
         return f"📅 {dt.day} {dt.strftime('%B').upper()} {dt.year}"
@@ -110,7 +102,6 @@ def _format_day_label(iso_date):
         return f"📅 {iso_date}"
 
 def _fmt_dt(value):
-    """Formats a datetime (or isoformat string) for display. DB timestamps are naive UTC."""
     if not value:
         return "—"
     if isinstance(value, str):
@@ -127,16 +118,12 @@ def _relative_time(dt):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     seconds = int((now - dt).total_seconds())
-    if seconds < 5:
-        return "Just now"
-    if seconds < 60:
-        return f"{seconds}s ago"
+    if seconds < 5: return "Just now"
+    if seconds < 60: return f"{seconds}s ago"
     minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes}m ago"
+    if minutes < 60: return f"{minutes}m ago"
     hours = minutes // 60
-    if hours < 24:
-        return f"{hours}h ago"
+    if hours < 24: return f"{hours}h ago"
     return f"{hours // 24}d ago"
 
 def _fields_summary(diff_fields):
@@ -146,7 +133,7 @@ def _fields_summary(diff_fields):
     return ", ".join(names[:3]) + f" +{len(names) - 3} more"
 
 def _compute_sync_health(stats):
-    total = stats.get("mysql_total", 0)
+    total = stats.get("mysql_total", 0) + stats.get("kiosk_reg", 0)
     if total == 0:
         return 100
     problem = stats.get("pending_push", 0) + stats.get("conflict_count", 0)
@@ -167,7 +154,6 @@ class SyncManager:
         self.conflicts = self._load_conflicts()
 
     def connect_local_dbs(self):
-        """Connects ONLY to the local databases on startup. Supabase remains completely offline."""
         try:
             sessions = get_database_sessions()
             self.SessionMySQL = sessions.get('mysql')
@@ -176,7 +162,6 @@ class SyncManager:
         except Exception as e:
             logging.error(f"Local Database Connection Failed: {e}")
 
-    # --- Persistence for conflicts / last-sync timestamp ------------------------
     def _load_conflicts(self):
         if not os.path.exists(CONFLICTS_PATH):
             return {}
@@ -229,7 +214,6 @@ class SyncManager:
         except Exception as e:
             logging.error(f"Failed to persist last sync timestamp: {e}")
 
-    # --- Merge / diff helpers ----------------------------------------------------
     def _merge_checkin_history(self, local_history, cloud_history) -> dict:
         if isinstance(local_history, str): local_history = json.loads(local_history) if local_history else {}
         if isinstance(cloud_history, str): cloud_history = json.loads(cloud_history) if cloud_history else {}
@@ -241,7 +225,6 @@ class SyncManager:
         return merged
 
     def _compute_diff(self, local_record, cloud_data):
-        """Returns {field: {"local": val, "cloud": val}} for every field that differs."""
         diff = {}
         for field in COMPARABLE_FIELDS:
             local_val = getattr(local_record, field, None)
@@ -252,8 +235,6 @@ class SyncManager:
         return diff
 
     def _apply_cloud_fields(self, local_record, cloud_data, cloud_updated_at):
-        """Overwrites local_record's comparable fields with the cloud version. Shared by the
-        silent 'cloud wins' pull path and an operator's explicit 'Keep Cloud' conflict choice."""
         local_record.full_name = cloud_data.get('full_name') or local_record.full_name
         local_record.mobile = cloud_data.get('mobile') or local_record.mobile
         local_record.email = cloud_data.get('email') or local_record.email
@@ -272,7 +253,7 @@ class SyncManager:
         local_record.needs_cloud_sync = False
 
     def mirror_mysql_to_sqlite(self):
-        """Lightning-fast bulk mirror to prevent SQLite locks and corruption."""
+        """Lightning-fast bulk mirror for BOTH tables to prevent SQLite locks and ensure 100% backup coverage."""
         if not self.SessionSQLite or not self.SessionMySQL: return
         logging.info("Starting MySQL -> SQLite mirror process...")
 
@@ -280,21 +261,22 @@ class SyncManager:
         sqlite_session = self.SessionSQLite()
 
         try:
+            # 1. Mirror Main Attendees Table
             mysql_attendees = mysql_session.query(Attendee).all()
-
-            # Serialize for bulk insertion
-            data_dicts = []
-            for m_att in mysql_attendees:
-                row_data = {c.name: getattr(m_att, c.name) for c in m_att.__table__.columns}
-                data_dicts.append(row_data)
-
-            # Flush and replace for a true 1:1 mirror
+            att_dicts = [{c.name: getattr(m_att, c.name) for c in m_att.__table__.columns} for m_att in mysql_attendees]
             sqlite_session.query(Attendee).delete()
-            if data_dicts:
-                sqlite_session.bulk_insert_mappings(Attendee, data_dicts)
+            if att_dicts:
+                sqlite_session.bulk_insert_mappings(Attendee, att_dicts)
+
+            # 2. Mirror Offline Kiosk Registrations Table
+            mysql_kiosk = mysql_session.query(OfflineKioskAttendee).all()
+            kiosk_dicts = [{c.name: getattr(m_kiosk, c.name) for c in m_kiosk.__table__.columns} for m_kiosk in mysql_kiosk]
+            sqlite_session.query(OfflineKioskAttendee).delete()
+            if kiosk_dicts:
+                sqlite_session.bulk_insert_mappings(OfflineKioskAttendee, kiosk_dicts)
 
             sqlite_session.commit()
-            logging.info(f"Mirror complete: {len(data_dicts)} records safely backed up.")
+            logging.info(f"Mirror complete: {len(att_dicts)} Online + {len(kiosk_dicts)} Kiosk records safely backed up.")
         except Exception as e:
             sqlite_session.rollback()
             logging.error(f"Mirror error: {e}")
@@ -303,7 +285,6 @@ class SyncManager:
             sqlite_session.close()
 
     def push_to_cloud(self):
-        """Executes manual push from BOTH local tables into the single Supabase attendees table."""
         logging.info("--- Starting PUSH to Cloud ---")
         self.state = SyncState.SYNCING
         if not self.SessionMySQL:
@@ -355,7 +336,6 @@ class SyncManager:
 
             batch_payload = []
             for record in pushable:
-                # Build payload matching 100% of Supabase columns
                 batch_payload.append({
                     "id": record.id,
                     "attendee_id": record.attendee_id,
@@ -371,11 +351,10 @@ class SyncManager:
                     "city": record.city,
                     "state": record.state,
                     "pincode": record.pincode,
-                    # Safely handle JSON types to prevent corruption
                     "attendance_days": record.attendance_days if isinstance(record.attendance_days, list) else json.loads(record.attendance_days or "[]"),
                     "photo_url": record.photo_url,
                     "checkin_history": record.checkin_history if isinstance(record.checkin_history, dict) else json.loads(record.checkin_history or "{}"),
-                    "needs_sheet_sync": record.needs_sheet_sync,
+                    "needs_sheet_sync": record.needs_sheet_sync, # Uses whatever Flask set locally
                     "created_at": record.created_at.isoformat() if record.created_at else datetime.now(timezone.utc).isoformat(),
                     "updated_at": record.updated_at.isoformat() if record.updated_at else datetime.now(timezone.utc).isoformat(),
                     "needs_cloud_sync": False
@@ -384,9 +363,10 @@ class SyncManager:
             response = supabase.table('attendees').upsert(batch_payload).execute()
 
             if response.data:
+                # 🛑 LOCAL RESET LOGIC
                 for record in pushable:
                     record.needs_cloud_sync = False
-                    record.needs_sheet_sync = False  # 🛑 ADD THIS: Prevents duplicate Google Sheet syncs on future pushes
+                    record.needs_sheet_sync = False  # Set to false to prevent duplicate Google Sheet triggers
                 mysql_session.commit()
                 logging.info(f"Successfully pushed {len(batch_payload)} record(s) in batch.")
                 self.mirror_mysql_to_sqlite()
@@ -412,9 +392,6 @@ class SyncManager:
             mysql_session.close()
 
     def pull_from_cloud(self):
-        """Executes manual pull. ONLY connects to Supabase for the duration of this function.
-        A record is flagged as a genuine conflict - rather than silently resolved - when local
-        has an unpushed edit AND the cloud copy was independently changed after that edit."""
         logging.info("--- Starting PULL from Cloud ---")
         self.state = SyncState.SYNCING
         if not self.SessionMySQL:
@@ -448,7 +425,6 @@ class SyncManager:
                 if len(data) < page_size: break
                 offset += page_size
 
-            # Rebuilt fresh every pull: self-healing, always reflects current local/cloud state.
             self.conflicts = {}
 
             if not cloud_records:
@@ -469,7 +445,6 @@ class SyncManager:
                 if not local_record:
                     local_record = mysql_session.query(OfflineKioskAttendee).filter_by(id=cloud_data['id']).first()
 
-                # Parse updated_at securely
                 raw_updated = cloud_data.get('updated_at')
                 if raw_updated:
                     try:
@@ -479,7 +454,6 @@ class SyncManager:
                 else:
                     cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-                # Parse created_at securely
                 raw_created = cloud_data.get('created_at')
                 if raw_created:
                     try:
@@ -494,7 +468,6 @@ class SyncManager:
                     local_record.checkin_history = merged
 
                     if local_record.needs_cloud_sync and local_record.updated_at and cloud_updated_at > local_record.updated_at:
-                        # Genuine conflict: local has an unpushed edit AND cloud moved on independently.
                         diff_fields = self._compute_diff(local_record, cloud_data)
                         if diff_fields:
                             conflict_id = str(local_record.id)
@@ -519,9 +492,6 @@ class SyncManager:
                             local_record.created_at = cloud_created_at
                         pulled += 1
                 else:
-                    # New Insert - All Supabase columns mapped, local-only set to defaults
-                    # Because they didn't exist in either local table, they MUST have registered online.
-                    # Therefore, they belong in the standard Attendee table.
                     new_attendee = Attendee(
                         id=cloud_data['id'],
                         attendee_id=cloud_data['attendee_id'],
@@ -544,7 +514,6 @@ class SyncManager:
                         updated_at=cloud_updated_at,
                         needs_cloud_sync=False,
                         needs_sheet_sync=cloud_data.get('needs_sheet_sync', False),
-                        # Keep local-only columns clean
                         local_modified=False,
                         device_name=None
                     )
@@ -574,8 +543,6 @@ class SyncManager:
             mysql_session.close()
 
     def trigger_full_sync(self):
-        """One-shot bidirectional sync: pull first (this is what detects conflicts), then push
-        whatever remains unblocked. On-demand only - nothing in this class calls this automatically."""
         logging.info("--- Starting FULL SYNC (Pull -> Push) ---")
         pull_ok = self.pull_from_cloud()
         if not pull_ok:
@@ -583,16 +550,11 @@ class SyncManager:
             return False
         return self.push_to_cloud()
 
-    # --- Conflict resolution -------------------------------------------------
     def get_pending_conflicts(self):
-        """Conflicts sorted most-recently-detected first."""
         fallback = datetime.min.replace(tzinfo=timezone.utc)
         return sorted(self.conflicts.values(), key=lambda c: c.get("detected_at") or fallback, reverse=True)
 
     def resolve_conflict(self, conflict_id, keep):
-        """keep: 'local' or 'cloud'. Applies the chosen version locally and clears the conflict.
-        Purely local - no cloud call happens here."""
-        
         conflict = self.conflicts.get(conflict_id)
         if not conflict:
             return False
@@ -602,10 +564,7 @@ class SyncManager:
 
         session = self.SessionMySQL()
         try:
-            # Check main table
             record = session.query(Attendee).filter_by(id=conflict_id).first()
-            
-            # Check kiosk table if not found
             if not record:
                 record = session.query(OfflineKioskAttendee).filter_by(id=conflict_id).first()
                 
@@ -636,8 +595,6 @@ class SyncManager:
             session.close()
 
     def resolve_all_conflicts(self, strategy="newest"):
-        """Bulk-resolve every pending conflict. strategy: 'newest' picks whichever side changed
-        most recently per-record; 'local' or 'cloud' forces that side for every conflict."""
         resolved = 0
         for conflict_id, conflict in list(self.conflicts.items()):
             if strategy in ("local", "cloud"):
@@ -648,9 +605,7 @@ class SyncManager:
                 resolved += 1
         return resolved
 
-    # --- Dashboard telemetry ---------------------------------------------------
     def get_dashboard_stats(self):
-        """Calculates all dashboard telemetry in one pass. Read-only, local-only, safe to call anytime."""
         empty = {
             "mysql_total": 0, "sqlite_total": 0, "pending_push": 0, "kiosk_reg": 0,
             "conflict_count": len(self.conflicts), "checked_in": 0,
@@ -664,13 +619,15 @@ class SyncManager:
 
         try:
             attendees = mysql_session.query(Attendee).all()
-            kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
+            kiosk_regs = mysql_session.query(OfflineKioskAttendee).all()
+            
+            all_records = attendees + kiosk_regs
 
             pending_push = 0
             checked_in = 0
             day_counts = {d: 0 for d in EVENT_DAYS}
 
-            for att in attendees:
+            for att in all_records:
                 if att.needs_cloud_sync:
                     pending_push += 1
 
@@ -688,13 +645,13 @@ class SyncManager:
                         if day in history_str:
                             day_counts[day] += 1
 
-            total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
+            total_sqlite = sqlite_session.query(Attendee).count() + sqlite_session.query(OfflineKioskAttendee).count() if sqlite_session else 0
 
             return {
                 "mysql_total": len(attendees),
                 "sqlite_total": total_sqlite,
                 "pending_push": pending_push,
-                "kiosk_reg": kiosk_regs,
+                "kiosk_reg": len(kiosk_regs),
                 "conflict_count": len(self.conflicts),
                 "checked_in": checked_in,
                 "day_counts": day_counts,
@@ -846,7 +803,6 @@ class ConfigDialog(ttk.Toplevel):
 # CONFLICT DETAIL DIALOG
 # ==============================================================================
 class ConflictDetailDialog(ttk.Toplevel):
-    """Side-by-side field comparison for a single conflicted attendee record."""
     def __init__(self, parent, conflict, on_resolve):
         super().__init__()
         self.title(f"Conflict — {conflict.get('attendee_id', '')}")
@@ -919,13 +875,10 @@ class SyncDashboard(ttk.Window):
         self.refresh_stats()
 
     def _schedule_periodic_refresh(self):
-        # Local-only, read-only refresh so "last synced" stays current. Never touches the
-        # cloud - cloud sync stays strictly on-demand (Full Sync / Pull / Push buttons only).
         if not self.is_syncing:
             self.refresh_stats()
         self.after(30000, self._schedule_periodic_refresh)
 
-    # --- UI construction ---------------------------------------------------------
     def build_ui(self):
         main_paned = ttk.Panedwindow(self, orient=HORIZONTAL)
         main_paned.pack(fill=BOTH, expand=True)
@@ -941,7 +894,6 @@ class SyncDashboard(ttk.Window):
 
         self.stat_vars = {}
 
-        # ROW 1 (Database Health & Sync)
         cards_row1 = ttk.Frame(content)
         cards_row1.pack(fill=X, pady=(0, 10))
 
@@ -951,7 +903,6 @@ class SyncDashboard(ttk.Window):
         self._create_stat_card(cards_row1, "⚠ CONFLICTS", "0", DANGER, var_name="conflicts")
         self._create_stat_card(cards_row1, "🖥️ KIOSK REG.", "0", SECONDARY, var_name="kiosk_reg")
 
-        # ROW 2 (Event Operations)
         cards_row2 = ttk.Frame(content)
         cards_row2.pack(fill=X, pady=(0, 20))
 
@@ -959,7 +910,6 @@ class SyncDashboard(ttk.Window):
         for day in EVENT_DAYS:
             self._create_stat_card(cards_row2, _format_day_label(day), "0", LIGHT, var_name=f"day_{day}")
 
-        # --- STATUS STRIP (transient feedback for the action just run) ---
         controls_frame = ttk.Frame(content)
         controls_frame.pack(fill=X, pady=10)
 
@@ -969,7 +919,6 @@ class SyncDashboard(ttk.Window):
         self.lbl_status = ttk.Label(controls_frame, text="Ready.")
         self.lbl_status.pack(side=LEFT, padx=10)
 
-        # --- TABS ---
         self.notebook = ttk.Notebook(content)
         self.notebook.pack(fill=BOTH, expand=True, pady=(20, 0))
 
@@ -1111,7 +1060,6 @@ class SyncDashboard(ttk.Window):
         self.stat_vars[var_name] = val_lbl
         return val_lbl
 
-    # --- Refresh / stats ---------------------------------------------------------
     def refresh_stats(self):
         if not self.sync_manager.SessionMySQL:
             self.lbl_mysql.configure(text="● MySQL (Primary): Offline", bootstyle=DANGER)
@@ -1184,14 +1132,12 @@ class SyncDashboard(ttk.Window):
         for row in self.log_tree.get_children():
             self.log_tree.delete(row)
 
-    # --- Lock helpers --------------------------------------------------------------
     def _set_controls_state(self, state):
         for btn in (self.btn_pull, self.btn_push, self.btn_full_sync,
                     self.btn_keep_local, self.btn_keep_cloud, self.btn_resolve_all):
             btn.configure(state=state)
 
     def _lock_ui(self, mode="syncing"):
-        """Used for operations that actually talk to Supabase."""
         self.is_syncing = True
         self._set_controls_state(DISABLED)
         self.progress.start(10)
@@ -1205,7 +1151,6 @@ class SyncDashboard(ttk.Window):
         self.refresh_stats()
 
     def _lock_for_resolve(self):
-        """Used for conflict resolution, which is local-only - never touches the Supabase label."""
         self.is_syncing = True
         self._set_controls_state(DISABLED)
         self.progress.start(10)
@@ -1218,7 +1163,6 @@ class SyncDashboard(ttk.Window):
         self.lbl_status.configure(text=msg)
         self.refresh_stats()
 
-    # --- Push / Pull / Full sync ---------------------------------------------------
     def run_push(self):
         if self.is_syncing: return
         self._lock_ui(mode="pushing")
@@ -1262,14 +1206,11 @@ class SyncDashboard(ttk.Window):
             msg = f"Full Sync Failed: {self.sync_manager.last_error or 'Unknown error.'}"
         self.after(0, lambda: self._unlock_ui(msg))
 
-    # --- Conflict resolution (GUI side) ---------------------------------------------
     def on_conflict_double_click(self, event):
         row_id = self.conflict_tree.identify_row(event.y)
-        if not row_id:
-            return
+        if not row_id: return
         conflict = self.sync_manager.conflicts.get(row_id)
-        if not conflict:
-            return
+        if not conflict: return
         ConflictDetailDialog(self, conflict, on_resolve=self._resolve_and_refresh)
 
     def resolve_selected(self, keep):
@@ -1281,8 +1222,7 @@ class SyncDashboard(ttk.Window):
 
     def resolve_all_conflicts_bulk(self):
         n = len(self.sync_manager.conflicts)
-        if n == 0:
-            return
+        if n == 0: return
         result = Messagebox.yesno(
             f"This will auto-resolve all {n} conflict(s): for each, whichever side (local or "
             f"cloud) changed most recently wins, and individual review is skipped. Continue?",
@@ -1293,8 +1233,7 @@ class SyncDashboard(ttk.Window):
             self._resolve_and_refresh(list(self.sync_manager.conflicts.keys()), "newest")
 
     def _resolve_and_refresh(self, conflict_ids, keep):
-        if self.is_syncing:
-            return
+        if self.is_syncing: return
         self._lock_for_resolve()
         threading.Thread(target=self._thread_resolve, args=(conflict_ids, keep), daemon=True).start()
 
@@ -1302,8 +1241,7 @@ class SyncDashboard(ttk.Window):
         resolved = 0
         for cid in conflict_ids:
             conflict = self.sync_manager.conflicts.get(cid)
-            if not conflict:
-                continue
+            if not conflict: continue
             side = keep
             if keep == "newest":
                 side = "cloud" if conflict["cloud_updated_at"] > conflict["local_updated_at"] else "local"
