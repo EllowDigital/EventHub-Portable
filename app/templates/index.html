@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TDE UP 2026 — Event Portal</title>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --card-bg: #1e1e1e;
+            --primary: #00d2ff;
+            --success: #00e676;
+            --text-light: #ffffff;
+            --text-dim: #aaaaaa;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-light);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .header h1 { margin: 0; font-size: 28px; color: var(--primary); }
+        .header p { margin: 5px 0 0 0; color: var(--text-dim); }
+        
+        .menu-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            width: 90%;
+            max-width: 400px;
+        }
+        .menu-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            font-size: 18px;
+            font-weight: bold;
+            color: var(--bg-dark);
+            text-decoration: none;
+            border-radius: 12px;
+            transition: transform 0.2s, opacity 0.2s;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        .menu-btn:active { transform: scale(0.98); opacity: 0.9; }
+        
+        .btn-scan { background: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%); color: white; }
+        .btn-reg { background: linear-gradient(135deg, #00e676 0%, #00a152 100%); color: white; }
+        .btn-stats { background: var(--card-bg); color: var(--text-light); border: 1px solid #333; }
+        
+        .icon { font-size: 24px; margin-right: 12px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>TDE UP 2026</h1>
+        <p>Mobile Operations Portal</p>
+    </div>
+
+    <div class="menu-container">
+        <a href="/scanner" class="menu-btn btn-scan">
+            <span class="icon">📷</span> Launch QR Scanner
+        </a>
+        <a href="/register" class="menu-btn btn-reg">
+            <span class="icon">📝</span> Manual Registration
+        </a>
+        <a href="/stats" class="menu-btn btn-stats">
+            <span class="icon">📊</span> Network Statistics
+        </a>
+    </div>
+</body>
+</html>

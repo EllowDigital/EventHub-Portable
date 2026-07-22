@@ -92,11 +92,18 @@ class SyncManager:
             logging.error(f"Local Database Connection Failed: {e}")
 
     def _merge_checkin_history(self, local_history, cloud_history) -> dict:
-        if isinstance(local_history, str): local_history = json.loads(local_history) if local_history else {}
-        if isinstance(cloud_history, str): cloud_history = json.loads(cloud_history) if cloud_history else {}
+        """Safely merges multi-day check-in JSON dicts from online and offline sources without data loss."""
+        if isinstance(local_history, str):
+            try: local_history = json.loads(local_history) if local_history else {}
+            except: local_history = {}
+        if isinstance(cloud_history, str):
+            try: cloud_history = json.loads(cloud_history) if cloud_history else {}
+            except: cloud_history = {}
+            
         if not isinstance(local_history, dict): local_history = {}
         if not isinstance(cloud_history, dict): cloud_history = {}
         
+        # Combine dictionaries so both online and offline check-in days coexist harmoniously
         merged = cloud_history.copy()
         merged.update(local_history)
         return merged
@@ -111,14 +118,11 @@ class SyncManager:
         
         try:
             mysql_attendees = mysql_session.query(Attendee).all()
-            
-            # Serialize for bulk insertion
             data_dicts = []
             for m_att in mysql_attendees:
                 row_data = {c.name: getattr(m_att, c.name) for c in m_att.__table__.columns}
                 data_dicts.append(row_data)
 
-            # Flush and replace for a true 1:1 mirror
             sqlite_session.query(Attendee).delete()
             if data_dicts:
                 sqlite_session.bulk_insert_mappings(Attendee, data_dicts)
@@ -133,7 +137,7 @@ class SyncManager:
             sqlite_session.close()
 
     def push_to_cloud(self):
-        """Executes manual push. ONLY connects to Supabase for the duration of this function."""
+        """Pushes local modifications to Supabase and flags records for Google Sheet synchronization."""
         logging.info("--- Starting PUSH to Cloud ---")
         if not self.SessionMySQL:
             logging.error("Cannot push: Local MySQL is offline.")
@@ -155,8 +159,6 @@ class SyncManager:
 
             batch_payload = []
             for record in pending:
-                # Build payload matching 100% of Supabase columns
-                # Exclude `local_modified` and `device_name` as they are local-only
                 batch_payload.append({
                     "id": record.id,
                     "attendee_id": record.attendee_id,
@@ -175,10 +177,10 @@ class SyncManager:
                     "attendance_days": record.attendance_days,
                     "photo_url": record.photo_url,
                     "checkin_history": record.checkin_history,
-                    "needs_sheet_sync": record.needs_sheet_sync,
+                    "needs_sheet_sync": True,  # Signals online system to update Google Sheets
                     "created_at": record.created_at.isoformat() if record.created_at else datetime.now(timezone.utc).isoformat(),
                     "updated_at": record.updated_at.isoformat() if record.updated_at else datetime.now(timezone.utc).isoformat(),
-                    "needs_cloud_sync": False 
+                    "needs_cloud_sync": False   # Clears local pending push flag
                 })
 
             response = supabase.table('attendees').upsert(batch_payload).execute()
@@ -202,7 +204,7 @@ class SyncManager:
             mysql_session.close()
 
     def pull_from_cloud(self):
-        """Executes manual pull. ONLY connects to Supabase for the duration of this function."""
+        """Pulls remote cloud data into local MySQL, merging check-in histories safely without overwriting offline progress."""
         logging.info("--- Starting PULL from Cloud ---")
         if not self.SessionMySQL:
             logging.error("Cannot pull: Local MySQL is offline.")
@@ -237,34 +239,23 @@ class SyncManager:
             for cloud_data in cloud_records:
                 local_record = mysql_session.query(Attendee).filter_by(id=cloud_data['id']).first()
                 
-                # Parse updated_at securely
                 raw_updated = cloud_data.get('updated_at')
-                if raw_updated:
-                    try:
-                        cloud_updated_at = datetime.fromisoformat(raw_updated.replace('Z', '+00:00')).replace(tzinfo=None)
-                    except Exception:
-                        cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                else:
-                    cloud_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                    
-                # Parse created_at securely
+                cloud_updated_at = datetime.fromisoformat(raw_updated.replace('Z', '+00:00')).replace(tzinfo=None) if raw_updated else datetime.now(timezone.utc).replace(tzinfo=None)
+                
                 raw_created = cloud_data.get('created_at')
-                if raw_created:
-                    try:
-                        cloud_created_at = datetime.fromisoformat(raw_created.replace('Z', '+00:00')).replace(tzinfo=None)
-                    except Exception:
-                        cloud_created_at = datetime.now(timezone.utc).replace(tzinfo=None)
-                else:
-                    cloud_created_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                cloud_created_at = datetime.fromisoformat(raw_created.replace('Z', '+00:00')).replace(tzinfo=None) if raw_created else datetime.now(timezone.utc).replace(tzinfo=None)
 
                 if local_record:
-                    merged = self._merge_checkin_history(local_record.checkin_history, cloud_data.get('checkin_history', {}))
-                    local_record.checkin_history = merged
+                    # CRITICAL: Always merge check-in history so online and offline scans combine safely
+                    merged_history = self._merge_checkin_history(local_record.checkin_history, cloud_data.get('checkin_history', {}))
+                    local_record.checkin_history = merged_history
+
+                    # If local record has unsynced changes, protect core profile fields from being overwritten
+                    if local_record.needs_cloud_sync:
+                        continue 
                     
-                    if local_record.needs_cloud_sync: continue 
-                    
+                    # Apply timestamp priority for profile attribute updates
                     if not local_record.updated_at or cloud_updated_at > local_record.updated_at:
-                        # Update all fields to match cloud
                         local_record.full_name = cloud_data.get('full_name') or local_record.full_name
                         local_record.mobile = cloud_data.get('mobile') or local_record.mobile
                         local_record.email = cloud_data.get('email') or local_record.email
@@ -286,7 +277,7 @@ class SyncManager:
                         local_record.updated_at = cloud_updated_at
                         pulled += 1
                 else:
-                    # New Insert - All Supabase columns mapped, local-only set to defaults
+                    # New insert from cloud
                     new_attendee = Attendee(
                         id=cloud_data['id'],
                         attendee_id=cloud_data['attendee_id'],
@@ -309,7 +300,6 @@ class SyncManager:
                         updated_at=cloud_updated_at,
                         needs_cloud_sync=False,
                         needs_sheet_sync=cloud_data.get('needs_sheet_sync', False),
-                        # Keep local-only columns clean
                         local_modified=False,
                         device_name=None
                     )
@@ -423,7 +413,6 @@ class SyncDashboard(ttk.Window):
         main_paned = ttk.Panedwindow(self, orient=HORIZONTAL)
         main_paned.pack(fill=BOTH, expand=True)
 
-        # --- LEFT SIDEBAR ---
         sidebar = ttk.Frame(main_paned, width=300, padding=20)
         main_paned.add(sidebar, weight=0)
 
@@ -444,16 +433,13 @@ class SyncDashboard(ttk.Window):
         
         ttk.Button(sidebar, text="⚙ Configure Databases", bootstyle="outline-light", command=lambda: ConfigDialog(self)).pack(fill=X, side=BOTTOM, pady=20)
 
-        # --- RIGHT CONTENT AREA ---
         content = ttk.Frame(main_paned, padding=20)
         main_paned.add(content, weight=1)
 
         ttk.Label(content, text="Database Synchronisation Dashboard", font="-size 16 -weight bold").pack(anchor=W, pady=(0, 20))
 
-        # --- TELEMETRY CARDS (2 ROWS, 4 COLS) ---
         self.stat_vars = {} 
         
-        # ROW 1 (Database Health & Sync)
         cards_row1 = ttk.Frame(content)
         cards_row1.pack(fill=X, pady=(0,10))
         
@@ -462,7 +448,6 @@ class SyncDashboard(ttk.Window):
         self._create_stat_card(cards_row1, "⏳ PENDING PUSH", "0", WARNING, var_name="pending_push")
         self._create_stat_card(cards_row1, "🖥️ KIOSK REG.", "0", SECONDARY, var_name="kiosk_reg")
 
-        # ROW 2 (Event Operations)
         cards_row2 = ttk.Frame(content)
         cards_row2.pack(fill=X, pady=(0,20))
         
@@ -471,7 +456,6 @@ class SyncDashboard(ttk.Window):
         self._create_stat_card(cards_row2, "📅 31 AUGUST 2026", "0", LIGHT, var_name="day_2")
         self._create_stat_card(cards_row2, "📅 1 SEPTEMBER 2026", "0", LIGHT, var_name="day_3")
 
-        # --- CONTROLS ---
         controls_frame = ttk.Frame(content)
         controls_frame.pack(fill=X, pady=10)
         
@@ -487,7 +471,6 @@ class SyncDashboard(ttk.Window):
         self.lbl_status = ttk.Label(controls_frame, text="Ready.")
         self.lbl_status.pack(side=LEFT, padx=10)
 
-        # --- LOGS ---
         notebook = ttk.Notebook(content)
         notebook.pack(fill=BOTH, expand=True, pady=(20,0))
         
@@ -557,10 +540,8 @@ class SyncDashboard(ttk.Window):
                 
                 history = att.checkin_history
                 if isinstance(history, str):
-                    try:
-                        history = json.loads(history)
-                    except:
-                        history = {}
+                    try: history = json.loads(history)
+                    except: history = {}
                         
                 if history and len(history) > 0:
                     checked_in += 1
