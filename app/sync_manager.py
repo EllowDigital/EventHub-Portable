@@ -303,9 +303,7 @@ class SyncManager:
             sqlite_session.close()
 
     def push_to_cloud(self):
-        """Executes manual push. ONLY connects to Supabase for the duration of this function.
-        Records with an unresolved conflict are skipped so an operator's review can't be
-        silently overwritten by a stale local copy."""
+        """Executes manual push from BOTH local tables into the single Supabase attendees table."""
         logging.info("--- Starting PUSH to Cloud ---")
         self.state = SyncState.SYNCING
         if not self.SessionMySQL:
@@ -327,7 +325,11 @@ class SyncManager:
 
         mysql_session = self.SessionMySQL()
         try:
-            pending = mysql_session.query(Attendee).filter_by(needs_cloud_sync=True).all()
+            # Gather pending records from BOTH tables
+            pending_online = mysql_session.query(Attendee).filter_by(needs_cloud_sync=True).all()
+            pending_kiosk = mysql_session.query(OfflineKioskAttendee).filter_by(needs_cloud_sync=True).all()
+            
+            pending = pending_online + pending_kiosk
 
             if not pending:
                 logging.info("No records require pushing. Disconnecting from cloud.")
@@ -354,7 +356,6 @@ class SyncManager:
             batch_payload = []
             for record in pushable:
                 # Build payload matching 100% of Supabase columns
-                # Exclude `local_modified` and `device_name` as they are local-only
                 batch_payload.append({
                     "id": record.id,
                     "attendee_id": record.attendee_id,
@@ -370,9 +371,10 @@ class SyncManager:
                     "city": record.city,
                     "state": record.state,
                     "pincode": record.pincode,
-                    "attendance_days": record.attendance_days,
+                    # Safely handle JSON types to prevent corruption
+                    "attendance_days": record.attendance_days if isinstance(record.attendance_days, list) else json.loads(record.attendance_days or "[]"),
                     "photo_url": record.photo_url,
-                    "checkin_history": record.checkin_history,
+                    "checkin_history": record.checkin_history if isinstance(record.checkin_history, dict) else json.loads(record.checkin_history or "{}"),
                     "needs_sheet_sync": record.needs_sheet_sync,
                     "created_at": record.created_at.isoformat() if record.created_at else datetime.now(timezone.utc).isoformat(),
                     "updated_at": record.updated_at.isoformat() if record.updated_at else datetime.now(timezone.utc).isoformat(),
@@ -459,7 +461,12 @@ class SyncManager:
             pulled = 0
             conflicts_found = 0
             for cloud_data in cloud_records:
+                # 1. Check main table first
                 local_record = mysql_session.query(Attendee).filter_by(id=cloud_data['id']).first()
+                
+                # 2. If not found, check Kiosk table
+                if not local_record:
+                    local_record = mysql_session.query(OfflineKioskAttendee).filter_by(id=cloud_data['id']).first()
 
                 # Parse updated_at securely
                 raw_updated = cloud_data.get('updated_at')
@@ -512,6 +519,8 @@ class SyncManager:
                         pulled += 1
                 else:
                     # New Insert - All Supabase columns mapped, local-only set to defaults
+                    # Because they didn't exist in either local table, they MUST have registered online.
+                    # Therefore, they belong in the standard Attendee table.
                     new_attendee = Attendee(
                         id=cloud_data['id'],
                         attendee_id=cloud_data['attendee_id'],
@@ -582,6 +591,7 @@ class SyncManager:
     def resolve_conflict(self, conflict_id, keep):
         """keep: 'local' or 'cloud'. Applies the chosen version locally and clears the conflict.
         Purely local - no cloud call happens here."""
+        
         conflict = self.conflicts.get(conflict_id)
         if not conflict:
             return False
@@ -591,7 +601,13 @@ class SyncManager:
 
         session = self.SessionMySQL()
         try:
+            # Check main table
             record = session.query(Attendee).filter_by(id=conflict_id).first()
+            
+            # Check kiosk table if not found
+            if not record:
+                record = session.query(OfflineKioskAttendee).filter_by(id=conflict_id).first()
+                
             if not record:
                 logging.warning(f"Conflict for {conflict.get('attendee_id')} dropped: record no longer exists locally.")
                 del self.conflicts[conflict_id]
