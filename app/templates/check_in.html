@@ -55,28 +55,21 @@
         .net-poor { background: #ff4444; box-shadow: 0 0 8px #ff4444; }
         .net-offline { background: #757575; }
 
-        /* Testing Mode Controls */
-        .test-controls {
+        /* Server-driven Testing Banner */
+        #test-banner {
             width: 100%;
             max-width: 500px;
-            background: #2a2a2a;
-            padding: 10px 15px;
+            background: #ff9800;
+            color: #000;
+            padding: 8px 15px;
             border-radius: 8px;
             margin-bottom: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border: 1px solid #ff9800;
-            box-sizing: border-box;
-        }
-
-        .test-controls select {
-            padding: 6px 10px;
-            background: #121212;
-            color: #fff;
-            border: 1px solid #555;
-            border-radius: 4px;
             font-weight: bold;
+            text-align: center;
+            font-size: 0.9rem;
+            display: none;
+            box-sizing: border-box;
+            box-shadow: 0 0 15px rgba(255, 152, 0, 0.4);
         }
 
         /* Scanner Container */
@@ -95,7 +88,6 @@
             background: #000;
         }
 
-        /* Hide default html5-qrcode noisy buttons/dropdowns */
         #reader__dashboard_section_csr button, 
         #reader__dashboard_section_swap_link,
         #html5-qrcode-anchor-scan-type-change {
@@ -157,16 +149,8 @@
         </div>
     </div>
 
-    <!-- Date Simulator for Testing -->
-    <div class="test-controls">
-        <span style="font-size: 0.9rem; color: #ff9800;">🧪 Simulator:</span>
-        <select id="simulated-date">
-            <option value="">Off (Real Time)</option>
-            <option value="2026-08-30">Day 1 (30 Aug 2026)</option>
-            <option value="2026-08-31">Day 2 (31 Aug 2026)</option>
-            <option value="2026-09-01">Day 3 (1 Sept 2026)</option>
-        </select>
-    </div>
+    <!-- Auto-reflecting Server Test Mode Banner -->
+    <div id="test-banner">🧪 TESTING MODE ACTIVE: Simulating Date <span id="banner-date"></span></div>
 
     <div class="scanner-wrapper">
         <div id="reader"></div>
@@ -211,7 +195,6 @@
 
             const startTime = performance.now();
             try {
-                // Ping lightweight favicon to measure latency speed
                 await fetch('/favicon.ico?' + startTime, { method: 'HEAD', cache: 'no-store' });
                 const duration = performance.now() - startTime;
 
@@ -235,13 +218,29 @@
         window.addEventListener('error', checkNetworkQuality);
         checkNetworkQuality();
 
+        // --- SYNC SERVER TESTING STATE ---
+        async function syncServerStatus() {
+            const banner = document.getElementById('test-banner');
+            const bannerDate = document.getElementById('banner-date');
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                if (data.test_mode) {
+                    bannerDate.textContent = data.test_date;
+                    banner.style.display = 'block';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (e) {
+                // Keep banner state if temporary network hiccup occurs
+            }
+        }
+        setInterval(syncServerStatus, 3000);
+        syncServerStatus();
+
         // --- CAMERA & ZOOM CONTROLLER ---
         let html5QrCode;
-        let currentZoom = 1;
-        let trackCapabilities = null;
-
         const resultCard = document.getElementById('result-card');
-        const dateSelector = document.getElementById('simulated-date');
         let isScanning = true;
 
         function showResult(message, isSuccess) {
@@ -260,9 +259,7 @@
             if (!isScanning) return;
             isScanning = false;
 
-            const simulatedDate = dateSelector.value;
             let attendeeId = decodedText.trim();
-
             try {
                 const parsedData = JSON.parse(decodedText);
                 if (typeof parsedData === 'object' && parsedData !== null) {
@@ -270,12 +267,12 @@
                 }
             } catch (e) {}
 
+            // Send ID to Flask API (Server handles testing mode date automatically)
             fetch('/api/checkin', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    attendee_id: attendeeId,
-                    simulated_date: simulatedDate
+                    attendee_id: attendeeId
                 })
             })
             .then(response => response.json())
@@ -287,67 +284,44 @@
             });
         }
 
-        // Initialize high-performance camera scanner locked to BACK camera only
         async function startScanner() {
             html5QrCode = new Html5Qrcode("reader");
-            
-            const config = { 
-                fps: 20, 
-                qrbox: { width: 250, height: 250 },
-                aspectRatio: 1.0
-            };
+            const config = { fps: 20, qrbox: { width: 250, height: 250 }, aspectRatio: 1.0 };
 
             try {
-                await html5QrCode.start(
-                    { facingMode: "environment" }, // Forces rear camera exclusively
-                    config,
-                    onScanSuccess
-                );
-
-                // Extract zoom capabilities if supported by mobile device hardware
+                await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess);
                 setTimeout(() => {
                     try {
                         const videoTrack = html5QrCode.getRunningTrack();
                         if (videoTrack) {
-                            trackCapabilities = videoTrack.getCapabilities();
-                            if (trackCapabilities && trackCapabilities.zoom) {
+                            const capabilities = videoTrack.getCapabilities();
+                            if (capabilities && capabilities.zoom) {
                                 document.getElementById('zoom-controls').style.display = 'flex';
                             }
                         }
                     } catch (err) {}
                 }, 1000);
-
             } catch (err) {
                 showResult("Camera permission denied or unavailable.", false);
             }
         }
 
-        // Samsung-style Hardware Zoom Implementation
         async function adjustZoom(level) {
             if (!html5QrCode) return;
             try {
                 const videoTrack = html5QrCode.getRunningTrack();
                 if (!videoTrack) return;
-
                 const capabilities = videoTrack.getCapabilities();
                 if (capabilities && capabilities.zoom) {
                     const minZoom = capabilities.zoom.min;
                     const maxZoom = capabilities.zoom.max;
-                    
-                    // Scale target zoom level safely within hardware bounds
                     let targetZoom = minZoom + (level - 1) * ((maxZoom - minZoom) / 2);
                     targetZoom = Math.min(Math.max(targetZoom, minZoom), maxZoom);
-
-                    await videoTrack.applyConstraints({
-                        advanced: [{ zoom: targetZoom }]
-                    });
+                    await videoTrack.applyConstraints({ advanced: [{ zoom: targetZoom }] });
                 }
-            } catch (e) {
-                console.warn("Hardware zoom not supported on this device/browser.");
-            }
+            } catch (e) {}
         }
 
-        // Boot scanner on load
         window.addEventListener('load', startScanner);
     </script>
 </body>

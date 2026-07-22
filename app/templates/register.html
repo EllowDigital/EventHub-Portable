@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kiosk Registration - TDE UP 2026</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header {
+            width: 100%;
+            max-width: 600px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .btn-back {
+            color: #aaaaaa;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 12px;
+            background: #2a2a2a;
+            border-radius: 6px;
+        }
+
+        .form-container {
+            width: 100%;
+            max-width: 600px;
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #333;
+            box-sizing: border-box;
+        }
+
+        .section-title {
+            color: #00d2ff;
+            font-size: 1.1rem;
+            margin-bottom: 15px;
+            margin-top: 25px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+        }
+        .section-title:first-child { margin-top: 0; }
+
+        .input-group {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .input-group label {
+            font-size: 0.85rem;
+            color: #ccc;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .input-group input, .input-group select {
+            background: #121212;
+            color: #fff;
+            border: 1px solid #444;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 1rem;
+            transition: border-color 0.2s;
+        }
+
+        .input-group input:focus, .input-group select:focus {
+            outline: none;
+            border-color: #00d2ff;
+        }
+
+        .input-group input.err, .input-group select.err {
+            border-color: #ff4444;
+        }
+
+        .err-msg {
+            color: #ff4444;
+            font-size: 0.8rem;
+            margin-top: 5px;
+            min-height: 14px;
+        }
+
+        .row {
+            display: flex;
+            gap: 15px;
+        }
+        .row > .input-group { flex: 1; }
+
+        .btn-submit {
+            width: 100%;
+            padding: 14px;
+            background: #00d2ff;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: background 0.2s;
+        }
+        .btn-submit:active { background: #009acb; }
+        .btn-submit:disabled { background: #555; color: #888; cursor: not-allowed; }
+
+        /* Modal Styles */
+        #success-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8);
+            backdrop-filter: blur(5px);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: #1e1e1e;
+            border: 2px solid #00e676;
+            padding: 30px;
+            border-radius: 16px;
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+        .modal-id {
+            font-size: 2rem;
+            color: #00e676;
+            font-family: monospace;
+            font-weight: bold;
+            margin: 15px 0;
+            background: #121212;
+            padding: 15px;
+            border-radius: 8px;
+            letter-spacing: 2px;
+        }
+        
+        /* Mobile adjustments */
+        @media (max-width: 500px) {
+            .row { flex-direction: column; gap: 0; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <a href="/" class="btn-back">⬅ Hub</a>
+        <h3 style="margin:0;">Kiosk Registration</h3>
+        <div style="width:60px;"></div>
+    </div>
+
+    <div class="form-container">
+        <!-- Identity -->
+        <div class="section-title">👤 Identity</div>
+        <div class="input-group">
+            <label>Full Name *</label>
+            <input type="text" id="f-name" placeholder="Enter full name">
+            <div class="err-msg" id="e-name"></div>
+        </div>
+        <div class="row">
+            <div class="input-group">
+                <label>Mobile Number *</label>
+                <input type="tel" id="f-mobile" placeholder="10-digit number" maxlength="10">
+                <div class="err-msg" id="e-mobile"></div>
+            </div>
+            <div class="input-group">
+                <label>Gender *</label>
+                <select id="f-gender">
+                    <option value="">— Select —</option>
+                    <option value="MALE">Male</option>
+                    <option value="FEMALE">Female</option>
+                    <option value="OTHER">Other</option>
+                </select>
+                <div class="err-msg" id="e-gender"></div>
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Email (Optional)</label>
+            <input type="email" id="f-email" placeholder="name@example.com">
+            <div class="err-msg" id="e-email"></div>
+        </div>
+
+        <!-- Professional -->
+        <div class="section-title">💼 Professional Details</div>
+        <div class="row">
+            <div class="input-group">
+                <label>Attendee Type *</label>
+                <select id="f-type">
+                    <option value="GENERAL">General</option>
+                    <option value="BUSINESS">Business</option>
+                    <option value="MEDIA">Media</option>
+                    <option value="EXHIBITOR">Exhibitor</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label>Company / Firm Name</label>
+                <input type="text" id="f-bizname" placeholder="Required for Biz/Media">
+                <div class="err-msg" id="e-bizname"></div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="input-group">
+                <label>Category</label>
+                <select id="f-cat"></select>
+                <div class="err-msg" id="e-cat"></div>
+            </div>
+            <div class="input-group">
+                <label>Specify Other</label>
+                <input type="text" id="f-othercat" placeholder="If 'Other' selected" disabled>
+                <div class="err-msg" id="e-othercat"></div>
+            </div>
+        </div>
+
+        <!-- Location -->
+        <div class="section-title">📍 Location</div>
+        <div class="input-group">
+            <label>Full Address *</label>
+            <input type="text" id="f-address" placeholder="Street / locality / area">
+            <div class="err-msg" id="e-address"></div>
+        </div>
+        <div class="row">
+            <div class="input-group">
+                <label>City *</label>
+                <input type="text" id="f-city" placeholder="City">
+                <div class="err-msg" id="e-city"></div>
+            </div>
+            <div class="input-group">
+                <label>State *</label>
+                <input type="text" id="f-state" placeholder="State">
+                <div class="err-msg" id="e-state"></div>
+            </div>
+            <div class="input-group">
+                <label>Pincode *</label>
+                <input type="tel" id="f-pincode" placeholder="6 digits" maxlength="6">
+                <div class="err-msg" id="e-pincode"></div>
+            </div>
+        </div>
+
+        <button class="btn-submit" id="submit-btn" onclick="submitForm()">Register Offline Attendee</button>
+    </div>
+
+    <!-- Success Modal -->
+    <div id="success-modal">
+        <div class="modal-content">
+            <h2 style="margin-top:0; color:#00e676;">Registration Saved!</h2>
+            <p>Please provide the attendee with their official ID pass code:</p>
+            <div class="modal-id" id="modal-id-text">TDE26-G-XXXXXX</div>
+            <p style="color: #aaa; font-size: 0.9rem;" id="modal-countdown">Returning to form in 8s...</p>
+            <button class="btn-submit" style="background:#2a2a2a; color:#fff;" onclick="dismissModal()">Next Registration</button>
+        </div>
+    </div>
+
+    <script>
+        // --- AUDIO ENGINE ---
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeep(isSuccess) {
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.type = isSuccess ? 'sine' : 'sawtooth';
+                osc.frequency.value = isSuccess ? 800 : 300;
+                gain.gain.setValueAtTime(1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+            } catch (e) { }
+        }
+
+        // --- POPULATE CATEGORIES ---
+        const CAT_OPTS = [
+            ['— Select Category —', ''], ['Tent', 'TENT'], ['Caterers', 'CATERING'],
+            ['Decorator', 'DECORATOR'], ['Flower Decoration', 'FLOWER'], ['DJ', 'DJ'],
+            ['Light & Sound', 'LIGHT'], ['Photography', 'PHOTOGRAPHY'], ['Videography', 'VIDEOGRAPHY'],
+            ['Event Planner', 'EVENT_PLANNER'], ['Stage Setup', 'STAGE'], ['Band', 'BAND'],
+            ['Makeup Artist', 'MAKEUP'], ['Lawn, Resort & Banquet', 'BANQUET'],
+            ['Transport', 'TRANSPORT'], ["Other (Specify Below)", 'OTHER'], ['Media / Press', 'MEDIA_PRESS']
+        ];
+        const catSel = document.getElementById('f-cat');
+        CAT_OPTS.forEach(([label, val]) => {
+            catSel.appendChild(new Option(label, val));
+        });
+
+        // --- REACTIVE LOGIC ---
+        document.getElementById('f-type').addEventListener('change', e => {
+            const v = e.target.value;
+            const otherInput = document.getElementById('f-othercat');
+            if (v === 'MEDIA') {
+                catSel.value = 'MEDIA_PRESS'; catSel.disabled = true;
+                otherInput.value = ''; otherInput.disabled = true;
+            } else {
+                if (catSel.value === 'MEDIA_PRESS') catSel.value = '';
+                catSel.disabled = false;
+            }
+            clearFieldErr('cat'); clearFieldErr('bizname');
+        });
+
+        catSel.addEventListener('change', e => {
+            const otherInput = document.getElementById('f-othercat');
+            if (e.target.value === 'OTHER') {
+                otherInput.disabled = false;
+            } else {
+                otherInput.value = ''; otherInput.disabled = true;
+            }
+            clearFieldErr('othercat');
+        });
+
+        // Strict numeric inputs
+        ['mobile', 'pincode'].forEach(id => {
+            document.getElementById('f-' + id).addEventListener('input', e => {
+                e.target.value = e.target.value.replace(/\D/g, '');
+            });
+        });
+
+        // --- VALIDATION ENGINE ---
+        const MOBILE_RE = /^[6-9]\d{9}$/;
+        const PIN_RE = /^\d{6}$/;
+        const EMAIL_RE = /^[\w.\-+]+@[\w.\-]+\.\w{2,}$/;
+
+        function setFieldErr(key, msg) {
+            document.getElementById('f-' + key).classList.add('err');
+            document.getElementById('e-' + key).textContent = '⚠ ' + msg;
+        }
+        function clearFieldErr(key) {
+            document.getElementById('f-' + key).classList.remove('err');
+            document.getElementById('e-' + key).textContent = '';
+        }
+        function clearAllErrors() {
+            ['name','mobile','email','gender','bizname','cat','othercat','address','city','state','pincode'].forEach(clearFieldErr);
+        }
+
+        function validate() {
+            clearAllErrors();
+            let ok = true;
+
+            const name = document.getElementById('f-name').value.trim();
+            if (name.length < 2) { setFieldErr('name', 'Required (min 2 chars)'); ok = false; }
+
+            const mobile = document.getElementById('f-mobile').value.trim();
+            if (!MOBILE_RE.test(mobile)) { setFieldErr('mobile', 'Valid 10-digit number required'); ok = false; }
+
+            const email = document.getElementById('f-email').value.trim();
+            if (email && !EMAIL_RE.test(email)) { setFieldErr('email', 'Invalid email'); ok = false; }
+
+            const gender = document.getElementById('f-gender').value;
+            if (!gender) { setFieldErr('gender', 'Required'); ok = false; }
+
+            const type = document.getElementById('f-type').value;
+            const bizname = document.getElementById('f-bizname').value.trim();
+            if (['BUSINESS','EXHIBITOR','MEDIA'].includes(type) && !bizname) {
+                setFieldErr('bizname', 'Required for this type'); ok = false;
+            }
+
+            const cat = catSel.value;
+            const othercat = document.getElementById('f-othercat').value.trim();
+            if (['BUSINESS','EXHIBITOR'].includes(type)) {
+                if (!cat) { setFieldErr('cat', 'Required'); ok = false; }
+                else if (cat === 'OTHER' && !othercat) { setFieldErr('othercat', 'Specify category'); ok = false; }
+            }
+
+            const address = document.getElementById('f-address').value.trim();
+            if (address.length < 5) { setFieldErr('address', 'Required (min 5 chars)'); ok = false; }
+
+            const city = document.getElementById('f-city').value.trim();
+            if (city.length < 2) { setFieldErr('city', 'Required'); ok = false; }
+
+            const state = document.getElementById('f-state').value.trim();
+            if (state.length < 2) { setFieldErr('state', 'Required'); ok = false; }
+
+            const pincode = document.getElementById('f-pincode').value.trim();
+            if (!PIN_RE.test(pincode)) { setFieldErr('pincode', '6-digit pincode required'); ok = false; }
+
+            return ok;
+        }
+
+        // --- SUBMISSION ---
+        let cdTimer = null;
+
+        function showModal(id) {
+            document.getElementById('modal-id-text').textContent = id;
+            document.getElementById('success-modal').style.display = 'flex';
+            playBeep(true);
+            
+            let n = 8;
+            const cd = document.getElementById('modal-countdown');
+            cd.textContent = `Returning to form in ${n}s...`;
+            clearInterval(cdTimer);
+            cdTimer = setInterval(() => {
+                n--;
+                if (n <= 0) { dismissModal(); }
+                else cd.textContent = `Returning to form in ${n}s...`;
+            }, 1000);
+        }
+
+        function dismissModal() {
+            clearInterval(cdTimer);
+            document.getElementById('success-modal').style.display = 'none';
+            // Clear form
+            ['name','mobile','email','bizname','othercat','address','city','state','pincode'].forEach(k => document.getElementById('f-'+k).value = '');
+            document.getElementById('f-gender').value = '';
+            document.getElementById('f-type').value = 'GENERAL';
+            catSel.value = ''; catSel.disabled = false;
+            document.getElementById('f-othercat').disabled = true;
+            document.getElementById('submit-btn').disabled = false;
+            document.getElementById('submit-btn').textContent = 'Register Offline Attendee';
+            window.scrollTo(0,0);
+        }
+
+        function submitForm() {
+            if (!validate()) {
+                playBeep(false);
+                return;
+            }
+
+            const btn = document.getElementById('submit-btn');
+            btn.disabled = true;
+            btn.textContent = '⏳ Registering...';
+
+            const payload = {
+                full_name: document.getElementById('f-name').value.trim(),
+                mobile: document.getElementById('f-mobile').value.trim(),
+                email: document.getElementById('f-email').value.trim() || null,
+                gender: document.getElementById('f-gender').value,
+                attendee_type: document.getElementById('f-type').value,
+                business_name: document.getElementById('f-bizname').value.trim() || null,
+                business_category: catSel.value || null,
+                other_category: document.getElementById('f-othercat').value.trim() || null,
+                address: document.getElementById('f-address').value.trim(),
+                city: document.getElementById('f-city').value.trim(),
+                state: document.getElementById('f-state').value.trim(),
+                pincode: document.getElementById('f-pincode').value.trim(),
+            };
+
+            fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showModal(data.attendee_id);
+                } else {
+                    alert('Error: ' + data.message);
+                    btn.disabled = false;
+                    btn.textContent = 'Register Offline Attendee';
+                    playBeep(false);
+                }
+            })
+            .catch(err => {
+                alert('Connection Error. Cannot reach Hub.');
+                btn.disabled = false;
+                btn.textContent = 'Register Offline Attendee';
+                playBeep(false);
+            });
+        }
+    </script>
+</body>
+</html>

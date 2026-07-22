@@ -19,6 +19,7 @@ import webbrowser
 # Flask Imports (Integrated API Engine)
 from flask import Flask, render_template, request, jsonify
 from werkzeug.serving import make_server
+import random 
 
 # ==============================================================================
 # DPI AWARENESS (Auto-scaling for HD, 2K, 4K displays)
@@ -51,6 +52,10 @@ FLASK_PORT = 5000
 app = Flask(__name__)
 gui_log_callback = None  # Hook to stream Flask requests directly to the GUI
 
+# Global Server-Side Testing State (Controlled by ServerHub Desktop UI)
+SERVER_TEST_MODE = False
+SERVER_TEST_DATE = "2026-08-30"
+
 @app.after_request
 def log_request(response):
     """Intercepts every HTTP request and sends detailed logs to the GUI."""
@@ -81,12 +86,20 @@ def stats():
     return render_template('network_stats.html')
 
 # --- API Endpoints ---
+@app.route('/api/status', methods=['GET'])
+def get_server_status():
+    """Provides global testing state to all connected mobile scanners."""
+    return jsonify({
+        "test_mode": SERVER_TEST_MODE,
+        "test_date": SERVER_TEST_DATE
+    }), 200
+
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
+    global SERVER_TEST_MODE, SERVER_TEST_DATE
     data = request.json
     raw_id = data.get('attendee_id')
-    simulated_date = data.get('simulated_date')
-    device_name = data.get('device', 'Local-Kiosk') # Grab device name, or default it
+    device_name = data.get('device', 'Local-Kiosk')
     
     if not raw_id:
         return jsonify({"status": "error", "message": "No ID provided"}), 400
@@ -114,13 +127,13 @@ def process_checkin():
             except: history = {}
         if not history: history = {}
 
-       # Determine the key (the Date)
-        if simulated_date:
-            today_date = simulated_date
+        # Use server-enforced testing date if active, otherwise real UTC date
+        if SERVER_TEST_MODE:
+            today_date = SERVER_TEST_DATE
         else:
             today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-        # --- FIX 1: RESTRICT TO VALID EVENT DAYS ---
+        # --- RESTRICT TO VALID EVENT DAYS ---
         valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
         if today_date not in valid_event_days:
             return jsonify({
@@ -128,17 +141,15 @@ def process_checkin():
                 "message": f"Scan rejected: {today_date} is not an official event day."
             }), 400
 
-        # --- FIX 2: PREVENT DOUBLE CHECK-IN ON THE SAME DAY ---
+        # --- PREVENT DOUBLE CHECK-IN ON THE SAME DAY ---
         if today_date in history:
             return jsonify({
                 "status": "error", 
                 "message": f"Already checked in today: {attendee.full_name}"
             }), 400
 
-        # Generate the full ISO 8601 UTC timestamp to match Supabase exactly
         iso_timestamp = datetime.now(timezone.utc).isoformat()
 
-        # --- Save the exact dictionary structure ---
         history[today_date] = {
             "device": device_name,
             "status": "CHECKED_IN",
@@ -146,15 +157,13 @@ def process_checkin():
         }
 
         attendee.checkin_history = json.dumps(history)
-        
-        # --- SYNC FLAGS TRIGGER ---
         attendee.needs_cloud_sync = True
-        attendee.needs_sheet_sync = True  # Flags cloud environment to update Google Sheets
+        attendee.needs_sheet_sync = True
         
         session.commit()
         
         success_msg = f"Checked in: {attendee.full_name}"
-        if simulated_date:
+        if SERVER_TEST_MODE:
             success_msg += f" (Test: {today_date})"
             
         return jsonify({"status": "success", "message": success_msg, "time": iso_timestamp}), 200
@@ -165,26 +174,61 @@ def process_checkin():
     finally:
         session.close()
 
+
 @app.route('/api/register', methods=['POST'])
 def process_registration():
     data = request.json
     sessions = get_database_sessions()
     session = sessions.get('mysql')()
     
+    def gen_id(att_type: str) -> str:
+        """Generates a unique TDE26 ID based on attendee type."""
+        prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
+        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        for _ in range(5000):
+            code = "".join(random.choices(chars, k=6))
+            aid = f"TDE26-{prefix}-{code}"
+            
+            # Check BOTH tables to guarantee 100% uniqueness
+            main_exists = session.query(Attendee).filter_by(attendee_id=aid).first()
+            kiosk_exists = session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first()
+            
+            if not main_exists and not kiosk_exists:
+                return aid
+        raise RuntimeError("ID generation failed after 5000 tries")
+
     try:
-        temp_id = f"OFFLINE-{datetime.now().strftime('%m%d%H%M%S')}"
+        # Generate the smart ID using your custom logic
+        new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
+        
+        # Save all the data from the new registration form
         new_kiosk_reg = OfflineKioskAttendee(
-            temp_uuid=temp_id,
+            temp_uuid=new_attendee_id, # Stored as the primary identifying UUID
+            attendee_id=new_attendee_id, # Safely map to the cloud expected ID column
             full_name=data.get('full_name'),
             mobile=data.get('mobile'),
             email=data.get('email', ''),
-            city=data.get('city', ''),
+            gender=data.get('gender'),
+            attendee_type=data.get('attendee_type'),
             business_name=data.get('business_name', ''),
-            sync_status='pending'
+            business_category=data.get('business_category', ''),
+            other_category=data.get('other_category', ''),
+            address=data.get('address', ''),
+            city=data.get('city', ''),
+            state=data.get('state', ''),
+            pincode=data.get('pincode', ''),
+            needs_cloud_sync=True,
+            needs_sheet_sync=True
         )
         session.add(new_kiosk_reg)
         session.commit()
-        return jsonify({"status": "success", "message": "Registration saved locally."}), 200
+        
+        # Send the generated ID back to the HTML to display on the success modal
+        return jsonify({
+            "status": "success", 
+            "message": "Registration saved locally.",
+            "attendee_id": new_attendee_id
+        }), 200
 
     except Exception as e:
         session.rollback()
@@ -193,13 +237,11 @@ def process_registration():
         session.close()
 
 # ==============================================================================
-# FLASK THREAD CONTROLLER (With Adhoc SSL & Camera Permission Support)
+# FLASK THREAD CONTROLLER
 # ==============================================================================
 class FlaskServerThread(threading.Thread):
-    """Runs the Flask server in a background thread with Adhoc SSL for camera permissions."""
     def __init__(self, app, host, port):
         super().__init__()
-        # threaded=True allows 20+ devices; ssl_context='adhoc' forces HTTPS for mobile cameras
         self.server = make_server(host, port, app, threaded=True, ssl_context='adhoc')
         self.ctx = app.app_context()
         self.ctx.push()
@@ -210,9 +252,6 @@ class FlaskServerThread(threading.Thread):
     def shutdown(self):
         self.server.shutdown()
 
-# ==============================================================================
-# HELPER FUNCTIONS
-# ==============================================================================
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -250,7 +289,6 @@ class ServerHub(ttk.Window):
 
         self.flask_thread = None
         
-        # Bind global logging callback
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         
@@ -266,23 +304,18 @@ class ServerHub(ttk.Window):
             logging.error(f"Database Connection Failed: {e}")
 
     def copy_to_clipboard(self, text):
-        """Unconditionally copies the provided text string to the system clipboard."""
-        if not text or text == "Offline":
-            return
+        if not text or text == "Offline": return
         self.clipboard_clear()
         self.clipboard_append(text)
         self.update()
         self._append_log(self.log_network, f"[CLIPBOARD] Copied link: {text}")
 
     def open_browser(self, url):
-        """Unconditionally opens the provided URL in the default browser."""
-        if not url or url == "Offline":
-            return
+        if not url or url == "Offline": return
         webbrowser.open(url)
         self._append_log(self.log_network, f"[BROWSER] Opened URL: {url}")
 
     def log_flask_event(self, message):
-        """Thread-safe handler for incoming Flask requests."""
         self._append_log(self.log_flask, message)
 
     def build_ui(self):
@@ -307,21 +340,13 @@ class ServerHub(ttk.Window):
 
         self.main_frame.bind("<Configure>", self.on_frame_configure)
         self.canvas.bind("<Configure>", self.on_canvas_configure)
-        
-        self.bind_all("<MouseWheel>", self.on_mousewheel)
-        self.bind_all("<Button-4>", self.on_mousewheel)
-        self.bind_all("<Button-5>", self.on_mousewheel)
 
-        # ==========================================
-        # LEFT SIDEBAR
-        # ==========================================
         sidebar = ttk.Frame(self.main_frame, width=300, padding=15)
         sidebar.pack(side=LEFT, fill=Y)
         sidebar.pack_propagate(False)
 
         ttk.Label(sidebar, text="NETWORK CONTROLS", font="-size 14 -weight bold", bootstyle=INFO).pack(pady=(0, 15), anchor=W)
 
-        # --- Flask Controls ---
         flask_frame = ttk.Labelframe(sidebar, text=" 🌐 Local API Engine ", padding=10)
         flask_frame.pack(fill=X, pady=5)
         
@@ -346,7 +371,6 @@ class ServerHub(ttk.Window):
         ttk.Button(flask_btn_row, text="Browser", bootstyle="outline-info", 
                    command=lambda: self.open_browser(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
 
-        # --- Cloudflare Controls ---
         cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=10)
         cf_frame.pack(fill=X, pady=15)
         
@@ -383,16 +407,11 @@ class ServerHub(ttk.Window):
         
         self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
         self.cb_test_date.pack(fill=X)
-        self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.refresh_stats())
+        self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
-
-        # ==========================================
-        # RIGHT CONTENT AREA
-        # ==========================================
         content = ttk.Frame(self.main_frame, padding=20)
         content.pack(side=LEFT, fill=BOTH, expand=True)
 
-        # --- HEADER (With Theme Switcher) ---
         header = ttk.Frame(content)
         header.pack(fill=X, pady=(0, 20))
         
@@ -412,7 +431,6 @@ class ServerHub(ttk.Window):
         self.lbl_stat_mysql = ttk.Label(status_frame, text="● MYSQL: CHECKING", bootstyle=INFO, font="-weight bold")
         self.lbl_stat_mysql.pack(side=LEFT, padx=10)
 
-        # --- STATS ROW 1 (Database Health) ---
         ttk.Label(content, text="DATABASE TELEMETRY", font="-weight bold").pack(anchor=W, pady=(0, 5))
         row1 = ttk.Frame(content)
         row1.pack(fill=X, pady=(0, 20))
@@ -423,7 +441,6 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
         self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
 
-        # --- STATS ROW 2 (Check-in Stats) ---
         ttk.Label(content, text="EVENT CHECK-IN METRICS", font="-weight bold").pack(anchor=W, pady=(5, 5))
         row2 = ttk.Frame(content)
         row2.pack(fill=X, pady=(0, 20))
@@ -434,7 +451,6 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-        # --- LOGS ROW 3 ---
         ttk.Label(content, text="SYSTEM EVENT LOGS", font="-weight bold").pack(anchor=W, pady=(5, 5))
         logs_frame = ttk.Frame(content)
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
@@ -443,7 +459,6 @@ class ServerHub(ttk.Window):
         self.log_flask = self._create_log_box(logs_frame, "Live Flask API Traffic Logs")
         self.log_cf = self._create_log_box(logs_frame, "Cloudflare Tunnel Status")
 
-        # --- FOOTER ---
         footer = ttk.Frame(content)
         footer.pack(fill=X, pady=(10, 0))
         ttk.Label(footer, text="Engineered for Event Resilience • Powered by EllowDigital", font="-size 8", foreground="gray").pack(side=RIGHT)
@@ -468,11 +483,9 @@ class ServerHub(ttk.Window):
         min_content_width = 1200
         new_width = max(event.width, min_content_width)
         self.canvas.itemconfig(self.canvas_window, width=new_width)
-        
         req_height = self.main_frame.winfo_reqheight()
         new_height = max(event.height, req_height)
         self.canvas.itemconfig(self.canvas_window, height=new_height)
-        
         self.check_scrollbars()
 
     def check_scrollbars(self):
@@ -482,7 +495,6 @@ class ServerHub(ttk.Window):
                 self.v_scrollbar.pack(side=RIGHT, fill=Y)
             else:
                 self.v_scrollbar.pack_forget()
-            
             if bbox[2] - bbox[0] > self.canvas.winfo_width():
                 self.h_scrollbar.pack(side=BOTTOM, fill=X)
             else:
@@ -491,9 +503,7 @@ class ServerHub(ttk.Window):
     def on_mousewheel(self, event):
         try:
             widget_under_cursor = self.winfo_containing(event.x_root, event.y_root)
-            if isinstance(widget_under_cursor, ttk.Text):
-                return
-                
+            if isinstance(widget_under_cursor, ttk.Text): return
             bbox = self.canvas.bbox("all")
             if bbox and (bbox[3] - bbox[1] > self.canvas.winfo_height()):
                 if event.num == 4 or getattr(event, 'delta', 0) > 0:
@@ -534,17 +544,26 @@ class ServerHub(ttk.Window):
         self.after(0, append)
 
     def toggle_test_mode(self):
-        if self.test_mode.get():
+        global SERVER_TEST_MODE
+        SERVER_TEST_MODE = self.test_mode.get()
+        if SERVER_TEST_MODE:
             self.chk_test.configure(text="Testing Mode ON", bootstyle="danger-round-toggle")
-            self.cb_test_date.configure(state=READONLY)
-            self._append_log(self.log_network, f"[WARNING] Testing Mode ON. System date overridden to {self.test_date.get()}.")
+            self.cb_test_date.configure(state="normal")
+            self._append_log(self.log_network, f"[WARNING] Testing Mode ON. Server date overridden to {self.test_date.get()}.")
         else:
             self.chk_test.configure(text="Testing Mode OFF", bootstyle="warning-round-toggle")
             self.cb_test_date.configure(state=DISABLED)
             self._append_log(self.log_network, "[INFO] Testing Mode OFF. Real system date restored.")
         self.refresh_stats()
 
+    def on_test_date_changed(self):
+        global SERVER_TEST_DATE
+        SERVER_TEST_DATE = self.test_date.get()
+        self._append_log(self.log_network, f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}")
+        self.refresh_stats()
+
     def refresh_stats(self):
+        global SERVER_TEST_MODE, SERVER_TEST_DATE
         if self.SessionMySQL:
             self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
         else:
@@ -570,8 +589,8 @@ class ServerHub(ttk.Window):
             chk_30, chk_31, chk_01 = 0, 0, 0
             total_checkins = 0
             
-            if self.test_mode.get():
-                today_str = self.test_date.get()
+            if SERVER_TEST_MODE:
+                today_str = SERVER_TEST_DATE
             else:
                 today_str = datetime.now().strftime('%Y-%m-%d')
                 
@@ -609,72 +628,50 @@ class ServerHub(ttk.Window):
             
         self.after(5000, self.refresh_stats)
 
-    # ==============================================================================
-    # STRICT SERVER PROCESS CONTROLS
-    # ==============================================================================
     def start_flask(self):
         self.btn_start_flask.configure(state=DISABLED)
         self.btn_stop_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=NORMAL)
-        
         self.flask_url = f"https://{self.local_ip}:{FLASK_PORT}"
-        
         self.update_qr(self.lbl_flask_qr, self.flask_url)
         self.lbl_flask_link.configure(text=self.flask_url, foreground="cyan")
-        
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting secure HTTPS API Engine...")
-        
         self.flask_thread = FlaskServerThread(app, '0.0.0.0', FLASK_PORT)
         self.flask_thread.start()
-        
         self._append_log(self.log_flask, f"[SYSTEM] Secure API Engine listening natively on {self.flask_url}")
         
     def stop_flask(self):
         if self.btn_stop_cf['state'] == NORMAL:
-            self._append_log(self.log_flask, "[WARN] API terminating. Auto-stopping dependent Cloudflare Tunnel...")
             self.stop_cf()
-            
         self.btn_stop_flask.configure(state=DISABLED)
         self.btn_start_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=DISABLED)
-        
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
-        
         if self.flask_thread:
-            self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Sending shutdown signal to API Thread...")
             self.flask_thread.shutdown()
             self.flask_thread.join()
             self.flask_thread = None
-        
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] API Engine terminated gracefully.")
 
     def start_cf(self):
         self.btn_start_cf.configure(state=DISABLED)
         self.btn_stop_cf.configure(state=NORMAL)
-        
         self.lbl_stat_cf.configure(text="● Cloudflare: CONNECTING", bootstyle=WARNING)
-        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel to Edge network...")
-        
         random_hash = random.randint(1000,9999)
         self.cloudflare_url = f"https://eventhub-{random_hash}.trycloudflare.com"
-        
         self.update_qr(self.lbl_cf_qr, self.cloudflare_url)
         self.lbl_cf_link.configure(text=self.cloudflare_url, foreground="cyan")
         self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS)
-        
         self._append_log(self.log_cf, f"[SUCCESS] Traffic successfully bridged to: {self.cloudflare_url}")
         
     def stop_cf(self):
         self.btn_stop_cf.configure(state=DISABLED)
         if self.btn_stop_flask['state'] == NORMAL:
             self.btn_start_cf.configure(state=NORMAL)
-            
         self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
-        
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
-        
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel connection closed.")
 
 if __name__ == "__main__":
