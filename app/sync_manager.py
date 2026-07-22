@@ -386,6 +386,7 @@ class SyncManager:
             if response.data:
                 for record in pushable:
                     record.needs_cloud_sync = False
+                    record.needs_sheet_sync = False  # 🛑 ADD THIS: Prevents duplicate Google Sheet syncs on future pushes
                 mysql_session.commit()
                 logging.info(f"Successfully pushed {len(batch_payload)} record(s) in batch.")
                 self.mirror_mysql_to_sqlite()
