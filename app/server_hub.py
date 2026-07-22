@@ -6,7 +6,7 @@ import subprocess
 import socket
 import random
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 
 # GUI Imports
 import ttkbootstrap as ttk
@@ -86,6 +86,7 @@ def process_checkin():
     data = request.json
     raw_id = data.get('attendee_id')
     simulated_date = data.get('simulated_date')
+    device_name = data.get('device', 'Local-Kiosk') # Grab device name, or default it
     
     if not raw_id:
         return jsonify({"status": "error", "message": "No ID provided"}), 400
@@ -113,14 +114,36 @@ def process_checkin():
             except: history = {}
         if not history: history = {}
 
+       # Determine the key (the Date)
         if simulated_date:
             today_date = simulated_date
-            current_time = f"{simulated_date} {datetime.now().strftime('%H:%M:%S')}"
         else:
-            today_date = datetime.now().strftime('%Y-%m-%d')
-            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            today_date = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-        history[today_date] = current_time
+        # --- FIX 1: RESTRICT TO VALID EVENT DAYS ---
+        valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
+        if today_date not in valid_event_days:
+            return jsonify({
+                "status": "error", 
+                "message": f"Scan rejected: {today_date} is not an official event day."
+            }), 400
+
+        # --- FIX 2: PREVENT DOUBLE CHECK-IN ON THE SAME DAY ---
+        if today_date in history:
+            return jsonify({
+                "status": "error", 
+                "message": f"Already checked in today: {attendee.full_name}"
+            }), 400
+
+        # Generate the full ISO 8601 UTC timestamp to match Supabase exactly
+        iso_timestamp = datetime.now(timezone.utc).isoformat()
+
+        # --- Save the exact dictionary structure ---
+        history[today_date] = {
+            "device": device_name,
+            "status": "CHECKED_IN",
+            "timestamp": iso_timestamp
+        }
 
         attendee.checkin_history = json.dumps(history)
         
@@ -134,7 +157,7 @@ def process_checkin():
         if simulated_date:
             success_msg += f" (Test: {today_date})"
             
-        return jsonify({"status": "success", "message": success_msg, "time": current_time}), 200
+        return jsonify({"status": "success", "message": success_msg, "time": iso_timestamp}), 200
 
     except Exception as e:
         session.rollback()

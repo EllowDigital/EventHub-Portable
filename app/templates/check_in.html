@@ -13,7 +13,7 @@
             background-color: #121212;
             color: #ffffff;
             margin: 0;
-            padding: 20px;
+            padding: 15px;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -25,7 +25,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         }
 
         .btn-back {
@@ -37,14 +37,32 @@
             border-radius: 6px;
         }
 
+        /* Live Network Status Pill */
+        .network-pill {
+            font-size: 0.75rem;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+        }
+        .net-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .net-excellent { background: #00e676; box-shadow: 0 0 8px #00e676; }
+        .net-fair { background: #ffbb33; box-shadow: 0 0 8px #ffbb33; }
+        .net-poor { background: #ff4444; box-shadow: 0 0 8px #ff4444; }
+        .net-offline { background: #757575; }
+
         /* Testing Mode Controls */
         .test-controls {
             width: 100%;
-            max-width: 460px;
+            max-width: 500px;
             background: #2a2a2a;
-            padding: 10px 20px;
+            padding: 10px 15px;
             border-radius: 8px;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -61,9 +79,15 @@
             font-weight: bold;
         }
 
-        #reader {
+        /* Scanner Container */
+        .scanner-wrapper {
             width: 100%;
             max-width: 500px;
+            position: relative;
+        }
+
+        #reader {
+            width: 100%;
             border-radius: 12px;
             overflow: hidden;
             border: 2px solid #333 !important;
@@ -71,46 +95,54 @@
             background: #000;
         }
 
-        #reader button {
-            padding: 10px;
-            background: #00d2ff;
-            color: black;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
+        /* Hide default html5-qrcode noisy buttons/dropdowns */
+        #reader__dashboard_section_csr button, 
+        #reader__dashboard_section_swap_link,
+        #html5-qrcode-anchor-scan-type-change {
+            display: none !important;
         }
 
-        #reader select {
-            padding: 10px;
-            background: #333;
-            color: white;
-            border-radius: 6px;
-            border: 1px solid #555;
-        }
-
-        #result-card {
-            margin-top: 20px;
-            padding: 15px 20px;
+        /* Samsung-style Zoom Bar Overlay */
+        .zoom-toolbar {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
             width: 100%;
-            max-width: 460px;
-            border-radius: 8px;
-            text-align: center;
-            font-weight: bold;
-            font-size: 1.2rem;
-            display: none;
-            transition: all 0.3s ease;
-            box-sizing: border-box;
         }
 
-        .success {
-            background-color: #00e676;
+        .zoom-btn {
+            background: #2a2a2a;
+            color: #fff;
+            border: 1px solid #555;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .zoom-btn:active {
+            background: #00d2ff;
             color: #000;
         }
 
-        .error {
-            background-color: #ff1744;
-            color: #fff;
+        #result-card {
+            margin-top: 15px;
+            padding: 15px 20px;
+            width: 100%;
+            max-width: 500px;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1.1rem;
+            display: none;
+            box-sizing: border-box;
         }
+
+        .success { background-color: #00e676; color: #000; }
+        .error { background-color: #ff1744; color: #fff; }
     </style>
 </head>
 
@@ -118,7 +150,11 @@
     <div class="header">
         <a href="/" class="btn-back">⬅ Back</a>
         <h3 style="margin:0;">QR Check-in</h3>
-        <div style="width:60px;"></div>
+        <!-- Live Network Quality Widget -->
+        <div id="network-pill" class="network-pill">
+            <span id="net-dot" class="net-dot net-offline"></span>
+            <span id="net-text">Checking...</span>
+        </div>
     </div>
 
     <!-- Date Simulator for Testing -->
@@ -132,10 +168,20 @@
         </select>
     </div>
 
-    <div id="reader"></div>
+    <div class="scanner-wrapper">
+        <div id="reader"></div>
+        <!-- Samsung-Style Zoom Toolbar -->
+        <div class="zoom-toolbar" id="zoom-controls" style="display:none;">
+            <button class="zoom-btn" onclick="adjustZoom(1)">1x (Reset)</button>
+            <button class="zoom-btn" onclick="adjustZoom(2)">2x Zoom</button>
+            <button class="zoom-btn" onclick="adjustZoom(3)">3x Zoom</button>
+        </div>
+    </div>
+
     <div id="result-card"></div>
 
     <script>
+        // --- AUDIO FEEDBACK ENGINE ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playBeep(isSuccess) {
             try {
@@ -151,6 +197,48 @@
                 oscillator.stop(audioCtx.currentTime + 0.3);
             } catch (e) { }
         }
+
+        // --- LIVE NETWORK SPEED MONITOR ---
+        async function checkNetworkQuality() {
+            const dot = document.getElementById('net-dot');
+            const text = document.getElementById('net-text');
+            
+            if (!navigator.onLine) {
+                dot.className = "net-dot net-offline";
+                text.textContent = "Disconnected";
+                return;
+            }
+
+            const startTime = performance.now();
+            try {
+                // Ping lightweight favicon to measure latency speed
+                await fetch('/favicon.ico?' + startTime, { method: 'HEAD', cache: 'no-store' });
+                const duration = performance.now() - startTime;
+
+                if (duration < 250) {
+                    dot.className = "net-dot net-excellent";
+                    text.textContent = "Excellent";
+                } else if (duration < 700) {
+                    dot.className = "net-dot net-fair";
+                    text.textContent = "Fair";
+                } else {
+                    dot.className = "net-dot net-poor";
+                    text.textContent = "Poor";
+                }
+            } catch (e) {
+                dot.className = "net-dot net-poor";
+                text.textContent = "Unstable";
+            }
+        }
+        setInterval(checkNetworkQuality, 4000);
+        window.addEventListener('online', checkNetworkQuality);
+        window.addEventListener('error', checkNetworkQuality);
+        checkNetworkQuality();
+
+        // --- CAMERA & ZOOM CONTROLLER ---
+        let html5QrCode;
+        let currentZoom = 1;
+        let trackCapabilities = null;
 
         const resultCard = document.getElementById('result-card');
         const dateSelector = document.getElementById('simulated-date');
@@ -175,17 +263,13 @@
             const simulatedDate = dateSelector.value;
             let attendeeId = decodedText.trim();
 
-            // Intelligent JSON Parsing: Extract attendeeId (camelCase) from QR payload
             try {
                 const parsedData = JSON.parse(decodedText);
                 if (typeof parsedData === 'object' && parsedData !== null) {
                     attendeeId = parsedData.attendeeId || parsedData.attendee_id || parsedData.id || parsedData.uuid || decodedText;
                 }
-            } catch (e) {
-                // Fallback for plain text ID strings
-            }
+            } catch (e) {}
 
-            // Send parsed ID to Flask API
             fetch('/api/checkin', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -194,31 +278,77 @@
                     simulated_date: simulatedDate
                 })
             })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success') {
-                        showResult(data.message, true);
-                    } else {
-                        showResult(data.message, false);
-                    }
-                })
-                .catch(error => {
-                    showResult("Network Error. Cannot reach Hub.", false);
-                });
+            .then(response => response.json())
+            .then(data => {
+                showResult(data.message, data.status === 'success');
+            })
+            .catch(() => {
+                showResult("Network Error. Cannot reach Hub.", false);
+            });
         }
 
-        // Initialize Camera Engine - disabling picture upload strictly
-        let html5QrcodeScanner = new Html5QrcodeScanner(
-            "reader",
-            {
-                fps: 15,
+        // Initialize high-performance camera scanner locked to BACK camera only
+        async function startScanner() {
+            html5QrCode = new Html5Qrcode("reader");
+            
+            const config = { 
+                fps: 20, 
                 qrbox: { width: 250, height: 250 },
-                aspectRatio: 1.0,
-                supportedScanTypes: [Html5QrcodeScanType.SCAN_TYPE_CAMERA] // Removes file upload button
-            },
-            false
-        );
-        html5QrcodeScanner.render(onScanSuccess, (error) => { });
+                aspectRatio: 1.0
+            };
+
+            try {
+                await html5QrCode.start(
+                    { facingMode: "environment" }, // Forces rear camera exclusively
+                    config,
+                    onScanSuccess
+                );
+
+                // Extract zoom capabilities if supported by mobile device hardware
+                setTimeout(() => {
+                    try {
+                        const videoTrack = html5QrCode.getRunningTrack();
+                        if (videoTrack) {
+                            trackCapabilities = videoTrack.getCapabilities();
+                            if (trackCapabilities && trackCapabilities.zoom) {
+                                document.getElementById('zoom-controls').style.display = 'flex';
+                            }
+                        }
+                    } catch (err) {}
+                }, 1000);
+
+            } catch (err) {
+                showResult("Camera permission denied or unavailable.", false);
+            }
+        }
+
+        // Samsung-style Hardware Zoom Implementation
+        async function adjustZoom(level) {
+            if (!html5QrCode) return;
+            try {
+                const videoTrack = html5QrCode.getRunningTrack();
+                if (!videoTrack) return;
+
+                const capabilities = videoTrack.getCapabilities();
+                if (capabilities && capabilities.zoom) {
+                    const minZoom = capabilities.zoom.min;
+                    const maxZoom = capabilities.zoom.max;
+                    
+                    // Scale target zoom level safely within hardware bounds
+                    let targetZoom = minZoom + (level - 1) * ((maxZoom - minZoom) / 2);
+                    targetZoom = Math.min(Math.max(targetZoom, minZoom), maxZoom);
+
+                    await videoTrack.applyConstraints({
+                        advanced: [{ zoom: targetZoom }]
+                    });
+                }
+            } catch (e) {
+                console.warn("Hardware zoom not supported on this device/browser.");
+            }
+        }
+
+        // Boot scanner on load
+        window.addEventListener('load', startScanner);
     </script>
 </body>
 
