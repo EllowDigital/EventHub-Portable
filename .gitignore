@@ -2,7 +2,9 @@
 # Secrets & Configuration
 # =========================
 # NEVER upload API keys or database credentials
-app/config/secrets.json
+app/config/secrets.jason
+app/config/
+app/config/*
 .env
 
 # =========================
@@ -41,6 +43,7 @@ venv/
 env/
 .venv/
 Pipfile.lock
+
 
 # =========================
 # OS Specific Files
