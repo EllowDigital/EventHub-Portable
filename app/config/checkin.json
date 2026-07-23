@@ -1,0 +1,6 @@
+{
+    "hub_url": "https://10.97.119.221:5000",
+    "device_name": "Gate_Display_1",
+    "poll_interval_ms": 500,
+    "photo_directory": "attendee_photos"
+}

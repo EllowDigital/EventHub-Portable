@@ -9,10 +9,9 @@ import platform
 import re
 import time
 import uuid
-import queue  # <-- IMPORTED FOR THREAD-SAFE GUI UPDATES
+import queue
 from datetime import datetime, timezone
 
-# GUI Imports
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.widgets.scrolled import ScrolledText
@@ -20,8 +19,7 @@ import qrcode
 from PIL import Image, ImageTk
 import webbrowser
 
-# Flask Imports
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.serving import make_server
 
 if platform.system() == "Windows":
@@ -51,11 +49,11 @@ SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
 ACTIVE_DEVICES = {}
+SCAN_CLIENTS = []  # Holds queues for connected Gate Displays
 
 @app.after_request
 def log_request(response):
-    """Intercepts HTTP requests and sends detailed logs to the GUI, hiding background noise."""
-    if request.path in ['/api/status', '/api/network-data'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
+    if request.path in ['/api/status', '/api/network-data', '/api/stream-scans'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
         return response  
         
     current_time_str = datetime.now().strftime('%H:%M:%S')
@@ -63,6 +61,36 @@ def log_request(response):
     if gui_log_callback:
         gui_log_callback(log_msg)
     return response
+
+# --- REAL-TIME EVENT BROADCASTER ---
+def broadcast_scan(attendee, status, message, device_name, scan_time):
+    att_dict = None
+    if attendee:
+        att_dict = {
+            "attendee_id": attendee.attendee_id,
+            "full_name": attendee.full_name,
+            "business_name": attendee.business_name,
+            "mobile": attendee.mobile,
+            "city": attendee.city,
+            "state": attendee.state,
+            "attendee_type": getattr(attendee.attendee_type, 'value', str(attendee.attendee_type)),
+            "gender": getattr(attendee.gender, 'value', str(attendee.gender)),
+        }
+        
+    event = {
+        "status": status,
+        "message": message,
+        "device": device_name,
+        "timestamp": scan_time,
+        "attendee": att_dict
+    }
+    
+    # Push event to all connected terminal screens
+    for q in SCAN_CLIENTS:
+        try:
+            q.put(event)
+        except Exception:
+            pass
 
 # --- HTML Template Routes ---
 @app.route('/')
@@ -82,14 +110,32 @@ def stats(): return render_template('network_stats.html')
 def get_server_status():
     ip = request.remote_addr
     custom_device_name = request.args.get('device_name', 'Unknown Device')
-    
     if custom_device_name and custom_device_name != "null":
-        ACTIVE_DEVICES[ip] = {
-            'last_seen': time.time(),
-            'name': custom_device_name
-        }
-
+        ACTIVE_DEVICES[ip] = {'last_seen': time.time(), 'name': custom_device_name}
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
+
+# NEW: Server-Sent Events (SSE) Stream for real-time pushing
+@app.route('/api/stream-scans')
+def stream_scans():
+    def event_stream():
+        q = queue.Queue()
+        SCAN_CLIENTS.append(q)
+        try:
+            while True:
+                try:
+                    # Wait for a scan event, or send a heartbeat comment every 10s to keep connection alive
+                    data = q.get(timeout=10)
+                    yield f"data: {json.dumps(data)}\n\n"
+                except queue.Empty:
+                    yield ": heartbeat\n\n"
+        except GeneratorExit:
+            pass # Client disconnected gracefully
+        finally:
+            # Clean up instantly upon disconnection to free memory for fast reconnect
+            if q in SCAN_CLIENTS:
+                SCAN_CLIENTS.remove(q)
+                
+    return Response(event_stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
 
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
@@ -99,9 +145,12 @@ def process_checkin():
     identifier = str(data.get('attendee_id', '')).strip()
     search_type = data.get('search_type', 'id')
     device_name = data.get('device_name', f"Scanner ({request.remote_addr})")
+    iso_timestamp = datetime.now(timezone.utc).isoformat()
     
     if not identifier:
-        return jsonify({"status": "error", "message": "No ID or Phone provided"}), 400
+        msg = "No ID or Phone provided"
+        broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
+        return jsonify({"status": "error", "message": msg}), 400
 
     if search_type == 'id' and "{" in identifier:
         try:
@@ -114,18 +163,22 @@ def process_checkin():
     
     try:
         attendee = None
+        # OPTIMIZATION: with_for_update() adds a row-level database lock during this transaction 
+        # to prevent race conditions if 16 devices scan simultaneously.
         if search_type == 'phone':
-            attendee = session.query(Attendee).filter_by(mobile=identifier).first()
+            attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
             if not attendee:
-                attendee = session.query(OfflineKioskAttendee).filter_by(mobile=identifier).first()
+                attendee = session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
         else:
-            attendee = session.query(Attendee).filter_by(attendee_id=identifier).first()
+            attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first()
             if not attendee:
-                attendee = session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).first()
+                attendee = session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
 
         if not attendee:
             search_label = "Phone" if search_type == 'phone' else "ID"
-            return jsonify({"status": "error", "message": f"{search_label} not found: {identifier}"}), 404
+            msg = f"{search_label} not found: {identifier}"
+            broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
+            return jsonify({"status": "error", "message": msg}), 404
 
         history = attendee.checkin_history
         if isinstance(history, str):
@@ -137,12 +190,15 @@ def process_checkin():
         valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
         
         if today_date not in valid_event_days:
-            return jsonify({"status": "error", "message": f"Scan rejected: {today_date} is not an official event day."}), 400
+            msg = f"Scan rejected: {today_date} is not an official event day."
+            broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
+            return jsonify({"status": "error", "message": msg}), 400
 
         if today_date in history:
-            return jsonify({"status": "error", "message": f"Already checked in today: {attendee.full_name}"}), 400
+            msg = f"Already checked in today: {attendee.full_name}"
+            broadcast_scan(attendee, "DUPLICATE", msg, device_name, iso_timestamp)
+            return jsonify({"status": "error", "message": msg}), 400
 
-        iso_timestamp = datetime.now(timezone.utc).isoformat()
         history[today_date] = {"device": device_name, "status": "CHECKED_IN", "timestamp": iso_timestamp}
 
         attendee.checkin_history = json.dumps(history)
@@ -153,11 +209,14 @@ def process_checkin():
         
         success_msg = f"Checked in: {attendee.full_name}"
         if SERVER_TEST_MODE: success_msg += f" (Test: {today_date})"
+        
+        broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
             
         return jsonify({"status": "success", "message": success_msg, "time": iso_timestamp}), 200
 
     except Exception as e:
         session.rollback()
+        broadcast_scan(None, "ERROR", str(e), device_name, iso_timestamp)
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         session.close()
@@ -176,11 +235,14 @@ def process_registration():
     device_label = data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})")
 
     try:
-        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
-        if existing_main: return jsonify({"status": "already_registered", "message": "Found in main DB.", "attendee_id": existing_main.attendee_id}), 200
+        # OPTIMIZATION: Row locks prevent double-submit bugs from rapid tap registrations
+        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
+        if existing_main: 
+            return jsonify({"status": "already_registered", "message": "Found in main DB.", "attendee_id": existing_main.attendee_id}), 200
 
-        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-        if existing_kiosk: return jsonify({"status": "already_registered", "message": "Found in kiosk DB.", "attendee_id": existing_kiosk.attendee_id}), 200
+        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).with_for_update().first()
+        if existing_kiosk: 
+            return jsonify({"status": "already_registered", "message": "Found in kiosk DB.", "attendee_id": existing_kiosk.attendee_id}), 200
 
         def gen_id(att_type: str) -> str:
             prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
@@ -247,21 +309,25 @@ def get_network_data():
     device_stats = {}
     
     try:
+        # OPTIMIZATION: Stopped loading all attendees into memory. Used DB-level counting.
         global_stats["total_registrations"] = session.query(OfflineKioskAttendee).count()
-        attendees = session.query(Attendee).all()
         today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
-        for att in attendees:
-            history = att.checkin_history
-            if isinstance(history, str):
-                try: history = json.loads(history)
-                except: history = {}
-            if history:
-                global_stats["total_scans"] += len(history)
-                if today_date in history:
-                    global_stats["today_scans"] += 1
-                    device_name = history[today_date].get("device", "Unknown Device")
-                    device_stats[device_name] = device_stats.get(device_name, 0) + 1
+        chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-30"%')).count()
+        chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-31"%')).count()
+        chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-09-01"%')).count()
+        
+        global_stats["total_scans"] = chk_30 + chk_31 + chk_01
+        
+        if today_date == "2026-08-30": 
+            global_stats["today_scans"] = chk_30
+        elif today_date == "2026-08-31": 
+            global_stats["today_scans"] = chk_31
+        elif today_date == "2026-09-01": 
+            global_stats["today_scans"] = chk_01
+        else: 
+            global_stats["today_scans"] = session.query(Attendee).filter(Attendee.checkin_history.like(f'%"{today_date}"%')).count()
+
     except Exception: pass
     finally: session.close()
 
@@ -311,7 +377,6 @@ def generate_qr_image(data, size=150):
 # ==============================================================================
 class ServerHub(ttk.Window):
     def __init__(self):
-        # Used 'darkly' for a flatter, more VSCode-like foundation instead of cyborg
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V1.0")
         self.geometry("1600x950")
         self.minsize(1000, 700)
@@ -327,14 +392,13 @@ class ServerHub(ttk.Window):
         self.flask_thread = None
         self.cf_process = None 
         
-        # --- THE FIX: THREAD-SAFE GUI QUEUE ---
         self.gui_queue = queue.Queue()
         
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         
         self.build_ui()
-        self.process_gui_queue() # Start polling the queue safely
+        self.process_gui_queue() 
         self.refresh_stats()
 
     def connect_db(self):
@@ -345,19 +409,16 @@ class ServerHub(ttk.Window):
         except Exception as e:
             logging.error(f"Database Connection Failed: {e}")
 
-    # --- QUEUE PROCESSOR ---
     def process_gui_queue(self):
-        """Safely executes GUI updates pushed by background threads (Flask, Cloudflare)"""
         while not self.gui_queue.empty():
             try:
                 task = self.gui_queue.get_nowait()
-                task() # Execute the GUI command safely in the main thread
+                task() 
             except queue.Empty:
                 break
         self.after(50, self.process_gui_queue)
 
     def _append_log(self, scrolled_text_widget, message):
-        """Pushes the log update into the safe queue."""
         def append():
             scrolled_text_widget.text.configure(state=NORMAL)
             scrolled_text_widget.text.insert(END, message + "\n")
@@ -556,8 +617,6 @@ class ServerHub(ttk.Window):
         frame = ttk.Frame(parent, borderwidth=1, relief="solid", bootstyle="dark")
         frame.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
         ttk.Label(frame, text=title, font="-size 10 -weight bold", padding=10, background="#252526", foreground="#CCC").pack(anchor=W, fill=X)
-        
-        # Exact VSCode Editor Colors
         log_box = ScrolledText(frame, font=("Consolas", 10))
         log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
         log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0) 
@@ -615,28 +674,27 @@ class ServerHub(ttk.Window):
         sqlite_session = self.SessionSQLite() if self.SessionSQLite else None
         
         try:
-            attendees = mysql_session.query(Attendee).all()
+            # OPTIMIZATION: Use .count() and SQL queries instead of pulling 10,000 strings into memory
+            total_mysql = mysql_session.query(Attendee).count()
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
-            
-            total_mysql = len(attendees)
             total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
             
-            chk_30, chk_31, chk_01, chk_today, total_checkins = 0, 0, 0, 0, 0
+            chk_30 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-30"%')).count()
+            chk_31 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-31"%')).count()
+            chk_01 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-09-01"%')).count()
+            
             today_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now().strftime('%Y-%m-%d')
             
-            for att in attendees:
-                history = att.checkin_history
-                if isinstance(history, str):
-                    try: history = json.loads(history)
-                    except: history = {}
-                        
-                if history:
-                    total_checkins += len(history)
-                    history_str = json.dumps(history)
-                    if "2026-08-30" in history_str: chk_30 += 1
-                    if "2026-08-31" in history_str: chk_31 += 1
-                    if "2026-09-01" in history_str: chk_01 += 1
-                    if today_str in history_str: chk_today += 1
+            if today_str == "2026-08-30": 
+                chk_today = chk_30
+            elif today_str == "2026-08-31": 
+                chk_today = chk_31
+            elif today_str == "2026-09-01": 
+                chk_today = chk_01
+            else: 
+                chk_today = mysql_session.query(Attendee).filter(Attendee.checkin_history.like(f'%"{today_str}"%')).count()
+
+            total_checkins = chk_30 + chk_31 + chk_01
 
             self.stat_vars["total_att"].configure(text=str(total_mysql))
             self.stat_vars["kiosk_reg"].configure(text=str(kiosk_regs))
@@ -704,7 +762,6 @@ class ServerHub(ttk.Window):
                             self.cloudflare_url = match.group(0)
                             url_found = True
                             
-                            # --- THE FIX: QUEUED GUI UPDATES FROM BACKGROUND THREAD ---
                             self.gui_queue.put(lambda: self.update_qr(self.lbl_cf_qr, self.cloudflare_url))
                             self.gui_queue.put(lambda: self.lbl_cf_link.configure(text=self.cloudflare_url, foreground="#4D9CE6"))
                             self.gui_queue.put(lambda: self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS))

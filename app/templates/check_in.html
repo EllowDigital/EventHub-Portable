@@ -120,7 +120,6 @@
             position: relative;
         }
 
-        /* Improved Scanner Box & Laser Animation */
         .scanner-box {
             position: relative;
             width: 100%;
@@ -148,7 +147,7 @@
             top: 0; left: 0; right: 0; bottom: 0;
             z-index: 10;
             pointer-events: none;
-            display: none; /* Toggled via JS */
+            display: none;
         }
         
         .scan-laser {
@@ -166,7 +165,6 @@
             50% { top: 95%; }
         }
 
-        /* Camera Power Controls */
         .camera-toggle-btn {
             width: 100%;
             padding: 12px;
@@ -181,7 +179,7 @@
             transition: background 0.2s;
         }
         .camera-toggle-btn.paused {
-            background: #00e676; /* Turns green when ready to resume */
+            background: #00e676;
             color: #000;
         }
 
@@ -210,7 +208,6 @@
             color: #000;
         }
 
-        /* Manual Entry Form */
         .manual-wrapper {
             width: 100%;
             max-width: 500px;
@@ -243,7 +240,6 @@
             padding: 12px 15px;
             border-radius: 8px;
             font-size: 1.1rem;
-            transition: border-color 0.2s;
             font-family: monospace;
             letter-spacing: 1px;
             text-align: center;
@@ -306,7 +302,6 @@
         .success { background-color: #00e676; color: #000; }
         .error { background-color: #ff1744; color: #fff; }
 
-        /* Device Name Registration Modal */
         #device-modal {
             display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9);
             z-index: 9999; align-items: center; justify-content: center;
@@ -343,17 +338,14 @@
     
     <div id="test-banner">🧪 TESTING MODE ACTIVE: Simulating Date <span id="banner-date"></span></div>
 
-    <!-- Mode Tabs -->
     <div class="tabs">
         <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">📷 QR Scanner</button>
         <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">⌨️ Manual Entry</button>
     </div>
 
-    <!-- QR Scanner View -->
     <div class="scanner-wrapper" id="qr-view">
         <div class="scanner-box">
             <div id="reader"></div>
-            <!-- Laser Animation Overlay -->
             <div class="scan-overlay" id="scan-overlay">
                 <div class="scan-laser"></div>
             </div>
@@ -370,7 +362,6 @@
         </div>
     </div>
 
-    <!-- Manual Entry View -->
     <div class="manual-wrapper" id="manual-view">
         <div class="input-group">
             <label>Find by Attendee ID</label>
@@ -389,7 +380,6 @@
 
     <div id="result-card"></div>
 
-    <!-- Device Registry Modal -->
     <div id="device-modal">
         <div class="dev-modal-content">
             <h3 style="margin-top:0; color:#00d2ff;">Identify Scanner</h3>
@@ -400,7 +390,6 @@
     </div>
 
     <script>
-        // --- HARDWARE POWER MANAGEMENT ---
         let html5QrCode = null;
         let isCameraActive = false;
         let isProcessing = false;
@@ -449,7 +438,7 @@
         async function stopHardware() {
             if (html5QrCode && isCameraActive) {
                 try {
-                    if (html5QrCode.getState() === 2) { // 2 = SCANNING state
+                    if (html5QrCode.getState() === 2) {
                         await html5QrCode.stop();
                     }
                     isCameraActive = false;
@@ -467,7 +456,6 @@
             else await startHardware();
         }
 
-        // --- UI TOGGLE LOGIC ---
         async function switchMode(mode) {
             document.getElementById('result-card').style.display = 'none';
             if (mode === 'qr') {
@@ -475,29 +463,25 @@
                 document.getElementById('tab-manual').classList.remove('active');
                 document.getElementById('qr-view').style.display = 'block';
                 document.getElementById('manual-view').style.display = 'none';
-                await startHardware(); // Automatically resume camera when switching back to scanner tab
+                await startHardware();
             } else {
                 document.getElementById('tab-manual').classList.add('active');
                 document.getElementById('tab-qr').classList.remove('active');
                 document.getElementById('manual-view').style.display = 'block';
                 document.getElementById('qr-view').style.display = 'none';
-                await stopHardware();  // Automatically kill hardware to save battery when typing manually
+                await stopHardware();
             }
         }
 
-        // --- SMART ID FORMATTER ---
         function formatID(input) {
             let val = input.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
-            
             if (val.length > 0 && !val.startsWith("TDE26-")) {
                 if ("TDE26-".startsWith(val)) return; 
                 val = "TDE26-" + val.replace(/-/g, '');
             }
-            
             if (val.length === 7 && !val.endsWith('-')) {
                 val = val + '-';
             }
-            
             input.value = val;
         }
 
@@ -525,12 +509,10 @@
             }
 
             processCheckin(payloadValue, searchType);
-            
             document.getElementById('manual-id').value = '';
             document.getElementById('manual-phone').value = '';
         }
 
-        // --- DEVICE REGISTRY LOGIC ---
         function getDeviceName() { return localStorage.getItem('hub_device_name') || 'Unnamed Scanner'; }
         function initDeviceName() {
             let name = localStorage.getItem('hub_device_name');
@@ -550,7 +532,6 @@
             document.getElementById('device-modal').style.display = 'flex';
         }
 
-        // --- LIVE NETWORK & SERVER POLLING ---
         async function syncServerStatus() {
             const banner = document.getElementById('test-banner');
             const bannerDate = document.getElementById('banner-date');
@@ -587,7 +568,6 @@
             }
         }
 
-        // --- AUDIO ENGINE ---
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         function playBeep(isSuccess) {
             try {
@@ -604,10 +584,9 @@
             } catch (e) { }
         }
 
-        // --- CORE CHECKIN API CALL ---
         function processCheckin(identifier, type = "id") {
             if (isProcessing) return;
-            isProcessing = true;
+            isProcessing = true; // Lock mechanism prevents rapid double firing
 
             fetch('/api/checkin', {
                 method: 'POST',
@@ -636,8 +615,8 @@
 
             setTimeout(() => {
                 resultCard.style.display = 'none';
-                isProcessing = false;
-            }, 2500);
+                isProcessing = false; // Release lock after cooldown period
+            }, 1500);
         }
 
         function onScanSuccess(decodedText) {
@@ -669,7 +648,7 @@
                     const maxZoom = capabilities.zoom.max || 3;
                     
                     let targetZoom = minZoom;
-                    if (level === 2) targetZoom = minZoom + ((maxZoom - minZoom) * 0.35); // Native 2x scale
+                    if (level === 2) targetZoom = minZoom + ((maxZoom - minZoom) * 0.35);
                     if (level === 3) targetZoom = maxZoom; 
                     
                     targetZoom = Math.min(Math.max(targetZoom, minZoom), maxZoom);
