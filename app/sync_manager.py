@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.tooltip import ToolTip
+from ttkbootstrap.widgets.tooltip import ToolTip
 
 # Import models and DB initialization from your schema
 try:
