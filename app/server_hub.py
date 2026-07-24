@@ -163,8 +163,6 @@ def process_checkin():
     
     try:
         attendee = None
-        # OPTIMIZATION: with_for_update() adds a row-level database lock during this transaction 
-        # to prevent race conditions if 16 devices scan simultaneously.
         if search_type == 'phone':
             attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
             if not attendee:
@@ -186,20 +184,46 @@ def process_checkin():
             except: history = {}
         if not history: history = {}
 
-        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
+        current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
-        if today_date not in valid_event_days:
-            msg = f"Scan rejected: {today_date} is not an official event day."
+        date_map = {
+            "2026-08-30": "30 August",
+            "2026-08-31": "31 August",
+            "2026-09-01": "1 September"
+        }
+        
+        if current_date_str not in date_map:
+            msg = f"Scan rejected: {current_date_str} is not an official event day."
             broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
             return jsonify({"status": "error", "message": msg}), 400
+            
+        today_key = date_map[current_date_str]
 
-        if today_date in history:
+        att_days = attendee.attendance_days or []
+        if isinstance(att_days, str):
+            if today_key not in att_days:
+                msg = f"Access Denied: {attendee.full_name} does not have a pass for today ({today_key})."
+                broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
+                return jsonify({"status": "error", "message": msg}), 403
+        elif isinstance(att_days, list):
+            if today_key not in att_days:
+                msg = f"Access Denied: {attendee.full_name} does not have a pass for today ({today_key})."
+                broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
+                return jsonify({"status": "error", "message": msg}), 403
+
+        if today_key in history:
             msg = f"Already checked in today: {attendee.full_name}"
             broadcast_scan(attendee, "DUPLICATE", msg, device_name, iso_timestamp)
             return jsonify({"status": "error", "message": msg}), 400
 
-        history[today_date] = {"device": device_name, "status": "CHECKED_IN", "timestamp": iso_timestamp}
+        # --- NEW UNIFIED JSON STRUCTURE ---
+        history[today_key] = {
+            "timestamp": iso_timestamp,
+            "source": "offline_hub",
+            "device": device_name,
+            "date_code": current_date_str,
+            "display_date": today_key
+        }
 
         attendee.checkin_history = json.dumps(history)
         attendee.needs_cloud_sync = True
@@ -208,7 +232,7 @@ def process_checkin():
         session.commit()
         
         success_msg = f"Checked in: {attendee.full_name}"
-        if SERVER_TEST_MODE: success_msg += f" (Test: {today_date})"
+        if SERVER_TEST_MODE: success_msg += f" (Test: {today_key})"
         
         broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
             
@@ -220,7 +244,6 @@ def process_checkin():
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         session.close()
-
 @app.route('/api/register', methods=['POST'])
 def process_registration():
     global SERVER_TEST_MODE, SERVER_TEST_DATE
