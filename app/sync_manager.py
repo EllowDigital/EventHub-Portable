@@ -17,6 +17,9 @@ from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets.tooltip import ToolTip
 
+# 🛡️ FIX: Import flag_modified to safely track changes merged from the cloud
+from sqlalchemy.orm.attributes import flag_modified
+
 # Import models and DB initialization from your schema
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
@@ -37,7 +40,6 @@ LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(CONFIG_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# The three event days - matching exactly with online portal
 EVENT_DAYS = ["2026-08-30", "2026-08-31", "2026-09-01"]
 
 COMPARABLE_FIELDS = [
@@ -53,23 +55,32 @@ PULL_COMMIT_BATCH_SIZE = 250
 # ==============================================================================
 # CANONICAL CHECK-IN DAY HANDLING
 # ==============================================================================
-def _build_day_alias_map():
-    aliases = {}
+def _build_portal_key_map():
+    """
+    🛡️ FIX: Enforces strict Next.js portal key formatting.
+    Transforms ALL date variables (e.g. "2026-08-30", "30 aug") back into 
+    the EXACT requested human-readable keys: "30 August"
+    """
+    mapping = {}
     for iso_day in EVENT_DAYS:
         dt = datetime.strptime(iso_day, "%Y-%m-%d")
-        aliases[iso_day.lower()] = iso_day
-        aliases[f"{dt.day} {dt.strftime('%B')}".lower()] = iso_day   
-        aliases[f"{dt.day} {dt.strftime('%b')}".lower()] = iso_day   
-    return aliases
+        portal_key = f"{dt.day} {dt.strftime('%B')}" # "30 August"
+        
+        mapping[iso_day.lower()] = portal_key
+        mapping[iso_day] = portal_key
+        mapping[portal_key.lower()] = portal_key
+        mapping[portal_key] = portal_key
+        mapping[f"{dt.day} {dt.strftime('%b')}".lower()] = portal_key
+    return mapping
 
-_DAY_ALIASES = _build_day_alias_map()
+_PORTAL_KEYS = _build_portal_key_map()
 
 
 def _canonical_day_key(raw_key):
     if not raw_key:
         return raw_key
     key = str(raw_key).strip()
-    return _DAY_ALIASES.get(key.lower(), key)
+    return _PORTAL_KEYS.get(key.lower(), key)
 
 
 def _coerce_dict(value):
@@ -695,6 +706,9 @@ class SyncManager:
             local_record.checkin_history = _merge_checkin_history(
                 local_record.checkin_history, cloud_data.get('checkin_history', {})
             )
+            
+            # 🛡️ FIX: Mark updated during pull so it persists back to local DB cleanly
+            flag_modified(local_record, "checkin_history")
 
             if local_record.needs_cloud_sync:
                 local_updated = local_record.updated_at
@@ -743,7 +757,7 @@ class SyncManager:
             updated_at=cloud_updated_at,
             needs_cloud_sync=False,
             needs_sheet_sync=cloud_data.get('needs_sheet_sync', False),
-            needs_local_sync=False,  # 🛡️ Locally downloaded!
+            needs_local_sync=False,  
             local_modified=False,
             device_name=None,
         )
