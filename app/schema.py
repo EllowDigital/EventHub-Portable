@@ -2,6 +2,12 @@ import os
 import json
 import enum
 from datetime import datetime
+import pymysql
+
+# PyMySQL provides a pure-Python MySQL driver -- no C compiler required.
+# This makes it answer to the same "MySQLdb" name SQLAlchemy expects.
+pymysql.install_as_MySQLdb()
+
 from sqlalchemy import (
     create_engine, inspect, Column, String, Text, DateTime, 
     Boolean, Enum, Float, Integer, JSON, CheckConstraint, text
@@ -58,8 +64,11 @@ class Attendee(Base):
     
     checkin_history = Column(JSON, nullable=False, default={})
     
+    # 🛡️ Synchronization Flags (Updated for Netlify Parity)
     needs_cloud_sync = Column(Boolean, nullable=False, default=True, index=True)
     needs_sheet_sync = Column(Boolean, nullable=False, default=False)
+    needs_local_sync = Column(Boolean, nullable=False, default=False, index=True)
+    
     local_modified = Column(Boolean, nullable=False, default=False, index=True)
     device_name = Column(String(100), nullable=True)
 
@@ -93,8 +102,11 @@ class OfflineKioskAttendee(Base):
     
     checkin_history = Column(JSON, nullable=False, default={})
     
+    # 🛡️ Synchronization Flags (Updated for Netlify Parity)
     needs_cloud_sync = Column(Boolean, nullable=False, default=True, index=True)
     needs_sheet_sync = Column(Boolean, nullable=False, default=False)
+    needs_local_sync = Column(Boolean, nullable=False, default=False, index=True)
+    
     local_modified = Column(Boolean, nullable=False, default=False, index=True)
     device_name = Column(String(100), nullable=True)
 
