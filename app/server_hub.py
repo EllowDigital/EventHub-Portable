@@ -149,7 +149,9 @@ def process_checkin():
     identifier = str(data.get('attendee_id', '')).strip()
     search_type = data.get('search_type', 'id')
     device_name = data.get('device_name', f"Scanner ({request.remote_addr})")
-    iso_timestamp = datetime.now(timezone.utc).isoformat()
+    
+    # Strictly formats timestamp to match JavaScript ISOString 'Z' ending
+    iso_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     
     if not identifier:
         msg = "No ID or Phone provided"
@@ -166,7 +168,7 @@ def process_checkin():
     session = sessions.get('mysql')()
     
     try:
-        # OPTIMIZATION: Row locks for rapid concurrent scanning
+        # Row locks for rapid concurrent scanning
         attendee = None
         if search_type == 'phone':
             attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
@@ -219,7 +221,7 @@ def process_checkin():
             broadcast_scan(attendee, "DUPLICATE", msg, device_name, iso_timestamp)
             return jsonify({"status": "error", "message": msg}), 400
 
-        # Create structured JSON payload
+        # Exact JSON Schema enforcement
         history[today_key] = {
             "timestamp": iso_timestamp,
             "source": "offline_hub",
@@ -228,12 +230,11 @@ def process_checkin():
             "display_date": today_key
         }
 
-        attendee.checkin_history = history # FIX: Never use json.dumps() for SQLAlchemy JSON columns
+        attendee.checkin_history = history 
         
-        # Proper Sync Flags
         attendee.needs_cloud_sync = True
         attendee.needs_sheet_sync = True
-        attendee.needs_local_sync = False # Explicitly mark this machine as locally updated
+        attendee.needs_local_sync = False 
         attendee.local_modified = True
         
         session.commit()
@@ -265,6 +266,9 @@ def process_registration():
     req_os = request.user_agent.platform or "Unknown"
     device_label = data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})")
 
+    # Strictly formats timestamp to match JavaScript ISOString 'Z' ending
+    iso_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
     try:
         existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
         if existing_main: 
@@ -291,13 +295,15 @@ def process_registration():
         
         checkin_history_dict = {}
         if today_date in valid_event_days:
-            # Match canonical check-in mapping
             date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
             key = date_map[today_date]
+            # Exact JSON Schema enforcement for auto-checkin
             checkin_history_dict[key] = {
-                "device": device_label, 
+                "timestamp": iso_timestamp,
                 "source": "offline_hub",
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "device": device_label,
+                "date_code": today_date,
+                "display_date": key
             }
 
         new_kiosk_reg = OfflineKioskAttendee(
@@ -317,11 +323,11 @@ def process_registration():
             pincode=data.get('pincode', ''),
             attendance_days=data.get('attendance_days', []),
             photo_url=None, 
-            checkin_history=checkin_history_dict, # FIX: Native dictionary for JSON column
+            checkin_history=checkin_history_dict, 
             device_name=device_label,
             needs_cloud_sync=True,
             needs_sheet_sync=True,
-            needs_local_sync=False, # Explicitly False
+            needs_local_sync=False, 
             local_modified=True
         )
         session.add(new_kiosk_reg)
@@ -350,7 +356,6 @@ def get_network_data():
         global_stats["total_registrations"] = session.query(OfflineKioskAttendee).count()
         today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
-        # FIX: Database queries now check for correct nested JSON keys ("30 August")
         chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
         chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
         chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
