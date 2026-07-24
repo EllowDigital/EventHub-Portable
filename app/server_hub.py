@@ -22,6 +22,9 @@ import webbrowser
 from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.serving import make_server
 
+# 🛡️ FIX: Force SQLAlchemy to detect JSON column updates
+from sqlalchemy.orm.attributes import flag_modified
+
 # Windows DPI Awareness for crisp text
 if platform.system() == "Windows":
     try:
@@ -54,7 +57,7 @@ SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
 ACTIVE_DEVICES = {}
-SCAN_CLIENTS = []  # Holds queues for Server-Sent Events (SSE)
+SCAN_CLIENTS = []  
 
 # ==============================================================================
 # FLASK MIDDLEWARE & EVENT BROADCASTER
@@ -150,7 +153,6 @@ def process_checkin():
     search_type = data.get('search_type', 'id')
     device_name = data.get('device_name', f"Scanner ({request.remote_addr})")
     
-    # Strictly formats timestamp to match JavaScript ISOString 'Z' ending
     iso_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     
     if not identifier:
@@ -168,7 +170,6 @@ def process_checkin():
     session = sessions.get('mysql')()
     
     try:
-        # Row locks for rapid concurrent scanning
         attendee = None
         if search_type == 'phone':
             attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
@@ -232,6 +233,9 @@ def process_checkin():
 
         attendee.checkin_history = history 
         
+        # 🛡️ FIX: Force SQLAlchemy to detect JSON column modifications!
+        flag_modified(attendee, "checkin_history")
+        
         attendee.needs_cloud_sync = True
         attendee.needs_sheet_sync = True
         attendee.needs_local_sync = False 
@@ -261,12 +265,10 @@ def process_registration():
     session = sessions.get('mysql')()
     
     mobile_number = data.get('mobile', '').strip()
-    
     req_ip = request.remote_addr
     req_os = request.user_agent.platform or "Unknown"
     device_label = data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})")
 
-    # Strictly formats timestamp to match JavaScript ISOString 'Z' ending
     iso_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
 
     try:
@@ -297,7 +299,6 @@ def process_registration():
         if today_date in valid_event_days:
             date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
             key = date_map[today_date]
-            # Exact JSON Schema enforcement for auto-checkin
             checkin_history_dict[key] = {
                 "timestamp": iso_timestamp,
                 "source": "offline_hub",
@@ -386,7 +387,6 @@ def rename_device():
         return jsonify({"status": "success", "message": "Device renamed successfully"}), 200
     return jsonify({"status": "error", "message": "Device not found or invalid name"}), 404
 
-
 # ==============================================================================
 # THREADING & HELPERS
 # ==============================================================================
@@ -415,7 +415,6 @@ def generate_qr_image(data, size=150):
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     return ImageTk.PhotoImage(img.resize((size, size), Image.Resampling.LANCZOS))
-
 
 # ==============================================================================
 # MAIN SERVER HUB GUI
@@ -723,7 +722,6 @@ class ServerHub(ttk.Window):
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
             total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
             
-            # FIX: Database queries updated to search for the proper canonical JSON keys
             chk_30 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
             chk_31 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
             chk_01 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
@@ -737,7 +735,7 @@ class ServerHub(ttk.Window):
             elif today_str == "2026-09-01": 
                 chk_today = chk_01
             else:
-                chk_today = 0 # Out of event dates bounds
+                chk_today = 0
 
             total_checkins = chk_30 + chk_31 + chk_01
 
