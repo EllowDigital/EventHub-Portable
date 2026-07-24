@@ -24,6 +24,7 @@ try:
 except ImportError:
     HAS_WINSOUND = False
 
+# Suppress warnings for local adhoc HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -207,7 +208,7 @@ class GateDisplay(ttk.Window):
         # Photo Container
         photo_container = ttk.Frame(profile_frame, width=320)
         photo_container.pack(side=LEFT, fill=Y, padx=(0, 40))
-        photo_container.pack_propagate(False) # Keep sizing consistent
+        photo_container.pack_propagate(False) 
         
         self.lbl_photo = ttk.Label(photo_container, background="#111", anchor=CENTER)
         self.lbl_photo.pack(fill=BOTH, expand=True)
@@ -224,7 +225,7 @@ class GateDisplay(ttk.Window):
         self.lbl_company = ttk.Label(details, text="To view attendee details", font="-size 16 -weight bold", bootstyle=INFO)
         self.lbl_company.pack(anchor=W, pady=(0, 30))
 
-        # Rewired Details Grid - Responsive weights
+        # Rewired Details Grid
         grid = ttk.Frame(details)
         grid.pack(fill=BOTH, expand=True)
         grid.columnconfigure(0, weight=1)
@@ -342,6 +343,9 @@ class GateDisplay(ttk.Window):
         rel_dir = self.config_manager.config.get("photo_directory", DEFAULT_PHOTO_DIR)
         abs_directory = os.path.normpath(os.path.join(BASE_DIR, rel_dir))
         
+        # Failsafe: Ensure directory exists so manual drops don't fail
+        os.makedirs(abs_directory, exist_ok=True)
+        
         for ext in ['.jpg', '.png', '.jpeg']:
             path = os.path.join(abs_directory, f"{attendee_id}{ext}")
             if os.path.exists(path):
@@ -365,16 +369,13 @@ class GateDisplay(ttk.Window):
         finally:
             self.after(100, self.process_queue)
 
-    # --- DYNAMIC VISUAL PACING QUEUE ---
     def process_scan_queue(self):
         try:
             if not self.scan_queue.empty():
                 event_data = self.scan_queue.get_nowait()
                 self.update_ui_with_event(event_data)
                 
-                # Dynamic Pacing: 
-                # If there's a backlog (> 1 item), speed up to 1 second per scan.
-                # Otherwise, display for a full 2.5 seconds for optimal readability.
+                # Dynamic Pacing
                 q_len = self.scan_queue.qsize()
                 delay_ms = 1000 if q_len > 1 else 2500
                 
@@ -485,9 +486,11 @@ class GateDisplay(ttk.Window):
                             if line:
                                 decoded = line.decode('utf-8')
                                 if decoded.startswith("data: "):
-                                    event_data = json.loads(decoded[6:])
-                                    # Route events to pacing queue
-                                    self.scan_queue.put(event_data)
+                                    try:
+                                        event_data = json.loads(decoded[6:])
+                                        self.scan_queue.put(event_data)
+                                    except Exception:
+                                        pass
                     else:
                         self.gui_queue.put(lambda: self.lbl_hub_status.configure(text=f"● Hub Error {response.status_code}", bootstyle=WARNING))
                         time.sleep(2)
@@ -509,6 +512,7 @@ class GateDisplay(ttk.Window):
         
         def _post():
             try:
+                # verify=False prevents SSL blocking when talking to Flask Hub
                 requests.post(url, json=payload, timeout=3, verify=False)
             except Exception:
                 err_payload = {

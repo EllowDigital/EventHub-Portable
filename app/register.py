@@ -15,7 +15,7 @@ from ttkbootstrap.constants import *
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# CONFIGURATION MANAGER (Matches Project Structure)
+# CONFIGURATION MANAGER
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
@@ -31,7 +31,6 @@ def load_config():
                 return json.load(f)
         except Exception:
             pass
-    # Updated default to HTTPS to match server_hub.py
     return {"server_url": "https://127.0.0.1:5000", "device_name": "Main Desktop Kiosk"}
 
 def save_config(url, name):
@@ -42,7 +41,7 @@ def save_config(url, name):
 
 
 # ==============================================================================
-# ROBUST SCROLLABLE FRAME (Fixes UI Cutoff Bug)
+# ROBUST SCROLLABLE FRAME
 # ==============================================================================
 class RobustScrollFrame(ttk.Frame):
     """A foolproof scrollable frame that guarantees inner content is always reachable."""
@@ -64,21 +63,18 @@ class RobustScrollFrame(ttk.Frame):
         self.canvas.pack(side=LEFT, fill=BOTH, expand=True)
         self.v_scroll.pack(side=RIGHT, fill=Y)
         
-        # Dynamic Bindings to recalculate sizes immediately on window stretch/shrink
+        # Dynamic Bindings to recalculate sizes immediately
         self.container.bind("<Configure>", self.on_frame_configure)
         self.canvas.bind("<Configure>", self.on_canvas_configure)
         self.bind_all("<MouseWheel>", self.on_mousewheel)
         
     def on_frame_configure(self, event=None):
-        """Update scroll region to perfectly wrap all widgets."""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
         
     def on_canvas_configure(self, event):
-        """Stretch inner container to match window width seamlessly."""
         self.canvas.itemconfig(self.canvas_window, width=event.width)
         
     def on_mousewheel(self, event):
-        """Universal mouse wheel scrolling support."""
         try: self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
         except Exception: pass
         
@@ -92,7 +88,6 @@ class RobustScrollFrame(ttk.Frame):
 class OfflineKioskApp(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Desktop Registration Kiosk")
-        # Optimized geometry for 768p and 1080p laptop displays
         self.geometry("850x700")
         self.minsize(600, 500)
         
@@ -142,7 +137,7 @@ class OfflineKioskApp(ttk.Window):
         self.net_label = ttk.Label(self.net_pill, text="Checking...", font="-size 9 -weight bold")
         self.net_label.pack(side=LEFT)
 
-        # 2. Main Scrollable Form Area (Using the Custom Bug-Free Implementation)
+        # 2. Main Scrollable Form Area 
         self.scroll_frame = RobustScrollFrame(self)
         self.scroll_frame.pack(fill=BOTH, expand=True)
         container = self.scroll_frame.container
@@ -326,7 +321,6 @@ class OfflineKioskApp(ttk.Window):
             start_time = time.time()
             try:
                 url = f"{self.server_url}/api/status?device_name={requests.utils.quote(self.device_name)}"
-                # Added verify=False to bypass adhoc HTTPS self-signed cert blocks
                 res = requests.get(url, timeout=2, verify=False)
                 res.raise_for_status()
                 
@@ -425,7 +419,6 @@ class OfflineKioskApp(ttk.Window):
 
     # --- SUBMISSION LOGIC ---
     def submit_form(self, event=None):
-        # Ignore Enter key presses if the submit button is currently disabled
         if str(self.btn_submit['state']) == 'disabled':
             return
             
@@ -435,7 +428,7 @@ class OfflineKioskApp(ttk.Window):
             
         self.btn_submit.configure(state=DISABLED, text="⏳ Registering...")
         
-        # Build Payload
+        # Send standardized date keys to backend
         selected_days = []
         if self.vars['day_1'].get(): selected_days.append("30 August")
         if self.vars['day_2'].get(): selected_days.append("31 August")
@@ -458,12 +451,10 @@ class OfflineKioskApp(ttk.Window):
             "device_name": self.device_name
         }
 
-        # Run POST request in background thread
         threading.Thread(target=self._post_registration, args=(payload,), daemon=True).start()
 
     def _post_registration(self, payload):
         try:
-            # Added verify=False to bypass adhoc HTTPS self-signed cert blocks
             res = requests.post(f"{self.server_url}/api/register", json=payload, timeout=5, verify=False)
             res.raise_for_status()
             data = res.json()
@@ -475,6 +466,7 @@ class OfflineKioskApp(ttk.Window):
             else:
                 err_msg = data.get('message', 'Unknown Error')
                 self.gui_queue.put(lambda: self.handle_submit_error(f"Server Error: {err_msg}"))
+                
         except requests.exceptions.RequestException as e:
             self.gui_queue.put(lambda: self.handle_submit_error("Connection Error. Cannot reach Hub."))
 
@@ -491,7 +483,6 @@ class OfflineKioskApp(ttk.Window):
         modal.resizable(False, False)
         modal.overrideredirect(True) 
         
-        # Center the modal relative to the main app window
         x = self.winfo_x() + (self.winfo_width() // 2) - 225
         y = self.winfo_y() + (self.winfo_height() // 2) - 150
         modal.geometry(f"+{x}+{y}")
@@ -515,14 +506,13 @@ class OfflineKioskApp(ttk.Window):
         countdown_lbl = ttk.Label(frame, text="Returning to form in 8s... (Press Enter)", foreground="#D4D4D4")
         countdown_lbl.pack()
 
-        # Keyboard shortcuts to quickly close modal and clear form
         def close_modal(event=None):
             self.reset_form()
             modal.destroy()
 
         modal.bind('<Return>', close_modal)
         modal.bind('<Escape>', close_modal)
-        modal.focus_force() # Force focus so shortcuts work immediately
+        modal.focus_force() 
 
         def update_countdown(count):
             if count > 0 and modal.winfo_exists():
@@ -545,9 +535,7 @@ class OfflineKioskApp(ttk.Window):
         self.clear_all_errors()
         self.btn_submit.configure(state=NORMAL, text="Register Offline Attendee (Enter)")
         
-        # Reset scroll to the absolute top
         self.scroll_frame.yview_moveto(0)
-        # Set cursor back to the first input field for maximum speed UX
         self.inputs['full_name'].focus_set()
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ import webbrowser
 from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.serving import make_server
 
+# Windows DPI Awareness for crisp text
 if platform.system() == "Windows":
     try:
         from ctypes import windll
@@ -29,11 +30,15 @@ if platform.system() == "Windows":
     except Exception:
         pass
 
+# Import models dynamically based on context
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
 except ModuleNotFoundError:
     from schema import Attendee, OfflineKioskAttendee, get_database_sessions
 
+# ==============================================================================
+# CONFIGURATION
+# ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -49,8 +54,11 @@ SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
 ACTIVE_DEVICES = {}
-SCAN_CLIENTS = []  # Holds queues for connected Gate Displays
+SCAN_CLIENTS = []  # Holds queues for Server-Sent Events (SSE)
 
+# ==============================================================================
+# FLASK MIDDLEWARE & EVENT BROADCASTER
+# ==============================================================================
 @app.after_request
 def log_request(response):
     if request.path in ['/api/status', '/api/network-data', '/api/stream-scans'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
@@ -62,7 +70,6 @@ def log_request(response):
         gui_log_callback(log_msg)
     return response
 
-# --- REAL-TIME EVENT BROADCASTER ---
 def broadcast_scan(attendee, status, message, device_name, scan_time):
     att_dict = None
     if attendee:
@@ -85,14 +92,15 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
         "attendee": att_dict
     }
     
-    # Push event to all connected terminal screens
     for q in SCAN_CLIENTS:
         try:
             q.put(event)
         except Exception:
             pass
 
-# --- HTML Template Routes ---
+# ==============================================================================
+# FLASK ROUTES & APIS
+# ==============================================================================
 @app.route('/')
 def index(): return render_template('index.html')
 
@@ -105,7 +113,6 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
-# --- API Endpoints ---
 @app.route('/api/status', methods=['GET'])
 def get_server_status():
     ip = request.remote_addr
@@ -114,7 +121,6 @@ def get_server_status():
         ACTIVE_DEVICES[ip] = {'last_seen': time.time(), 'name': custom_device_name}
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
 
-# NEW: Server-Sent Events (SSE) Stream for real-time pushing
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
@@ -123,15 +129,13 @@ def stream_scans():
         try:
             while True:
                 try:
-                    # Wait for a scan event, or send a heartbeat comment every 10s to keep connection alive
                     data = q.get(timeout=10)
                     yield f"data: {json.dumps(data)}\n\n"
                 except queue.Empty:
                     yield ": heartbeat\n\n"
         except GeneratorExit:
-            pass # Client disconnected gracefully
+            pass 
         finally:
-            # Clean up instantly upon disconnection to free memory for fast reconnect
             if q in SCAN_CLIENTS:
                 SCAN_CLIENTS.remove(q)
                 
@@ -162,6 +166,7 @@ def process_checkin():
     session = sessions.get('mysql')()
     
     try:
+        # OPTIMIZATION: Row locks for rapid concurrent scanning
         attendee = None
         if search_type == 'phone':
             attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
@@ -182,7 +187,7 @@ def process_checkin():
         if isinstance(history, str):
             try: history = json.loads(history)
             except: history = {}
-        if not history: history = {}
+        if not isinstance(history, dict): history = {}
 
         current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
@@ -201,22 +206,20 @@ def process_checkin():
 
         att_days = attendee.attendance_days or []
         if isinstance(att_days, str):
-            if today_key not in att_days:
-                msg = f"Access Denied: {attendee.full_name} does not have a pass for today ({today_key})."
-                broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
-                return jsonify({"status": "error", "message": msg}), 403
-        elif isinstance(att_days, list):
-            if today_key not in att_days:
-                msg = f"Access Denied: {attendee.full_name} does not have a pass for today ({today_key})."
-                broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
-                return jsonify({"status": "error", "message": msg}), 403
+            try: att_days = json.loads(att_days)
+            except: att_days = []
+            
+        if today_key not in att_days:
+            msg = f"Access Denied: {attendee.full_name} does not have a pass for today ({today_key})."
+            broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
+            return jsonify({"status": "error", "message": msg}), 403
 
         if today_key in history:
             msg = f"Already checked in today: {attendee.full_name}"
             broadcast_scan(attendee, "DUPLICATE", msg, device_name, iso_timestamp)
             return jsonify({"status": "error", "message": msg}), 400
 
-        # --- NEW UNIFIED JSON STRUCTURE ---
+        # Create structured JSON payload
         history[today_key] = {
             "timestamp": iso_timestamp,
             "source": "offline_hub",
@@ -225,9 +228,13 @@ def process_checkin():
             "display_date": today_key
         }
 
-        attendee.checkin_history = json.dumps(history)
+        attendee.checkin_history = history # FIX: Never use json.dumps() for SQLAlchemy JSON columns
+        
+        # Proper Sync Flags
         attendee.needs_cloud_sync = True
         attendee.needs_sheet_sync = True
+        attendee.needs_local_sync = False # Explicitly mark this machine as locally updated
+        attendee.local_modified = True
         
         session.commit()
         
@@ -244,6 +251,7 @@ def process_checkin():
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         session.close()
+
 @app.route('/api/register', methods=['POST'])
 def process_registration():
     global SERVER_TEST_MODE, SERVER_TEST_DATE
@@ -258,7 +266,6 @@ def process_registration():
     device_label = data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})")
 
     try:
-        # OPTIMIZATION: Row locks prevent double-submit bugs from rapid tap registrations
         existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
         if existing_main: 
             return jsonify({"status": "already_registered", "message": "Found in main DB.", "attendee_id": existing_main.attendee_id}), 200
@@ -284,7 +291,14 @@ def process_registration():
         
         checkin_history_dict = {}
         if today_date in valid_event_days:
-            checkin_history_dict[today_date] = {"device": device_label, "status": "CHECKED_IN", "timestamp": datetime.now(timezone.utc).isoformat()}
+            # Match canonical check-in mapping
+            date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
+            key = date_map[today_date]
+            checkin_history_dict[key] = {
+                "device": device_label, 
+                "source": "offline_hub",
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
 
         new_kiosk_reg = OfflineKioskAttendee(
             id=str(uuid.uuid4()), 
@@ -303,10 +317,12 @@ def process_registration():
             pincode=data.get('pincode', ''),
             attendance_days=data.get('attendance_days', []),
             photo_url=None, 
-            checkin_history=json.dumps(checkin_history_dict), 
+            checkin_history=checkin_history_dict, # FIX: Native dictionary for JSON column
             device_name=device_label,
             needs_cloud_sync=True,
-            needs_sheet_sync=True
+            needs_sheet_sync=True,
+            needs_local_sync=False, # Explicitly False
+            local_modified=True
         )
         session.add(new_kiosk_reg)
         session.commit()
@@ -329,16 +345,15 @@ def get_network_data():
     sessions = get_database_sessions()
     session = sessions.get('mysql')()
     global_stats = {"total_scans": 0, "total_registrations": 0, "today_scans": 0}
-    device_stats = {}
     
     try:
-        # OPTIMIZATION: Stopped loading all attendees into memory. Used DB-level counting.
         global_stats["total_registrations"] = session.query(OfflineKioskAttendee).count()
         today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
-        chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-30"%')).count()
-        chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-31"%')).count()
-        chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-09-01"%')).count()
+        # FIX: Database queries now check for correct nested JSON keys ("30 August")
+        chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
+        chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
+        chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
         
         global_stats["total_scans"] = chk_30 + chk_31 + chk_01
         
@@ -348,13 +363,13 @@ def get_network_data():
             global_stats["today_scans"] = chk_31
         elif today_date == "2026-09-01": 
             global_stats["today_scans"] = chk_01
-        else: 
-            global_stats["today_scans"] = session.query(Attendee).filter(Attendee.checkin_history.like(f'%"{today_date}"%')).count()
 
-    except Exception: pass
-    finally: session.close()
+    except Exception as e: 
+        print(f"Network Data Error: {e}")
+    finally: 
+        session.close()
 
-    return jsonify({"active_devices": active_devices, "global_stats": global_stats, "device_scans": device_stats}), 200
+    return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
 @app.route('/api/device/rename', methods=['POST'])
 def rename_device():
@@ -366,8 +381,9 @@ def rename_device():
         return jsonify({"status": "success", "message": "Device renamed successfully"}), 200
     return jsonify({"status": "error", "message": "Device not found or invalid name"}), 404
 
+
 # ==============================================================================
-# FLASK THREAD CONTROLLER
+# THREADING & HELPERS
 # ==============================================================================
 class FlaskServerThread(threading.Thread):
     def __init__(self, app, host, port):
@@ -394,6 +410,7 @@ def generate_qr_image(data, size=150):
     qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     return ImageTk.PhotoImage(img.resize((size, size), Image.Resampling.LANCZOS))
+
 
 # ==============================================================================
 # MAIN SERVER HUB GUI
@@ -697,14 +714,14 @@ class ServerHub(ttk.Window):
         sqlite_session = self.SessionSQLite() if self.SessionSQLite else None
         
         try:
-            # OPTIMIZATION: Use .count() and SQL queries instead of pulling 10,000 strings into memory
             total_mysql = mysql_session.query(Attendee).count()
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
             total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
             
-            chk_30 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-30"%')).count()
-            chk_31 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-08-31"%')).count()
-            chk_01 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"2026-09-01"%')).count()
+            # FIX: Database queries updated to search for the proper canonical JSON keys
+            chk_30 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
+            chk_31 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
+            chk_01 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
             
             today_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now().strftime('%Y-%m-%d')
             
@@ -714,8 +731,8 @@ class ServerHub(ttk.Window):
                 chk_today = chk_31
             elif today_str == "2026-09-01": 
                 chk_today = chk_01
-            else: 
-                chk_today = mysql_session.query(Attendee).filter(Attendee.checkin_history.like(f'%"{today_str}"%')).count()
+            else:
+                chk_today = 0 # Out of event dates bounds
 
             total_checkins = chk_30 + chk_31 + chk_01
 
@@ -814,6 +831,7 @@ class ServerHub(ttk.Window):
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel connection closed.")
+
 
 if __name__ == "__main__":
     app_window = ServerHub()
