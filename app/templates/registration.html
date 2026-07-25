@@ -1,686 +1,938 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
+    />
     <title>Kiosk Registration - TDE UP 2026</title>
     <style>
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background-color: #121212;
-            color: #ffffff;
-            margin: 0;
-            padding: 15px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
+      :root {
+        --bg-dark: #0f1115;
+        --surface: #1a1d24;
+        --primary: #00d2ff;
+        --success: #00e676;
+        --warning: #ffbb33;
+        --danger: #ff4444;
+        --text: #ffffff;
+        --text-dim: #aaaaaa;
+      }
 
-        .header {
-            width: 100%;
-            max-width: 600px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 5px;
-        }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background-color: var(--bg-dark);
+        color: var(--text);
+        margin: 0;
+        padding: 15px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
 
-        .btn-back {
-            color: #aaaaaa;
-            text-decoration: none;
-            font-size: 14px;
-            padding: 8px 12px;
-            background: #2a2a2a;
-            border-radius: 6px;
-        }
+      .header {
+        width: 100%;
+        max-width: 650px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+      }
 
-        .network-pill {
-            font-size: 0.75rem;
-            padding: 5px 10px;
-            border-radius: 20px;
-            font-weight: bold;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            background: #2a2a2a;
-            border: 1px solid #444;
-        }
-        .net-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        .net-excellent { background: #00e676; box-shadow: 0 0 8px #00e676; }
-        .net-fair { background: #ffbb33; box-shadow: 0 0 8px #ffbb33; }
-        .net-poor { background: #ff4444; box-shadow: 0 0 8px #ff4444; }
-        .net-offline { background: #757575; }
+      .btn-back {
+        color: #aaa;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: bold;
+        padding: 8px 14px;
+        background: var(--surface);
+        border-radius: 8px;
+        transition: all 0.2s;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .btn-back:active {
+        transform: scale(0.95);
+      }
 
-        /* Device Identity Display */
-        .device-identity {
-            width: 100%;
-            max-width: 600px;
-            text-align: center;
-            font-size: 0.85rem;
-            color: #aaa;
-            margin-bottom: 15px;
-            cursor: pointer;
-            padding: 5px;
-            background: #1a1a1a;
-            border-radius: 6px;
-            border: 1px solid #333;
-        }
-        .device-identity span { color: #00d2ff; font-weight: bold; }
+      .network-pill {
+        font-size: 0.75rem;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--surface);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .net-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .net-excellent {
+        background: var(--success);
+        box-shadow: 0 0 8px var(--success);
+      }
+      .net-poor {
+        background: var(--danger);
+        box-shadow: 0 0 8px var(--danger);
+      }
+      .net-offline {
+        background: #757575;
+      }
 
-        #test-banner {
-            width: 100%;
-            max-width: 600px;
-            background: #ff9800;
-            color: #000;
-            padding: 8px 15px;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            font-weight: bold;
-            text-align: center;
-            font-size: 0.9rem;
-            display: none;
-            box-sizing: border-box;
-            box-shadow: 0 0 15px rgba(255, 152, 0, 0.4);
-        }
+      .device-identity {
+        width: 100%;
+        max-width: 650px;
+        text-align: center;
+        font-size: 0.85rem;
+        color: #aaa;
+        margin-bottom: 20px;
+        cursor: pointer;
+        padding: 8px;
+        background: var(--surface);
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        box-sizing: border-box;
+        transition: background 0.2s;
+      }
+      .device-identity span {
+        color: var(--primary);
+        font-weight: bold;
+      }
 
-        .form-container {
-            width: 100%;
-            max-width: 600px;
-            background: #1e1e1e;
-            padding: 20px;
-            border-radius: 12px;
-            border: 1px solid #333;
-            box-sizing: border-box;
-        }
+      .form-container {
+        width: 100%;
+        max-width: 650px;
+        background: var(--surface);
+        padding: 30px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        box-sizing: border-box;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      }
 
-        .section-title {
-            color: #00d2ff;
-            font-size: 1.1rem;
-            margin-bottom: 15px;
-            margin-top: 25px;
-            border-bottom: 1px solid #333;
-            padding-bottom: 5px;
-        }
-        .section-title:first-child { margin-top: 0; }
+      .section-title {
+        color: var(--primary);
+        font-size: 1.1rem;
+        font-weight: bold;
+        margin-bottom: 15px;
+        margin-top: 30px;
+        border-bottom: 1px solid #333;
+        padding-bottom: 8px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .section-title:first-child {
+        margin-top: 0;
+      }
 
-        .input-group {
-            margin-bottom: 15px;
-            display: flex;
-            flex-direction: column;
-        }
+      .input-group {
+        margin-bottom: 18px;
+        display: flex;
+        flex-direction: column;
+      }
+      .input-group label {
+        font-size: 0.85rem;
+        color: #ccc;
+        margin-bottom: 6px;
+        font-weight: bold;
+      }
+      .input-group input,
+      .input-group select {
+        background: #12141a;
+        color: #fff;
+        border: 1px solid #444;
+        padding: 12px 14px;
+        border-radius: 8px;
+        font-size: 1rem;
+        transition: all 0.3s;
+        font-family: inherit;
+      }
+      .input-group input:focus,
+      .input-group select:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 10px rgba(0, 210, 255, 0.15);
+      }
+      .input-group input.err,
+      .input-group select.err {
+        border-color: var(--danger);
+        box-shadow: 0 0 10px rgba(255, 68, 68, 0.15);
+      }
 
-        .input-group label {
-            font-size: 0.85rem;
-            color: #ccc;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
+      .err-msg {
+        color: var(--danger);
+        font-size: 0.8rem;
+        margin-top: 5px;
+        min-height: 14px;
+        font-weight: bold;
+      }
+      .row {
+        display: flex;
+        gap: 15px;
+      }
+      .row > .input-group {
+        flex: 1;
+      }
 
-        .input-group input, .input-group select {
-            background: #121212;
-            color: #fff;
-            border: 1px solid #444;
-            padding: 10px 12px;
-            border-radius: 6px;
-            font-size: 1rem;
-            transition: border-color 0.2s;
-        }
+      .day-chips-container {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .day-chip {
+        background: #12141a;
+        border: 1px solid #444;
+        padding: 12px 20px;
+        border-radius: 10px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.95rem;
+        transition: all 0.2s;
+        font-weight: bold;
+      }
+      .day-chip:hover {
+        border-color: var(--primary);
+      }
+      .day-chip input {
+        cursor: pointer;
+        width: 18px;
+        height: 18px;
+        accent-color: var(--primary);
+      }
 
-        .input-group input:focus, .input-group select:focus {
-            outline: none;
-            border-color: #00d2ff;
-        }
+      .btn-submit {
+        width: 100%;
+        padding: 16px;
+        background: var(--primary);
+        color: #000;
+        border: none;
+        border-radius: 10px;
+        font-size: 1.1rem;
+        font-weight: 800;
+        cursor: pointer;
+        margin-top: 20px;
+        transition: all 0.2s;
+        box-shadow: 0 5px 15px rgba(0, 210, 255, 0.2);
+      }
+      .btn-submit:active {
+        transform: scale(0.98);
+        box-shadow: 0 2px 8px rgba(0, 210, 255, 0.2);
+      }
 
-        .input-group input.err, .input-group select.err {
-            border-color: #ff4444;
-        }
+      /* Custom Toast Notification */
+      #toast {
+        position: fixed;
+        bottom: -100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--danger);
+        color: #fff;
+        padding: 15px 25px;
+        border-radius: 8px;
+        font-weight: bold;
+        font-size: 1rem;
+        z-index: 2000;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      }
+      #toast.show {
+        bottom: 30px;
+      }
 
-        .err-msg {
-            color: #ff4444;
-            font-size: 0.8rem;
-            margin-top: 5px;
-            min-height: 14px;
-        }
+      /* Fullscreen Success Modal */
+      #success-modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.85);
+        backdrop-filter: blur(8px);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+        opacity: 0;
+        transition: opacity 0.3s;
+      }
+      .modal-content {
+        background: var(--surface);
+        border: 2px solid var(--success);
+        padding: 40px;
+        border-radius: 20px;
+        text-align: center;
+        max-width: 450px;
+        width: 90%;
+        transform: scale(0.8);
+        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      }
+      #success-modal.show {
+        opacity: 1;
+      }
+      #success-modal.show .modal-content {
+        transform: scale(1);
+      }
 
+      .modal-id {
+        font-size: 2.2rem;
+        color: #ffffff;
+        font-family: monospace;
+        font-weight: 800;
+        margin: 20px 0;
+        background: #0f1115;
+        padding: 20px;
+        border-radius: 12px;
+        letter-spacing: 3px;
+      }
+
+      #device-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.9);
+        z-index: 9999;
+        align-items: center;
+        justify-content: center;
+      }
+      .dev-modal-content {
+        background: var(--surface);
+        padding: 30px;
+        border-radius: 12px;
+        border: 1px solid var(--primary);
+        width: 90%;
+        max-width: 350px;
+        text-align: center;
+      }
+      .dev-modal-content input {
+        width: 100%;
+        padding: 12px;
+        background: #0f1115;
+        color: #fff;
+        border: 1px solid #444;
+        border-radius: 6px;
+        box-sizing: border-box;
+        margin-bottom: 15px;
+        font-size: 1rem;
+        text-align: center;
+      }
+      .dev-modal-content button {
+        width: 100%;
+        padding: 12px;
+        background: var(--primary);
+        color: #000;
+        font-weight: bold;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      @media (max-width: 500px) {
         .row {
-            display: flex;
-            gap: 15px;
+          flex-direction: column;
+          gap: 0;
         }
-        .row > .input-group { flex: 1; }
-
-        .day-chips-container {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .day-chip {
-            background: #121212;
-            border: 1px solid #444;
-            padding: 10px 15px;
-            border-radius: 8px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.95rem;
-            transition: all 0.2s;
-        }
-
-        .day-chip:hover {
-            border-color: #00d2ff;
-        }
-
-        .day-chip input {
-            cursor: pointer;
-            width: 18px;
-            height: 18px;
-        }
-
-        .btn-submit {
-            width: 100%;
-            padding: 14px;
-            background: #00d2ff;
-            color: #000;
-            border: none;
-            border-radius: 8px;
-            font-size: 1.1rem;
-            font-weight: bold;
-            cursor: pointer;
-            margin-top: 15px;
-            transition: background 0.2s;
-        }
-
-        /* Modal Styles */
-        #success-modal {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.8); backdrop-filter: blur(5px);
-            display: none; justify-content: center; align-items: center; z-index: 1000;
-        }
-        .modal-content {
-            background: #1e1e1e; border: 2px solid #00e676; padding: 30px;
-            border-radius: 16px; text-align: center; max-width: 400px; width: 90%;
-            transition: border-color 0.3s;
-        }
-        .modal-id {
-            font-size: 2rem; color: #ffffff; font-family: monospace;
-            font-weight: bold; margin: 15px 0; background: #121212;
-            padding: 15px; border-radius: 8px; letter-spacing: 2px;
-        }
-
-        /* Device Name Registration Modal */
-        #device-modal {
-            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9);
-            z-index: 9999; align-items: center; justify-content: center;
-        }
-        .dev-modal-content {
-            background: #1e1e1e; padding: 30px; border-radius: 12px;
-            border: 1px solid #00d2ff; width: 90%; max-width: 350px; text-align: center;
-        }
-        .dev-modal-content input {
-            width: 100%; padding: 12px; background: #121212; color: #fff;
-            border: 1px solid #444; border-radius: 6px; box-sizing: border-box;
-            margin-bottom: 15px; font-size: 1rem; text-align: center;
-        }
-        .dev-modal-content button {
-            width: 100%; padding: 12px; background: #00d2ff; color: #000;
-            font-weight: bold; border: none; border-radius: 6px; cursor: pointer;
-        }
-        
-        @media (max-width: 500px) {
-            .row { flex-direction: column; gap: 0; }
-        }
+      }
     </style>
-</head>
+  </head>
 
-<body>
+  <body>
     <div class="header">
-        <a href="/" class="btn-back">⬅ Hub</a>
-        <h3 style="margin:0;">Kiosk Registration</h3>
-        <div id="network-pill" class="network-pill">
-            <span id="net-dot" class="net-dot net-offline"></span>
-            <span id="net-text">Checking...</span>
-        </div>
+      <a href="/" class="btn-back">⬅ Hub</a>
+      <h3 style="margin: 0">Kiosk Registration</h3>
+      <div id="network-pill" class="network-pill">
+        <span id="net-dot" class="net-dot net-offline"></span>
+        <span id="net-text">Checking...</span>
+      </div>
     </div>
 
-    <!-- Device Identity Banner -->
     <div class="device-identity" onclick="promptDeviceName()">
-        Kiosk Name: <span id="display-device-name">Loading...</span> ✏️
+      Kiosk Name: <span id="display-device-name">Loading...</span> ✏️
     </div>
-
-    <div id="test-banner">🧪 TESTING MODE ACTIVE: Simulating Date <span id="banner-date"></span></div>
 
     <div class="form-container">
-        <!-- Identity -->
-        <div class="section-title">👤 Identity</div>
+      <div class="section-title">👤 Identity</div>
+      <div class="input-group">
+        <label>Full Name *</label>
+        <input type="text" id="f-name" placeholder="Enter full name" />
+        <div class="err-msg" id="e-name"></div>
+      </div>
+      <div class="row">
         <div class="input-group">
-            <label>Full Name *</label>
-            <input type="text" id="f-name" placeholder="Enter full name">
-            <div class="err-msg" id="e-name"></div>
-        </div>
-        <div class="row">
-            <div class="input-group">
-                <label>Mobile Number *</label>
-                <input type="tel" id="f-mobile" placeholder="10-digit number" maxlength="10">
-                <div class="err-msg" id="e-mobile"></div>
-            </div>
-            <div class="input-group">
-                <label>Gender *</label>
-                <select id="f-gender">
-                    <option value="">— Select —</option>
-                    <option value="MALE">Male</option>
-                    <option value="FEMALE">Female</option>
-                    <option value="OTHER">Other</option>
-                </select>
-                <div class="err-msg" id="e-gender"></div>
-            </div>
+          <label>Mobile Number *</label>
+          <input
+            type="tel"
+            id="f-mobile"
+            placeholder="10-digit number"
+            maxlength="10"
+          />
+          <div class="err-msg" id="e-mobile"></div>
         </div>
         <div class="input-group">
-            <label>Email (Optional)</label>
-            <input type="email" id="f-email" placeholder="name@example.com">
-            <div class="err-msg" id="e-email"></div>
+          <label>Gender *</label>
+          <select id="f-gender">
+            <option value="">— Select —</option>
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
+            <option value="OTHER">Other</option>
+          </select>
+          <div class="err-msg" id="e-gender"></div>
         </div>
+      </div>
+      <div class="input-group">
+        <label>Email (Optional)</label>
+        <input type="email" id="f-email" placeholder="name@example.com" />
+        <div class="err-msg" id="e-email"></div>
+      </div>
 
-        <!-- Professional -->
-        <div class="section-title">💼 Professional Details</div>
-        <div class="row">
-            <div class="input-group">
-                <label>Attendee Type *</label>
-                <select id="f-type">
-                    <option value="GENERAL">General</option>
-                    <option value="BUSINESS">Business</option>
-                    <option value="MEDIA">Media</option>
-                    <option value="EXHIBITOR">Exhibitor</option>
-                </select>
-            </div>
-            <div class="input-group">
-                <label>Company / Firm Name</label>
-                <input type="text" id="f-bizname" placeholder="Required for Biz/Media">
-                <div class="err-msg" id="e-bizname"></div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="input-group">
-                <label>Category</label>
-                <select id="f-cat"></select>
-                <div class="err-msg" id="e-cat"></div>
-            </div>
-            <div class="input-group">
-                <label>Specify Other</label>
-                <input type="text" id="f-othercat" placeholder="If 'Other' selected" disabled>
-                <div class="err-msg" id="e-othercat"></div>
-            </div>
-        </div>
-
-        <!-- Location -->
-        <div class="section-title">📍 Location</div>
+      <div class="section-title">💼 Professional Details</div>
+      <div class="row">
         <div class="input-group">
-            <label>Full Address *</label>
-            <input type="text" id="f-address" placeholder="Street / locality / area">
-            <div class="err-msg" id="e-address"></div>
+          <label>Attendee Type *</label>
+          <select id="f-type">
+            <option value="GENERAL">General</option>
+            <option value="BUSINESS">Business</option>
+            <option value="MEDIA">Media</option>
+            <option value="EXHIBITOR">Exhibitor</option>
+          </select>
         </div>
-        <div class="row">
-            <div class="input-group">
-                <label>City *</label>
-                <input type="text" id="f-city" placeholder="City">
-                <div class="err-msg" id="e-city"></div>
-            </div>
-            <div class="input-group">
-                <label>State *</label>
-                <input type="text" id="f-state" placeholder="State">
-                <div class="err-msg" id="e-state"></div>
-            </div>
-            <div class="input-group">
-                <label>Pincode *</label>
-                <input type="tel" id="f-pincode" placeholder="6 digits" maxlength="6">
-                <div class="err-msg" id="e-pincode"></div>
-            </div>
+        <div class="input-group">
+          <label>Company / Firm Name</label>
+          <input
+            type="text"
+            id="f-bizname"
+            placeholder="Required for Biz/Media"
+          />
+          <div class="err-msg" id="e-bizname"></div>
         </div>
+      </div>
+      <div class="row">
+        <div class="input-group">
+          <label>Category</label>
+          <select id="f-cat"></select>
+          <div class="err-msg" id="e-cat"></div>
+        </div>
+        <div class="input-group">
+          <label>Specify Other</label>
+          <input
+            type="text"
+            id="f-othercat"
+            placeholder="If 'Other' selected"
+            disabled
+          />
+          <div class="err-msg" id="e-othercat"></div>
+        </div>
+      </div>
 
-        <!-- Attendance Days -->
-        <div class="section-title">📅 Attendance Days *</div>
-        <div class="day-chips-container">
-            <!-- Values updated to match exactly how your online DB stores dates -->
-            <label class="day-chip"><input type="checkbox" id="day-1" value="30 August"> 30 Aug</label>
-            <label class="day-chip"><input type="checkbox" id="day-2" value="31 August"> 31 Aug</label>
-            <label class="day-chip"><input type="checkbox" id="day-3" value="1 September"> 1 Sept</label>
+      <div class="section-title">📍 Location</div>
+      <div class="input-group">
+        <label>Full Address *</label>
+        <input
+          type="text"
+          id="f-address"
+          placeholder="Street / locality / area"
+        />
+        <div class="err-msg" id="e-address"></div>
+      </div>
+      <div class="row">
+        <div class="input-group">
+          <label>City *</label>
+          <input type="text" id="f-city" placeholder="City" />
+          <div class="err-msg" id="e-city"></div>
         </div>
-        <div class="err-msg" id="e-days"></div>
+        <div class="input-group">
+          <label>State *</label>
+          <input type="text" id="f-state" placeholder="State" />
+          <div class="err-msg" id="e-state"></div>
+        </div>
+        <div class="input-group">
+          <label>Pincode *</label>
+          <input
+            type="tel"
+            id="f-pincode"
+            placeholder="6 digits"
+            maxlength="6"
+          />
+          <div class="err-msg" id="e-pincode"></div>
+        </div>
+      </div>
 
-        <button class="btn-submit" id="submit-btn" onclick="submitForm()">Register Offline Attendee</button>
+      <div class="section-title">📅 Attendance Days *</div>
+      <div class="day-chips-container">
+        <label class="day-chip"
+          ><input type="checkbox" id="day-1" value="30 August" /> 30 Aug</label
+        >
+        <label class="day-chip"
+          ><input type="checkbox" id="day-2" value="31 August" /> 31 Aug</label
+        >
+        <label class="day-chip"
+          ><input type="checkbox" id="day-3" value="1 September" /> 1
+          Sept</label
+        >
+      </div>
+      <div class="err-msg" id="e-days"></div>
+
+      <button class="btn-submit" id="submit-btn" onclick="submitForm()">
+        Register Offline Attendee
+      </button>
     </div>
+
+    <!-- Toast Notification (Replaces Alerts) -->
+    <div id="toast">Error Message</div>
 
     <div id="success-modal">
-        <div class="modal-content" id="modal-box">
-            <h2 id="modal-title" style="margin-top:0;">Registration Saved!</h2>
-            <p id="modal-desc">Please provide the attendee with their official ID pass code:</p>
-            <div class="modal-id" id="modal-id-text">TDE26-G-XXXXXX</div>
-            <p style="color: #aaa; font-size: 0.9rem;" id="modal-countdown">Returning to form in 8s...</p>
-            <button class="btn-submit" style="background:#2a2a2a; color:#fff;" onclick="dismissModal()">Next Registration</button>
-        </div>
+      <div class="modal-content" id="modal-box">
+        <h2 id="modal-title" style="margin-top: 0">Registration Saved!</h2>
+        <p id="modal-desc">
+          Please provide the attendee with their official ID pass code:
+        </p>
+        <div class="modal-id" id="modal-id-text">TDE26-G-XXXXXX</div>
+        <p
+          style="color: #aaa; font-size: 0.95rem; font-weight: bold"
+          id="modal-countdown"
+        >
+          Returning to form in 8s...
+        </p>
+        <button
+          class="btn-submit"
+          style="background: #2a2a2a; color: #fff"
+          onclick="dismissModal()"
+        >
+          Next Registration
+        </button>
+      </div>
     </div>
 
-    <!-- Device Registry Modal -->
     <div id="device-modal">
-        <div class="dev-modal-content">
-            <h3 style="margin-top:0; color:#00d2ff;">Identify Kiosk</h3>
-            <p style="font-size:0.9rem; color:#aaa; margin-bottom:20px;">Name this device so the Hub can track it.</p>
-            <input type="text" id="device-name-input" placeholder="e.g. Reg Desk A, Laptop 1">
-            <button onclick="saveDeviceName()">Save Device Name</button>
-        </div>
+      <div class="dev-modal-content">
+        <h3 style="margin-top: 0; color: var(--primary)">Identify Kiosk</h3>
+        <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 20px">
+          Name this device so the Hub can track it.
+        </p>
+        <input
+          type="text"
+          id="device-name-input"
+          placeholder="e.g. Reg Desk A, Laptop 1"
+        />
+        <button onclick="saveDeviceName()">Save Device Name</button>
+      </div>
     </div>
 
     <script>
-        // --- DEVICE REGISTRY LOGIC ---
-        function getDeviceName() {
-            return localStorage.getItem('hub_device_name') || 'Unnamed Kiosk';
+      // --- ADVANCED AUDIO ENGINE ---
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      function playAudioTone(type) {
+        try {
+          if (audioCtx.state === "suspended") audioCtx.resume();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          const now = audioCtx.currentTime;
+
+          if (type === "SUCCESS") {
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(880, now);
+            osc.frequency.setValueAtTime(1200, now + 0.1);
+            gain.gain.setValueAtTime(0.8, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+            osc.start(now);
+            osc.stop(now + 0.3);
+          } else if (type === "ERROR") {
+            osc.type = "sawtooth";
+            osc.frequency.setValueAtTime(150, now);
+            gain.gain.setValueAtTime(0.8, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+            osc.start(now);
+            osc.stop(now + 0.4);
+          } else if (type === "WARNING") {
+            osc.type = "square";
+            osc.frequency.setValueAtTime(400, now);
+            gain.gain.setValueAtTime(0.5, now);
+            gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            osc.start(now);
+            osc.stop(now + 0.15);
+            setTimeout(() => {
+              const osc2 = audioCtx.createOscillator();
+              const gain2 = audioCtx.createGain();
+              osc2.connect(gain2);
+              gain2.connect(audioCtx.destination);
+              osc2.type = "square";
+              osc2.frequency.setValueAtTime(400, audioCtx.currentTime);
+              gain2.gain.setValueAtTime(0.5, audioCtx.currentTime);
+              gain2.gain.exponentialRampToValueAtTime(
+                0.01,
+                audioCtx.currentTime + 0.15,
+              );
+              osc2.start();
+              osc2.stop(audioCtx.currentTime + 0.15);
+            }, 200);
+          }
+        } catch (e) {}
+      }
+
+      let toastTimeout;
+      function showToast(msg) {
+        const t = document.getElementById("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => t.classList.remove("show"), 3000);
+      }
+
+      // --- DEVICE REGISTRY ---
+      function getDeviceName() {
+        return localStorage.getItem("hub_device_name") || "Unnamed Kiosk";
+      }
+      function initDeviceName() {
+        let name = localStorage.getItem("hub_device_name");
+        if (!name)
+          document.getElementById("device-modal").style.display = "flex";
+        else document.getElementById("display-device-name").textContent = name;
+      }
+      function saveDeviceName() {
+        let val = document.getElementById("device-name-input").value.trim();
+        if (val) {
+          localStorage.setItem("hub_device_name", val);
+          document.getElementById("display-device-name").textContent = val;
+          document.getElementById("device-modal").style.display = "none";
+        } else showToast("Please enter a valid Kiosk name.");
+      }
+      function promptDeviceName() {
+        document.getElementById("device-name-input").value =
+          localStorage.getItem("hub_device_name") || "";
+        document.getElementById("device-modal").style.display = "flex";
+      }
+
+      // --- NETWORK PING ---
+      async function syncServerStatus() {
+        const dot = document.getElementById("net-dot"),
+          text = document.getElementById("net-text");
+        if (!navigator.onLine) {
+          dot.className = "net-dot net-offline";
+          text.textContent = "Offline";
+          return;
+        }
+        const start = performance.now();
+        try {
+          const c = new AbortController();
+          const id = setTimeout(() => c.abort(), 2000);
+          await fetch(
+            `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
+            { cache: "no-store", signal: c.signal },
+          );
+          clearTimeout(id);
+          const dur = performance.now() - start;
+          if (dur < 150) {
+            dot.className = "net-dot net-excellent";
+            text.textContent = "Excellent";
+          } else {
+            dot.className = "net-dot net-poor";
+            text.textContent = "Poor";
+          }
+        } catch (e) {
+          dot.className = "net-dot net-poor";
+          text.textContent = "Unstable";
+        }
+      }
+
+      // --- CATEGORIES ---
+      const CAT_OPTS = [
+        ["— Select Category —", ""],
+        ["Tent", "TENT"],
+        ["Caterers", "CATERING"],
+        ["Decorator", "DECORATOR"],
+        ["Flower Decoration", "FLOWER"],
+        ["DJ", "DJ"],
+        ["Light & Sound", "LIGHT"],
+        ["Photography", "PHOTOGRAPHY"],
+        ["Videography", "VIDEOGRAPHY"],
+        ["Event Planner", "EVENT_PLANNER"],
+        ["Stage Setup", "STAGE"],
+        ["Band", "BAND"],
+        ["Makeup Artist", "MAKEUP"],
+        ["Lawn, Resort & Banquet", "BANQUET"],
+        ["Transport", "TRANSPORT"],
+        ["Other (Specify Below)", "OTHER"],
+        ["Media / Press", "MEDIA_PRESS"],
+      ];
+      const catSel = document.getElementById("f-cat");
+      CAT_OPTS.forEach(([label, val]) =>
+        catSel.appendChild(new Option(label, val)),
+      );
+
+      // --- REACTIVITY ---
+      document.getElementById("f-type").addEventListener("change", (e) => {
+        const otherInput = document.getElementById("f-othercat");
+        if (e.target.value === "MEDIA") {
+          catSel.value = "MEDIA_PRESS";
+          catSel.disabled = true;
+          otherInput.value = "";
+          otherInput.disabled = true;
+        } else {
+          if (catSel.value === "MEDIA_PRESS") catSel.value = "";
+          catSel.disabled = false;
+        }
+        clearFieldErr("cat");
+        clearFieldErr("bizname");
+      });
+
+      catSel.addEventListener("change", (e) => {
+        const otherInput = document.getElementById("f-othercat");
+        if (e.target.value === "OTHER") otherInput.disabled = false;
+        else {
+          otherInput.value = "";
+          otherInput.disabled = true;
+        }
+        clearFieldErr("othercat");
+      });
+
+      ["mobile", "pincode"].forEach((id) => {
+        document
+          .getElementById("f-" + id)
+          .addEventListener(
+            "input",
+            (e) => (e.target.value = e.target.value.replace(/\D/g, "")),
+          );
+      });
+
+      function setFieldErr(key, msg) {
+        document.getElementById("f-" + key).classList.add("err");
+        document.getElementById("e-" + key).textContent = "⚠ " + msg;
+      }
+      function clearFieldErr(key) {
+        document.getElementById("f-" + key).classList.remove("err");
+        document.getElementById("e-" + key).textContent = "";
+      }
+      function clearAllErrors() {
+        [
+          "name",
+          "mobile",
+          "email",
+          "gender",
+          "bizname",
+          "cat",
+          "othercat",
+          "address",
+          "city",
+          "state",
+          "pincode",
+        ].forEach(clearFieldErr);
+        document.getElementById("e-days").textContent = "";
+      }
+
+      function validate() {
+        clearAllErrors();
+        let ok = true;
+        const name = document.getElementById("f-name").value.trim();
+        if (name.length < 2) {
+          setFieldErr("name", "Required (min 2 chars)");
+          ok = false;
+        }
+        const mobile = document.getElementById("f-mobile").value.trim();
+        if (!/^[6-9]\d{9}$/.test(mobile)) {
+          setFieldErr("mobile", "Valid 10-digit number required");
+          ok = false;
+        }
+        const email = document.getElementById("f-email").value.trim();
+        if (email && !/^[\w.\-+]+@[\w.\-]+\.\w{2,}$/.test(email)) {
+          setFieldErr("email", "Invalid email");
+          ok = false;
+        }
+        if (!document.getElementById("f-gender").value) {
+          setFieldErr("gender", "Required");
+          ok = false;
+        }
+        const type = document.getElementById("f-type").value;
+        const bizname = document.getElementById("f-bizname").value.trim();
+        if (["BUSINESS", "EXHIBITOR", "MEDIA"].includes(type) && !bizname) {
+          setFieldErr("bizname", "Required for this type");
+          ok = false;
+        }
+        const cat = catSel.value;
+        const othercat = document.getElementById("f-othercat").value.trim();
+        if (["BUSINESS", "EXHIBITOR"].includes(type)) {
+          if (!cat) {
+            setFieldErr("cat", "Required");
+            ok = false;
+          } else if (cat === "OTHER" && !othercat) {
+            setFieldErr("othercat", "Specify category");
+            ok = false;
+          }
+        }
+        if (document.getElementById("f-address").value.trim().length < 5) {
+          setFieldErr("address", "Required");
+          ok = false;
+        }
+        if (document.getElementById("f-city").value.trim().length < 2) {
+          setFieldErr("city", "Required");
+          ok = false;
+        }
+        if (document.getElementById("f-state").value.trim().length < 2) {
+          setFieldErr("state", "Required");
+          ok = false;
+        }
+        if (
+          !/^\d{6}$/.test(document.getElementById("f-pincode").value.trim())
+        ) {
+          setFieldErr("pincode", "6-digit pincode");
+          ok = false;
         }
 
-        function initDeviceName() {
-            let name = localStorage.getItem('hub_device_name');
-            if (!name) {
-                document.getElementById('device-modal').style.display = 'flex';
-            } else {
-                document.getElementById('display-device-name').textContent = name;
+        if (
+          !document.getElementById("day-1").checked &&
+          !document.getElementById("day-2").checked &&
+          !document.getElementById("day-3").checked
+        ) {
+          document.getElementById("e-days").textContent =
+            "⚠ Select at least one day";
+          ok = false;
+        }
+        return ok;
+      }
+
+      let cdTimer = null;
+      function showModal(id, isDuplicate = false) {
+        const title = document.getElementById("modal-title"),
+          desc = document.getElementById("modal-desc");
+        const box = document.getElementById("modal-box"),
+          idText = document.getElementById("modal-id-text");
+        const modal = document.getElementById("success-modal");
+        idText.textContent = id;
+
+        if (isDuplicate) {
+          title.textContent = "Already Registered!";
+          title.style.color = "var(--warning)";
+          box.style.borderColor = "var(--warning)";
+          desc.textContent =
+            "This mobile number is already in the system. Existing ID:";
+          idText.style.color = "var(--warning)";
+          playAudioTone("WARNING");
+        } else {
+          title.textContent = "Registration Saved!";
+          title.style.color = "var(--success)";
+          box.style.borderColor = "var(--success)";
+          desc.textContent =
+            "Please provide the attendee with their official ID pass code:";
+          idText.style.color = "var(--success)";
+          playAudioTone("SUCCESS");
+        }
+
+        modal.style.display = "flex";
+        setTimeout(() => modal.classList.add("show"), 10);
+
+        let n = 8;
+        const cd = document.getElementById("modal-countdown");
+        cd.textContent = `Returning to form in ${n}s...`;
+        clearInterval(cdTimer);
+        cdTimer = setInterval(() => {
+          n--;
+          if (n <= 0) dismissModal();
+          else cd.textContent = `Returning to form in ${n}s...`;
+        }, 1000);
+      }
+
+      function dismissModal() {
+        clearInterval(cdTimer);
+        const modal = document.getElementById("success-modal");
+        modal.classList.remove("show");
+        setTimeout(() => (modal.style.display = "none"), 300);
+
+        [
+          "name",
+          "mobile",
+          "email",
+          "bizname",
+          "othercat",
+          "address",
+          "city",
+          "state",
+          "pincode",
+        ].forEach((k) => (document.getElementById("f-" + k).value = ""));
+        document.getElementById("f-gender").value = "";
+        document.getElementById("f-type").value = "GENERAL";
+        catSel.value = "";
+        catSel.disabled = false;
+        document.getElementById("f-othercat").disabled = true;
+        document.getElementById("day-1").checked = false;
+        document.getElementById("day-2").checked = false;
+        document.getElementById("day-3").checked = false;
+
+        const btn = document.getElementById("submit-btn");
+        btn.disabled = false;
+        btn.textContent = "Register Offline Attendee";
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      function submitForm() {
+        if (!validate()) {
+          playAudioTone("ERROR");
+          return;
+        }
+        const btn = document.getElementById("submit-btn");
+        btn.disabled = true;
+        btn.textContent = "⏳ Registering...";
+
+        const selectedDays = [];
+        for (let i = 1; i <= 3; i++)
+          if (document.getElementById(`day-${i}`).checked)
+            selectedDays.push(document.getElementById(`day-${i}`).value);
+
+        const payload = {
+          full_name: document.getElementById("f-name").value.trim(),
+          mobile: document.getElementById("f-mobile").value.trim(),
+          email: document.getElementById("f-email").value.trim() || null,
+          gender: document.getElementById("f-gender").value,
+          attendee_type: document.getElementById("f-type").value,
+          business_name:
+            document.getElementById("f-bizname").value.trim() || null,
+          business_category: catSel.value || null,
+          other_category:
+            document.getElementById("f-othercat").value.trim() || null,
+          address: document.getElementById("f-address").value.trim(),
+          city: document.getElementById("f-city").value.trim(),
+          state: document.getElementById("f-state").value.trim(),
+          pincode: document.getElementById("f-pincode").value.trim(),
+          attendance_days: selectedDays,
+          device_name: getDeviceName(),
+        };
+
+        fetch("/api/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.status === "success") showModal(data.attendee_id, false);
+            else if (data.status === "already_registered")
+              showModal(data.attendee_id, true);
+            else {
+              showToast("Server Error: " + data.message);
+              btn.disabled = false;
+              btn.textContent = "Register Offline Attendee";
+              playAudioTone("ERROR");
             }
-        }
+          })
+          .catch(() => {
+            showToast("Connection Error. Cannot reach Hub.");
+            btn.disabled = false;
+            btn.textContent = "Register Offline Attendee";
+            playAudioTone("ERROR");
+          });
+      }
 
-        function saveDeviceName() {
-            let val = document.getElementById('device-name-input').value.trim();
-            if (val) {
-                localStorage.setItem('hub_device_name', val);
-                document.getElementById('display-device-name').textContent = val;
-                document.getElementById('device-modal').style.display = 'none';
-            } else {
-                alert("Please enter a valid Kiosk name.");
-            }
-        }
-
-        function promptDeviceName() {
-            document.getElementById('device-name-input').value = localStorage.getItem('hub_device_name') || '';
-            document.getElementById('device-modal').style.display = 'flex';
-        }
-
-        // --- LIVE NETWORK & SERVER POLLING ---
-        async function syncServerStatus() {
-            const banner = document.getElementById('test-banner');
-            const bannerDate = document.getElementById('banner-date');
-            const dot = document.getElementById('net-dot');
-            const text = document.getElementById('net-text');
-
-            if (!navigator.onLine) {
-                dot.className = "net-dot net-offline"; text.textContent = "Offline"; return;
-            }
-
-            const startTime = performance.now();
-            try {
-                const currentDevice = encodeURIComponent(getDeviceName());
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2000);
-                const res = await fetch(`/api/status?device_name=${currentDevice}`, { cache: 'no-store', signal: controller.signal });
-                clearTimeout(timeoutId);
-
-                const duration = performance.now() - startTime;
-                if (duration < 150) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
-                else if (duration < 500) { dot.className = "net-dot net-fair"; text.textContent = "Fair"; }
-                else { dot.className = "net-dot net-poor"; text.textContent = "Poor"; }
-
-                const data = await res.json();
-                if (data.test_mode) {
-                    bannerDate.textContent = data.test_date;
-                    banner.style.display = 'block';
-                } else {
-                    banner.style.display = 'none';
-                }
-            } catch (e) {
-                dot.className = "net-dot net-poor"; text.textContent = "Unstable";
-            }
-        }
-
-        // --- AUDIO ENGINE ---
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        function playBeep(isSuccess, isWarning=false) {
-            try {
-                const osc = audioCtx.createOscillator();
-                const gain = audioCtx.createGain();
-                osc.connect(gain); gain.connect(audioCtx.destination);
-                
-                if (isWarning) {
-                    osc.type = 'square'; osc.frequency.value = 400; 
-                } else {
-                    osc.type = isSuccess ? 'sine' : 'sawtooth';
-                    osc.frequency.value = isSuccess ? 800 : 300;
-                }
-
-                gain.gain.setValueAtTime(1, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-                osc.start(); osc.stop(audioCtx.currentTime + 0.3);
-            } catch (e) { }
-        }
-
-        // --- POPULATE CATEGORIES ---
-        const CAT_OPTS = [
-            ['— Select Category —', ''], ['Tent', 'TENT'], ['Caterers', 'CATERING'],
-            ['Decorator', 'DECORATOR'], ['Flower Decoration', 'FLOWER'], ['DJ', 'DJ'],
-            ['Light & Sound', 'LIGHT'], ['Photography', 'PHOTOGRAPHY'], ['Videography', 'VIDEOGRAPHY'],
-            ['Event Planner', 'EVENT_PLANNER'], ['Stage Setup', 'STAGE'], ['Band', 'BAND'],
-            ['Makeup Artist', 'MAKEUP'], ['Lawn, Resort & Banquet', 'BANQUET'],
-            ['Transport', 'TRANSPORT'], ["Other (Specify Below)", 'OTHER'], ['Media / Press', 'MEDIA_PRESS']
-        ];
-        const catSel = document.getElementById('f-cat');
-        CAT_OPTS.forEach(([label, val]) => {
-            catSel.appendChild(new Option(label, val));
-        });
-
-        // --- REACTIVE LOGIC ---
-        document.getElementById('f-type').addEventListener('change', e => {
-            const v = e.target.value;
-            const otherInput = document.getElementById('f-othercat');
-            if (v === 'MEDIA') {
-                catSel.value = 'MEDIA_PRESS'; catSel.disabled = true;
-                otherInput.value = ''; otherInput.disabled = true;
-            } else {
-                if (catSel.value === 'MEDIA_PRESS') catSel.value = '';
-                catSel.disabled = false;
-            }
-            clearFieldErr('cat'); clearFieldErr('bizname');
-        });
-
-        catSel.addEventListener('change', e => {
-            const otherInput = document.getElementById('f-othercat');
-            if (e.target.value === 'OTHER') {
-                otherInput.disabled = false;
-            } else {
-                otherInput.value = ''; otherInput.disabled = true;
-            }
-            clearFieldErr('othercat');
-        });
-
-        ['mobile', 'pincode'].forEach(id => {
-            document.getElementById('f-' + id).addEventListener('input', e => {
-                e.target.value = e.target.value.replace(/\D/g, '');
-            });
-        });
-
-        function setFieldErr(key, msg) {
-            document.getElementById('f-' + key).classList.add('err');
-            document.getElementById('e-' + key).textContent = '⚠ ' + msg;
-        }
-        function clearFieldErr(key) {
-            document.getElementById('f-' + key).classList.remove('err');
-            document.getElementById('e-' + key).textContent = '';
-        }
-        function clearAllErrors() {
-            ['name','mobile','email','gender','bizname','cat','othercat','address','city','state','pincode'].forEach(clearFieldErr);
-            document.getElementById('e-days').textContent = '';
-        }
-
-        const MOBILE_RE = /^[6-9]\d{9}$/;
-        const PIN_RE = /^\d{6}$/;
-        const EMAIL_RE = /^[\w.\-+]+@[\w.\-]+\.\w{2,}$/;
-
-        function validate() {
-            clearAllErrors();
-            let ok = true;
-
-            const name = document.getElementById('f-name').value.trim();
-            if (name.length < 2) { setFieldErr('name', 'Required (min 2 chars)'); ok = false; }
-
-            const mobile = document.getElementById('f-mobile').value.trim();
-            if (!MOBILE_RE.test(mobile)) { setFieldErr('mobile', 'Valid 10-digit number required'); ok = false; }
-
-            const email = document.getElementById('f-email').value.trim();
-            if (email && !EMAIL_RE.test(email)) { setFieldErr('email', 'Invalid email'); ok = false; }
-
-            const gender = document.getElementById('f-gender').value;
-            if (!gender) { setFieldErr('gender', 'Required'); ok = false; }
-
-            const type = document.getElementById('f-type').value;
-            const bizname = document.getElementById('f-bizname').value.trim();
-            if (['BUSINESS','EXHIBITOR','MEDIA'].includes(type) && !bizname) {
-                setFieldErr('bizname', 'Required for this type'); ok = false;
-            }
-
-            const cat = catSel.value;
-            const othercat = document.getElementById('f-othercat').value.trim();
-            if (['BUSINESS','EXHIBITOR'].includes(type)) {
-                if (!cat) { setFieldErr('cat', 'Required'); ok = false; }
-                else if (cat === 'OTHER' && !othercat) { setFieldErr('othercat', 'Specify category'); ok = false; }
-            }
-
-            const address = document.getElementById('f-address').value.trim();
-            if (address.length < 5) { setFieldErr('address', 'Required (min 5 chars)'); ok = false; }
-
-            const city = document.getElementById('f-city').value.trim();
-            if (city.length < 2) { setFieldErr('city', 'Required'); ok = false; }
-
-            const state = document.getElementById('f-state').value.trim();
-            if (state.length < 2) { setFieldErr('state', 'Required'); ok = false; }
-
-            const pincode = document.getElementById('f-pincode').value.trim();
-            if (!PIN_RE.test(pincode)) { setFieldErr('pincode', '6-digit pincode required'); ok = false; }
-
-            const day1 = document.getElementById('day-1').checked;
-            const day2 = document.getElementById('day-2').checked;
-            const day3 = document.getElementById('day-3').checked;
-            if (!day1 && !day2 && !day3) {
-                document.getElementById('e-days').textContent = '⚠ Select at least one day';
-                ok = false;
-            }
-
-            return ok;
-        }
-
-        let cdTimer = null;
-        function showModal(id, isDuplicate = false) {
-            const title = document.getElementById('modal-title');
-            const desc = document.getElementById('modal-desc');
-            const box = document.getElementById('modal-box');
-            const idText = document.getElementById('modal-id-text');
-
-            idText.textContent = id;
-
-            if (isDuplicate) {
-                title.textContent = "Already Registered!";
-                title.style.color = "#ffbb33"; 
-                box.style.borderColor = "#ffbb33";
-                desc.textContent = "This mobile number is already in the system. Existing ID:";
-                idText.style.color = "#ffbb33";
-                playBeep(false, true); 
-            } else {
-                title.textContent = "Registration Saved!";
-                title.style.color = "#00e676"; 
-                box.style.borderColor = "#00e676";
-                desc.textContent = "Please provide the attendee with their official ID pass code:";
-                idText.style.color = "#00e676";
-                playBeep(true);
-            }
-
-            document.getElementById('success-modal').style.display = 'flex';
-            
-            let n = 8;
-            const cd = document.getElementById('modal-countdown');
-            cd.textContent = `Returning to form in ${n}s...`;
-            clearInterval(cdTimer);
-            cdTimer = setInterval(() => {
-                n--;
-                if (n <= 0) { dismissModal(); }
-                else cd.textContent = `Returning to form in ${n}s...`;
-            }, 1000);
-        }
-
-        function dismissModal() {
-            clearInterval(cdTimer);
-            document.getElementById('success-modal').style.display = 'none';
-            ['name','mobile','email','bizname','othercat','address','city','state','pincode'].forEach(k => document.getElementById('f-'+k).value = '');
-            document.getElementById('f-gender').value = '';
-            document.getElementById('f-type').value = 'GENERAL';
-            catSel.value = ''; catSel.disabled = false;
-            document.getElementById('f-othercat').disabled = true;
-            document.getElementById('day-1').checked = false;
-            document.getElementById('day-2').checked = false;
-            document.getElementById('day-3').checked = false;
-            document.getElementById('submit-btn').disabled = false;
-            document.getElementById('submit-btn').textContent = 'Register Offline Attendee';
-            window.scrollTo(0,0);
-        }
-
-        function submitForm() {
-            if (!validate()) { playBeep(false); return; }
-
-            const btn = document.getElementById('submit-btn');
-            btn.disabled = true;
-            btn.textContent = '⏳ Registering...';
-
-            const selectedDays = [];
-            if (document.getElementById('day-1').checked) selectedDays.push(document.getElementById('day-1').value);
-            if (document.getElementById('day-2').checked) selectedDays.push(document.getElementById('day-2').value);
-            if (document.getElementById('day-3').checked) selectedDays.push(document.getElementById('day-3').value);
-
-            const payload = {
-                full_name: document.getElementById('f-name').value.trim(),
-                mobile: document.getElementById('f-mobile').value.trim(),
-                email: document.getElementById('f-email').value.trim() || null,
-                gender: document.getElementById('f-gender').value,
-                attendee_type: document.getElementById('f-type').value,
-                business_name: document.getElementById('f-bizname').value.trim() || null,
-                business_category: catSel.value || null,
-                other_category: document.getElementById('f-othercat').value.trim() || null,
-                address: document.getElementById('f-address').value.trim(),
-                city: document.getElementById('f-city').value.trim(),
-                state: document.getElementById('f-state').value.trim(),
-                pincode: document.getElementById('f-pincode').value.trim(),
-                attendance_days: selectedDays,
-                device_name: getDeviceName() // Send custom device name to server
-            };
-
-            fetch('/api/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'success') { showModal(data.attendee_id, false); } 
-                else if (data.status === 'already_registered') { showModal(data.attendee_id, true); } 
-                else {
-                    alert('Error: ' + data.message);
-                    btn.disabled = false; btn.textContent = 'Register Offline Attendee'; playBeep(false);
-                }
-            })
-            .catch(err => {
-                alert('Connection Error. Cannot reach Hub.');
-                btn.disabled = false; btn.textContent = 'Register Offline Attendee'; playBeep(false);
-            });
-        }
-
-        // Boot process
-        window.addEventListener('load', () => {
-            initDeviceName();
-            setInterval(syncServerStatus, 3000);
-            syncServerStatus();
-        });
+      window.addEventListener("load", () => {
+        initDeviceName();
+        setInterval(syncServerStatus, 3000);
+        syncServerStatus();
+      });
     </script>
-</body>
+  </body>
 </html>

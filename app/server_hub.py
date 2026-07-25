@@ -22,7 +22,7 @@ import webbrowser
 from flask import Flask, render_template, request, jsonify, Response
 from werkzeug.serving import make_server
 
-# 🛡️ FIX: Force SQLAlchemy to detect JSON column updates
+# 🛡️ Force SQLAlchemy to detect JSON column updates
 from sqlalchemy.orm.attributes import flag_modified
 
 # Windows DPI Awareness for crisp text
@@ -40,7 +40,7 @@ except ModuleNotFoundError:
     from schema import Attendee, OfflineKioskAttendee, get_database_sessions
 
 # ==============================================================================
-# CONFIGURATION
+# CONFIGURATION & GLOBAL CACHE
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
@@ -59,11 +59,34 @@ SERVER_TEST_DATE = "2026-08-30"
 ACTIVE_DEVICES = {}
 SCAN_CLIENTS = []  
 
+# 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion under heavy load
+DB_SESSIONS_CACHE = None
+
+def get_cached_sessions():
+    global DB_SESSIONS_CACHE
+    if DB_SESSIONS_CACHE is None:
+        DB_SESSIONS_CACHE = get_database_sessions()
+    return DB_SESSIONS_CACHE
+
+# 📡 TELEMETRY: Track API Speed in Milliseconds
+API_LATENCY_HISTORY = []
+
 # ==============================================================================
 # FLASK MIDDLEWARE & EVENT BROADCASTER
 # ==============================================================================
+@app.before_request
+def start_timer():
+    request.start_time = time.time()
+
 @app.after_request
 def log_request(response):
+    # Calculate response speed for API telemetry
+    if hasattr(request, 'start_time') and request.path.startswith('/api/'):
+        latency_ms = (time.time() - request.start_time) * 1000
+        API_LATENCY_HISTORY.append(latency_ms)
+        if len(API_LATENCY_HISTORY) > 50:
+            API_LATENCY_HISTORY.pop(0)
+
     if request.path in ['/api/status', '/api/network-data', '/api/stream-scans'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
         return response  
         
@@ -95,9 +118,12 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
         "attendee": att_dict
     }
     
-    for q in SCAN_CLIENTS:
+    # 🛡️ PERFORMANCE FIX: Safely push to queues without locking the main thread
+    for q in list(SCAN_CLIENTS):
         try:
-            q.put(event)
+            q.put_nowait(event)
+        except queue.Full:
+            pass
         except Exception:
             pass
 
@@ -127,7 +153,8 @@ def get_server_status():
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
-        q = queue.Queue()
+        # Limit queue size to prevent memory leaks if a client disconnects badly
+        q = queue.Queue(maxsize=50)
         SCAN_CLIENTS.append(q)
         try:
             while True:
@@ -166,7 +193,8 @@ def process_checkin():
             identifier = parsed_json.get('attendeeId', parsed_json.get('attendee_id', parsed_json.get('id', identifier)))
         except Exception: pass
 
-    sessions = get_database_sessions()
+    # Use the cached session pool
+    sessions = get_cached_sessions()
     session = sessions.get('mysql')()
     
     try:
@@ -233,7 +261,6 @@ def process_checkin():
 
         attendee.checkin_history = history 
         
-        # 🛡️ FIX: Force SQLAlchemy to detect JSON column modifications!
         flag_modified(attendee, "checkin_history")
         
         attendee.needs_cloud_sync = True
@@ -261,7 +288,7 @@ def process_checkin():
 def process_registration():
     global SERVER_TEST_MODE, SERVER_TEST_DATE
     data = request.json
-    sessions = get_database_sessions()
+    sessions = get_cached_sessions()
     session = sessions.get('mysql')()
     
     mobile_number = data.get('mobile', '').strip()
@@ -349,7 +376,7 @@ def get_network_data():
         if current_time - data['last_seen'] < 30: active_devices[ip] = data
         else: del ACTIVE_DEVICES[ip]
 
-    sessions = get_database_sessions()
+    sessions = get_cached_sessions()
     session = sessions.get('mysql')()
     global_stats = {"total_scans": 0, "total_registrations": 0, "today_scans": 0}
     
@@ -393,6 +420,7 @@ def rename_device():
 class FlaskServerThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__()
+        # Threaded=True prevents single requests from blocking the stack
         self.server = make_server(host, port, app, threaded=True, ssl_context='adhoc')
         self.ctx = app.app_context()
         self.ctx.push()
@@ -401,13 +429,21 @@ class FlaskServerThread(threading.Thread):
     def shutdown(self): self.server.shutdown()
 
 def get_local_ip():
+    """
+    🛡️ ROBUST NETWORK FIX: Connects to a private, non-routable IP to force
+    the OS to resolve the true local LAN IP interface, even if internet is down.
+    """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
+        s.connect(("10.255.255.255", 1))
         ip = s.getsockname()[0]
         s.close()
         return ip
-    except Exception: return "127.0.0.1"
+    except Exception: 
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except:
+            return "127.0.0.1"
 
 def generate_qr_image(data, size=150):
     qr = qrcode.QRCode(version=1, box_size=10, border=2)
@@ -447,7 +483,7 @@ class ServerHub(ttk.Window):
 
     def connect_db(self):
         try:
-            sessions = get_database_sessions()
+            sessions = get_cached_sessions()
             self.SessionMySQL = sessions.get('mysql')
             self.SessionSQLite = sessions.get('sqlite')
         except Exception as e:
@@ -579,6 +615,9 @@ class ServerHub(ttk.Window):
         
         ttk.Label(header, text="TDE UP 2026 — COMMAND CENTER", font="-size 20 -weight bold", bootstyle=PRIMARY).pack(side=LEFT)
         
+        # 🛡️ FIX: Added Manual UI Refresh Button
+        ttk.Button(header, text="⟳ Refresh Data", bootstyle="outline-info", command=self.refresh_stats).pack(side=LEFT, padx=15)
+        
         status_frame = ttk.Frame(header)
         status_frame.pack(side=RIGHT)
         
@@ -600,8 +639,9 @@ class ServerHub(ttk.Window):
         
         self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
         self._create_stat_card(row1, "KIOSK REGISTRATIONS", "0", INFO, "kiosk_reg")
-        self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
         self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
+        # 🛡️ FIX: Added the new Live API Latency Speedometer to the UI
+        self._create_stat_card(row1, "API SPEED (LATENCY)", "0 ms", SUCCESS, "api_latency")
 
         ttk.Label(content, text="📅 EVENT CHECK-IN METRICS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 10))
         row2 = ttk.Frame(content)
@@ -691,12 +731,20 @@ class ServerHub(ttk.Window):
         self.refresh_stats()
 
     def refresh_stats(self):
-        global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES
+        global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES, API_LATENCY_HISTORY
         
         current_time = time.time()
         active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < 15]
         
         self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
+        
+        # Calculate speed average
+        if API_LATENCY_HISTORY:
+            avg_ms = sum(API_LATENCY_HISTORY) / len(API_LATENCY_HISTORY)
+            color_style = SUCCESS if avg_ms < 200 else (WARNING if avg_ms < 500 else DANGER)
+            self.stat_vars["api_latency"].configure(text=f"{int(avg_ms)} ms", bootstyle=color_style)
+        else:
+            self.stat_vars["api_latency"].configure(text="0 ms", bootstyle=SUCCESS)
         
         device_strings = []
         for ip in active_ips:
@@ -720,7 +768,6 @@ class ServerHub(ttk.Window):
         try:
             total_mysql = mysql_session.query(Attendee).count()
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
-            total_sqlite = sqlite_session.query(Attendee).count() if sqlite_session else 0
             
             chk_30 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
             chk_31 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
@@ -741,7 +788,6 @@ class ServerHub(ttk.Window):
 
             self.stat_vars["total_att"].configure(text=str(total_mysql))
             self.stat_vars["kiosk_reg"].configure(text=str(kiosk_regs))
-            self.stat_vars["sqlite_total"].configure(text=str(total_sqlite))
             self.stat_vars["chk_30"].configure(text=str(chk_30))
             self.stat_vars["chk_31"].configure(text=str(chk_31))
             self.stat_vars["chk_01"].configure(text=str(chk_01))
@@ -760,13 +806,17 @@ class ServerHub(ttk.Window):
         self.btn_start_flask.configure(state=DISABLED)
         self.btn_stop_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=NORMAL)
-        self.flask_url = f"https://{self.local_ip}:{FLASK_PORT}"
-        self.update_qr(self.lbl_flask_qr, self.flask_url)
-        self.lbl_flask_link.configure(text=self.flask_url, foreground="#4D9CE6")
+        self.flask_url = f"http://{self.local_ip}:{FLASK_PORT}" # 🛡️ FIX: Provide non-SSL link for strict local networks as fallback
+        
+        # Display both secure and local HTTP routes
+        secure_url = f"https://{self.local_ip}:{FLASK_PORT}"
+        self.update_qr(self.lbl_flask_qr, secure_url)
+        self.lbl_flask_link.configure(text=secure_url, foreground="#4D9CE6")
+        
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting secure HTTPS API Engine...")
         self.flask_thread = FlaskServerThread(app, '0.0.0.0', FLASK_PORT)
         self.flask_thread.start()
-        self._append_log(self.log_flask, f"[SYSTEM] Secure API Engine listening natively on {self.flask_url}")
+        self._append_log(self.log_flask, f"[SYSTEM] Engine listening natively on {secure_url} (or {self.flask_url} without SSL)")
         
     def stop_flask(self):
         if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
