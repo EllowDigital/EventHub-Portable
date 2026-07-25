@@ -898,25 +898,50 @@ class ServerHub(ttk.Window):
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
 
     def start_cf(self):
+        # Ensure local engine is running first
+        if not self.http_thread:
+            self._append_log(self.log_cf, "[ERROR] Start the Local Engine (Port 5000) BEFORE starting the tunnel!")
+            return
+
         self.btn_start_cf.configure(state=DISABLED)
         self.btn_stop_cf.configure(state=NORMAL)
         self.lbl_stat_cf.configure(text="● Cloudflare: CONNECTING", bootstyle=WARNING)
-        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
+        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel to port {HTTP_PORT}...")
 
         def _run_cf():
             try:
                 cmd = ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{HTTP_PORT}", "--no-tls-verify"]
                 creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
-                self.cf_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=creationflags)
+                self.cf_process = subprocess.Popen(
+                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=creationflags
+                )
 
+                url_found = False
                 for line in self.cf_process.stdout:
-                    match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", line)
-                    if match:
-                        self.cloudflare_url = match.group(0)
-                        self.gui_queue.put(lambda: self.update_qr(self.lbl_cf_qr, self.cloudflare_url))
-                        self.gui_queue.put(lambda: self.lbl_cf_link.configure(text=self.cloudflare_url, foreground="#4D9CE6"))
-                        self.gui_queue.put(lambda: self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS))
-                        self._append_log(self.log_cf, f"[SUCCESS] Bridged to: {self.cloudflare_url}")
+                    # Clean ANSI terminal escape codes from cloudflared output
+                    clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                    self._append_log(self.log_cf, clean_line.strip())
+                    
+                    if not url_found:
+                        match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", clean_line)
+                        if match:
+                            tunnel_url = match.group(0)
+                            self.cloudflare_url = tunnel_url
+                            url_found = True
+                            
+                            # 🛡️ FIX: Give Cloudflare's global edge 3 seconds to propagate DNS
+                            self._append_log(self.log_cf, "[INFO] Waiting 3 seconds for Cloudflare Edge DNS propagation...")
+                            time.sleep(3)
+                            
+                            # Update UI safely through thread queue
+                            self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
+                            self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
+                            self.gui_queue.put(lambda: self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS))
+                            self._append_log(self.log_cf, f"[SUCCESS] Tunnel active at: {self.cloudflare_url}")
+                            
+            except FileNotFoundError:
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, "[ERROR] 'cloudflared' binary not found. Ensure it is installed and in your system PATH.")
             except Exception as e:
                 self.gui_queue.put(self.stop_cf)
                 self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {str(e)}")
@@ -925,7 +950,13 @@ class ServerHub(ttk.Window):
         
     def stop_cf(self):
         self.btn_stop_cf.configure(state=DISABLED)
-        if self.btn_stop_flask['state'] == NORMAL: self.btn_start_cf.configure(state=NORMAL)
+        
+        # 🛡️ FIX: Directly check if the Local Engine thread is active to re-enable the button
+        if self.http_thread is not None:
+            self.btn_start_cf.configure(state=NORMAL)
+        else:
+            self.btn_start_cf.configure(state=DISABLED)
+            
         self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
         
         if self.cf_process:
@@ -937,7 +968,7 @@ class ServerHub(ttk.Window):
         self.cloudflare_url = "Offline"
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
-
+        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel connection closed.")
 
 if __name__ == "__main__":
     app_window = ServerHub()
