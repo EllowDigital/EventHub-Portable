@@ -10,6 +10,7 @@ import re
 import time
 import uuid
 import queue
+import requests
 from datetime import datetime, timezone
 
 import ttkbootstrap as ttk
@@ -46,7 +47,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
-FLASK_PORT = 5000
+HTTP_PORT = 5000   # Fast, unencrypted Local LAN traffic & Cloudflare tunnel target
+HTTPS_PORT = 5001  # Secure Local LAN traffic (allows iOS Camera Access natively)
 
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
@@ -59,7 +61,7 @@ SERVER_TEST_DATE = "2026-08-30"
 ACTIVE_DEVICES = {}
 SCAN_CLIENTS = []  
 
-# 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion under heavy load
+# 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion
 DB_SESSIONS_CACHE = None
 
 def get_cached_sessions():
@@ -68,25 +70,19 @@ def get_cached_sessions():
         DB_SESSIONS_CACHE = get_database_sessions()
     return DB_SESSIONS_CACHE
 
-# 📡 TELEMETRY: Track API Speed in Milliseconds
-API_LATENCY_HISTORY = []
+# 📡 TELEMETRY ENGINE GLOBALS
+NETWORK_LATENCY = {
+    "local_ms": 0,
+    "cloud_ms": 0,
+    "local_status": "OFFLINE",
+    "cloud_status": "OFFLINE"
+}
 
 # ==============================================================================
 # FLASK MIDDLEWARE & EVENT BROADCASTER
 # ==============================================================================
-@app.before_request
-def start_timer():
-    request.start_time = time.time()
-
 @app.after_request
 def log_request(response):
-    # Calculate response speed for API telemetry
-    if hasattr(request, 'start_time') and request.path.startswith('/api/'):
-        latency_ms = (time.time() - request.start_time) * 1000
-        API_LATENCY_HISTORY.append(latency_ms)
-        if len(API_LATENCY_HISTORY) > 50:
-            API_LATENCY_HISTORY.pop(0)
-
     if request.path in ['/api/status', '/api/network-data', '/api/stream-scans'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
         return response  
         
@@ -193,7 +189,7 @@ def process_checkin():
             identifier = parsed_json.get('attendeeId', parsed_json.get('attendee_id', parsed_json.get('id', identifier)))
         except Exception: pass
 
-    # Use the cached session pool
+    # Multi-threaded Database Pool Fetch
     sessions = get_cached_sessions()
     session = sessions.get('mysql')()
     
@@ -261,6 +257,7 @@ def process_checkin():
 
         attendee.checkin_history = history 
         
+        # 🛡️ Force SQLAlchemy to detect JSON column modifications
         flag_modified(attendee, "checkin_history")
         
         attendee.needs_cloud_sync = True
@@ -415,12 +412,23 @@ def rename_device():
     return jsonify({"status": "error", "message": "Device not found or invalid name"}), 404
 
 # ==============================================================================
-# THREADING & HELPERS
+# THREADING & DUAL SERVER ENGINES
 # ==============================================================================
-class FlaskServerThread(threading.Thread):
+class HttpFlaskThread(threading.Thread):
+    """Runs extremely fast unencrypted HTTP for Cloudflare and Desktop Kiosks"""
     def __init__(self, app, host, port):
         super().__init__()
-        # Threaded=True prevents single requests from blocking the stack
+        self.server = make_server(host, port, app, threaded=True)
+        self.ctx = app.app_context()
+        self.ctx.push()
+
+    def run(self): self.server.serve_forever()
+    def shutdown(self): self.server.shutdown()
+
+class HttpsFlaskThread(threading.Thread):
+    """Runs Adhoc HTTPS strictly for local iOS devices requiring Camera access"""
+    def __init__(self, app, host, port):
+        super().__init__()
         self.server = make_server(host, port, app, threaded=True, ssl_context='adhoc')
         self.ctx = app.app_context()
         self.ctx.push()
@@ -431,7 +439,7 @@ class FlaskServerThread(threading.Thread):
 def get_local_ip():
     """
     🛡️ ROBUST NETWORK FIX: Connects to a private, non-routable IP to force
-    the OS to resolve the true local LAN IP interface, even if internet is down.
+    the OS to resolve the true local LAN/Wi-Fi IP interface, even if internet is down.
     """
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -452,24 +460,138 @@ def generate_qr_image(data, size=150):
     img = qr.make_image(fill_color="black", back_color="white")
     return ImageTk.PhotoImage(img.resize((size, size), Image.Resampling.LANCZOS))
 
+
+# ==============================================================================
+# NETWORK TELEMETRY SPEEDOMETER WINDOW
+# ==============================================================================
+class NetworkTelemetryWindow(ttk.Toplevel):
+    """A floating mini-window with dual gauges for Server API latency testing."""
+    def __init__(self, parent, hub_instance):
+        super().__init__(parent)
+        self.title("Live Network Speedometers")
+        self.geometry("750x420")
+        self.resizable(False, False)
+        self.hub = hub_instance
+        self.attributes('-topmost', True) # Keep window floating on top
+        
+        # Center Window
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
+        self.geometry(f"+{x}+{y}")
+
+        self.build_ui()
+        self.refresh_meters()
+
+    def build_ui(self):
+        main_frame = ttk.Frame(self, padding=25)
+        main_frame.pack(fill=BOTH, expand=True)
+
+        ttk.Label(main_frame, text="📡 Real-Time API Latency", font="-size 16 -weight bold", bootstyle=PRIMARY).pack(anchor=CENTER, pady=(0, 5))
+        ttk.Label(main_frame, text="Measures exact response time (Ping) in milliseconds. Lower is faster.", font="-size 9", bootstyle=SECONDARY).pack(anchor=CENTER, pady=(0, 20))
+
+        grid = ttk.Frame(main_frame)
+        grid.pack(fill=BOTH, expand=True)
+        
+        # Left Gauge: Local LAN (Flask)
+        local_card = ttk.Labelframe(grid, text=" Local Flask Engine (Wi-Fi/LAN) ", padding=15)
+        local_card.pack(side=LEFT, fill=BOTH, expand=True, padx=10)
+        
+        self.meter_local = ttk.Meter(
+            local_card,
+            metersize=200,
+            padding=10,
+            amounttotal=1000,
+            amountused=0,
+            metertype="semi",
+            subtext="PING ms",
+            interactive=False,
+            stripethickness=10,
+            meterthickness=15,
+            bootstyle=SUCCESS
+        )
+        self.meter_local.pack(pady=(10,0))
+        self.lbl_local_status = ttk.Label(local_card, text="Status: OFFLINE", font="-weight bold", bootstyle=SECONDARY)
+        self.lbl_local_status.pack(pady=10)
+
+        # Right Gauge: Cloudflare (WAN)
+        cloud_card = ttk.Labelframe(grid, text=" Cloudflare Tunnel (Internet WAN) ", padding=15)
+        cloud_card.pack(side=LEFT, fill=BOTH, expand=True, padx=10)
+        
+        self.meter_cloud = ttk.Meter(
+            cloud_card,
+            metersize=200,
+            padding=10,
+            amounttotal=1000,
+            amountused=0,
+            metertype="semi",
+            subtext="PING ms",
+            interactive=False,
+            stripethickness=10,
+            meterthickness=15,
+            bootstyle=SUCCESS
+        )
+        self.meter_cloud.pack(pady=(10,0))
+        self.lbl_cloud_status = ttk.Label(cloud_card, text="Status: OFFLINE", font="-weight bold", bootstyle=SECONDARY)
+        self.lbl_cloud_status.pack(pady=10)
+        
+        ttk.Button(main_frame, text="Close Window", bootstyle=SECONDARY, command=self.destroy).pack(pady=(20,0))
+
+    def refresh_meters(self):
+        """Update gauges strictly based on the background daemon thread measurements."""
+        if not self.winfo_exists(): return
+        
+        global NETWORK_LATENCY
+        
+        # --- Local Gauge Update ---
+        loc_ms = NETWORK_LATENCY["local_ms"]
+        self.meter_local.configure(amountused=min(loc_ms, 1000))
+        
+        if NETWORK_LATENCY["local_status"] == "ONLINE":
+            c_style = SUCCESS if loc_ms < 150 else (WARNING if loc_ms < 400 else DANGER)
+            self.meter_local.configure(bootstyle=c_style)
+            self.lbl_local_status.configure(text="Status: LIVE & CONNECTED", bootstyle=SUCCESS)
+        else:
+            self.meter_local.configure(amountused=0, bootstyle=SECONDARY)
+            self.lbl_local_status.configure(text="Status: SERVER OFF", bootstyle=DANGER)
+
+        # --- Cloud Gauge Update ---
+        cf_ms = NETWORK_LATENCY["cloud_ms"]
+        self.meter_cloud.configure(amountused=min(cf_ms, 1000))
+        
+        if NETWORK_LATENCY["cloud_status"] == "ONLINE":
+            c_style = SUCCESS if cf_ms < 300 else (WARNING if cf_ms < 800 else DANGER)
+            self.meter_cloud.configure(bootstyle=c_style)
+            self.lbl_cloud_status.configure(text="Status: SECURE TUNNEL ACTIVE", bootstyle=SUCCESS)
+        else:
+            self.meter_cloud.configure(amountused=0, bootstyle=SECONDARY)
+            self.lbl_cloud_status.configure(text="Status: TUNNEL OFFLINE", bootstyle=DANGER)
+
+        self.after(1000, self.refresh_meters)
+
+
 # ==============================================================================
 # MAIN SERVER HUB GUI
 # ==============================================================================
 class ServerHub(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V1.0")
+        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.0")
         self.geometry("1600x950")
         self.minsize(1000, 700)
         
         self.local_ip = get_local_ip()
-        self.flask_url = f"https://{self.local_ip}:{FLASK_PORT}"
+        
+        # Dual links
+        self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
+        self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
         self.cloudflare_url = "Offline"
         
         self.SessionMySQL = None
         self.SessionSQLite = None
         self.connect_db()
 
-        self.flask_thread = None
+        self.flask_http_thread = None
+        self.flask_https_thread = None
         self.cf_process = None 
         
         self.gui_queue = queue.Queue()
@@ -480,6 +602,9 @@ class ServerHub(ttk.Window):
         self.build_ui()
         self.process_gui_queue() 
         self.refresh_stats()
+        
+        # 🚀 Start Background Network Telemetry Thread
+        threading.Thread(target=self.network_ping_daemon, daemon=True).start()
 
     def connect_db(self):
         try:
@@ -488,6 +613,37 @@ class ServerHub(ttk.Window):
             self.SessionSQLite = sessions.get('sqlite')
         except Exception as e:
             logging.error(f"Database Connection Failed: {e}")
+
+    def network_ping_daemon(self):
+        """Daemon thread running in background strictly to measure network health without lagging UI"""
+        global NETWORK_LATENCY
+        while True:
+            # 1. Ping Local Flask Server
+            start_local = time.time()
+            try:
+                # Use standard HTTP port for fast local verification
+                requests.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
+                NETWORK_LATENCY["local_ms"] = int((time.time() - start_local) * 1000)
+                NETWORK_LATENCY["local_status"] = "ONLINE"
+            except:
+                NETWORK_LATENCY["local_ms"] = 0
+                NETWORK_LATENCY["local_status"] = "OFFLINE"
+
+            # 2. Ping Cloudflare WAN Tunnel
+            if self.cloudflare_url and self.cloudflare_url != "Offline":
+                start_cf = time.time()
+                try:
+                    requests.get(f"{self.cloudflare_url}/api/status", timeout=4, verify=False)
+                    NETWORK_LATENCY["cloud_ms"] = int((time.time() - start_cf) * 1000)
+                    NETWORK_LATENCY["cloud_status"] = "ONLINE"
+                except:
+                    NETWORK_LATENCY["cloud_ms"] = 0
+                    NETWORK_LATENCY["cloud_status"] = "OFFLINE"
+            else:
+                NETWORK_LATENCY["cloud_ms"] = 0
+                NETWORK_LATENCY["cloud_status"] = "OFFLINE"
+
+            time.sleep(1.5) # Poll every 1.5 seconds
 
     def process_gui_queue(self):
         while not self.gui_queue.empty():
@@ -521,6 +677,10 @@ class ServerHub(ttk.Window):
         webbrowser.open(url)
         self._append_log(self.log_network, f"[BROWSER] Opened URL: {url}")
 
+    def open_telemetry_window(self):
+        """Spawns the live speedometer HUD."""
+        NetworkTelemetryWindow(self, self)
+
     def build_ui(self):
         self.root_container = ttk.Frame(self)
         self.root_container.pack(fill=BOTH, expand=True)
@@ -549,7 +709,7 @@ class ServerHub(ttk.Window):
 
         ttk.Label(sidebar, text="NETWORK & ROUTING", font="-size 13 -weight bold", bootstyle=INFO).pack(pady=(0, 15), anchor=W)
 
-        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 Local API Engine ", padding=15)
+        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 Local Dual-API Engine ", padding=15)
         flask_frame.pack(fill=X, pady=5)
         
         self.btn_start_flask = ttk.Button(flask_frame, text="▶ Start Engine", bootstyle=SUCCESS, command=self.start_flask)
@@ -557,19 +717,19 @@ class ServerHub(ttk.Window):
         self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ Stop Engine", bootstyle=DANGER, state=DISABLED, command=self.stop_flask)
         self.btn_stop_flask.pack(fill=X, pady=3)
         
-        ttk.Label(flask_frame, text="Local Network QR:", font="-size 9 -weight bold", foreground="#888").pack(pady=(15, 5))
+        ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", font="-size 9 -weight bold", foreground="#888").pack(pady=(15, 5))
         self.lbl_flask_qr = ttk.Label(flask_frame)
         self.lbl_flask_qr.pack()
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
-        self.lbl_flask_link = ttk.Label(flask_frame, text="Server Offline", font="-size 9", foreground="gray", cursor="hand2")
+        self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font="-size 9", foreground="gray", cursor="hand2")
         self.lbl_flask_link.pack(pady=8)
-        self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.flask_url) if self.flask_thread else None)
+        self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.flask_https_thread else None)
         
         flask_btn_row = ttk.Frame(flask_frame)
         flask_btn_row.pack(fill=X, pady=(5, 5))
-        ttk.Button(flask_btn_row, text="Copy Link", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
-        ttk.Button(flask_btn_row, text="Browser", bootstyle="outline-info", command=lambda: self.open_browser(self.flask_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        ttk.Button(flask_btn_row, text="Copy HTTPS", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        ttk.Button(flask_btn_row, text="Copy HTTP", bootstyle="outline-info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
 
         cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=15)
         cf_frame.pack(fill=X, pady=20)
@@ -615,8 +775,11 @@ class ServerHub(ttk.Window):
         
         ttk.Label(header, text="TDE UP 2026 — COMMAND CENTER", font="-size 20 -weight bold", bootstyle=PRIMARY).pack(side=LEFT)
         
-        # 🛡️ FIX: Added Manual UI Refresh Button
-        ttk.Button(header, text="⟳ Refresh Data", bootstyle="outline-info", command=self.refresh_stats).pack(side=LEFT, padx=15)
+        # Action Buttons
+        actions_f = ttk.Frame(header)
+        actions_f.pack(side=LEFT, padx=20)
+        ttk.Button(actions_f, text="⟳ Refresh Data", bootstyle="outline-light", command=self.refresh_stats).pack(side=LEFT, padx=5)
+        ttk.Button(actions_f, text="🎛️ Network Speedometers", bootstyle="outline-info", command=self.open_telemetry_window).pack(side=LEFT, padx=5)
         
         status_frame = ttk.Frame(header)
         status_frame.pack(side=RIGHT)
@@ -637,11 +800,11 @@ class ServerHub(ttk.Window):
         row1.pack(fill=X, pady=(0, 25))
         self.stat_vars = {}
         
+        # Row 1: Fixed 4 clean elements. No Speedometer here!
         self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
         self._create_stat_card(row1, "KIOSK REGISTRATIONS", "0", INFO, "kiosk_reg")
+        self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
         self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
-        # 🛡️ FIX: Added the new Live API Latency Speedometer to the UI
-        self._create_stat_card(row1, "API SPEED (LATENCY)", "0 ms", SUCCESS, "api_latency")
 
         ttk.Label(content, text="📅 EVENT CHECK-IN METRICS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 10))
         row2 = ttk.Frame(content)
@@ -707,9 +870,13 @@ class ServerHub(ttk.Window):
         return log_box
 
     def update_qr(self, label, data):
-        img = generate_qr_image(data, size=160)
-        label.configure(image=img)
-        label.image = img
+        qr = qrcode.QRCode(version=1, box_size=10, border=2)
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        img_tk = ImageTk.PhotoImage(img.resize((160, 160), Image.Resampling.LANCZOS))
+        label.configure(image=img_tk)
+        label.image = img_tk
 
     def toggle_test_mode(self):
         global SERVER_TEST_MODE
@@ -731,20 +898,12 @@ class ServerHub(ttk.Window):
         self.refresh_stats()
 
     def refresh_stats(self):
-        global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES, API_LATENCY_HISTORY
+        global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES
         
         current_time = time.time()
         active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < 15]
         
         self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
-        
-        # Calculate speed average
-        if API_LATENCY_HISTORY:
-            avg_ms = sum(API_LATENCY_HISTORY) / len(API_LATENCY_HISTORY)
-            color_style = SUCCESS if avg_ms < 200 else (WARNING if avg_ms < 500 else DANGER)
-            self.stat_vars["api_latency"].configure(text=f"{int(avg_ms)} ms", bootstyle=color_style)
-        else:
-            self.stat_vars["api_latency"].configure(text="0 ms", bootstyle=SUCCESS)
         
         device_strings = []
         for ip in active_ips:
@@ -763,8 +922,6 @@ class ServerHub(ttk.Window):
         if not self.SessionMySQL: return
         
         mysql_session = self.SessionMySQL()
-        sqlite_session = self.SessionSQLite() if self.SessionSQLite else None
-        
         try:
             total_mysql = mysql_session.query(Attendee).count()
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
@@ -775,14 +932,10 @@ class ServerHub(ttk.Window):
             
             today_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now().strftime('%Y-%m-%d')
             
-            if today_str == "2026-08-30": 
-                chk_today = chk_30
-            elif today_str == "2026-08-31": 
-                chk_today = chk_31
-            elif today_str == "2026-09-01": 
-                chk_today = chk_01
-            else:
-                chk_today = 0
+            if today_str == "2026-08-30": chk_today = chk_30
+            elif today_str == "2026-08-31": chk_today = chk_31
+            elif today_str == "2026-09-01": chk_today = chk_01
+            else: chk_today = 0
 
             total_checkins = chk_30 + chk_31 + chk_01
 
@@ -798,25 +951,28 @@ class ServerHub(ttk.Window):
             logging.error(f"Stat refresh failed: {e}")
         finally:
             mysql_session.close()
-            if sqlite_session: sqlite_session.close()
             
-        self.after(5000, self.refresh_stats)
+        self.after(4000, self.refresh_stats)
 
     def start_flask(self):
         self.btn_start_flask.configure(state=DISABLED)
         self.btn_stop_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=NORMAL)
-        self.flask_url = f"http://{self.local_ip}:{FLASK_PORT}" # 🛡️ FIX: Provide non-SSL link for strict local networks as fallback
         
-        # Display both secure and local HTTP routes
-        secure_url = f"https://{self.local_ip}:{FLASK_PORT}"
-        self.update_qr(self.lbl_flask_qr, secure_url)
-        self.lbl_flask_link.configure(text=secure_url, foreground="#4D9CE6")
+        # 🛡️ PERFORMANCE FIX: Start Dual Servers
+        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting Dual API Engine...")
         
-        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting secure HTTPS API Engine...")
-        self.flask_thread = FlaskServerThread(app, '0.0.0.0', FLASK_PORT)
-        self.flask_thread.start()
-        self._append_log(self.log_flask, f"[SYSTEM] Engine listening natively on {secure_url} (or {self.flask_url} without SSL)")
+        self.flask_http_thread = HttpFlaskThread(app, '0.0.0.0', HTTP_PORT)
+        self.flask_http_thread.start()
+        
+        self.flask_https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
+        self.flask_https_thread.start()
+
+        self.update_qr(self.lbl_flask_qr, self.https_url)
+        self.lbl_flask_link.configure(text=self.https_url, foreground="#4D9CE6")
+        
+        self._append_log(self.log_flask, f"[SYSTEM] High-Speed HTTP engine listening on: {self.http_url}")
+        self._append_log(self.log_flask, f"[SYSTEM] iOS Secure HTTPS engine listening on: {self.https_url}")
         
     def stop_flask(self):
         if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
@@ -825,11 +981,18 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.configure(state=DISABLED)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
-        if self.flask_thread:
-            self.flask_thread.shutdown()
-            self.flask_thread.join()
-            self.flask_thread = None
-        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] API Engine terminated gracefully.")
+        
+        if self.flask_http_thread:
+            self.flask_http_thread.shutdown()
+            self.flask_http_thread.join()
+            self.flask_http_thread = None
+            
+        if self.flask_https_thread:
+            self.flask_https_thread.shutdown()
+            self.flask_https_thread.join()
+            self.flask_https_thread = None
+            
+        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Dual API Engine terminated gracefully.")
 
     def start_cf(self):
         self.btn_start_cf.configure(state=DISABLED)
@@ -839,7 +1002,8 @@ class ServerHub(ttk.Window):
 
         def _run_cf():
             try:
-                cmd = ["cloudflared", "tunnel", "--url", f"https://127.0.0.1:{FLASK_PORT}", "--no-tls-verify"]
+                # 🛡️ FIX: Tunnel connects to HTTP port 5000. Extremely fast, zero double-SSL overhead!
+                cmd = ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{HTTP_PORT}", "--no-tls-verify"]
                 creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 
                 self.cf_process = subprocess.Popen(
