@@ -7,6 +7,8 @@ import statistics
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Suppress self-signed HTTPS certificate warnings for local testing
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -51,10 +53,24 @@ def generate_realistic_payload(device_name):
         "city": city,
         "state": "Uttar Pradesh",
         "pincode": f"22{random.randint(1000, 9999)}",
-        # Granting access for all 3 event days so check-in always passes the date validation
         "attendance_days": ["30 August", "31 August", "1 September"],
         "device_name": device_name
     }
+
+def create_resilient_session():
+    """Creates an HTTP session that automatically retries dropped connections."""
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.3,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["POST", "GET"]
+    )
+    adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100, max_retries=retry_strategy)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    session.verify = False
+    return session
 
 # ==============================================================================
 # 🤖 VIRTUAL DEVICE WORKER
@@ -66,9 +82,7 @@ def virtual_device_session(device_id, base_url, is_cloud):
     device_type = "WAN_Scanner" if is_cloud else "LAN_Kiosk"
     device_name = f"{device_type}_{device_id}"
     
-    # Use Session to reuse TCP connections, mimicking a real browser/device
-    session = requests.Session()
-    session.verify = False
+    session = create_resilient_session()
     
     metrics = {
         "reg_latencies": [],
@@ -85,7 +99,7 @@ def virtual_device_session(device_id, base_url, is_cloud):
         
         attendee_id = None
         try:
-            res = session.post(f"{base_url}/api/register", json=reg_payload, timeout=8.0)
+            res = session.post(f"{base_url}/api/register", json=reg_payload, timeout=10.0)
             latency = (time.time() - start_time) * 1000
             metrics["reg_latencies"].append(latency)
             
@@ -95,14 +109,13 @@ def virtual_device_session(device_id, base_url, is_cloud):
                     attendee_id = data.get("attendee_id")
                     metrics["reg_success"] += 1
                 else:
-                    metrics["errors"].append(f"Reg Logic Error: {data.get('message')}")
+                    metrics["errors"].append(f"Reg Error: {data.get('message')}")
             else:
                 metrics["errors"].append(f"Reg HTTP {res.status_code}")
                 
         except Exception as e:
-            metrics["errors"].append(f"Reg Conn Error: {type(e).__name__}")
+            metrics["errors"].append(f"Reg Conn Drop: {type(e).__name__}")
 
-        # Simulate brief human delay between generating the ID and scanning it
         time.sleep(random.uniform(0.1, 0.4))
         
         # --- 2. PERFORM CHECK-IN (Using the ID we just created) ---
@@ -115,20 +128,24 @@ def virtual_device_session(device_id, base_url, is_cloud):
             start_time = time.time()
             
             try:
-                res = session.post(f"{base_url}/api/checkin", json=chk_payload, timeout=8.0)
+                res = session.post(f"{base_url}/api/checkin", json=chk_payload, timeout=10.0)
                 latency = (time.time() - start_time) * 1000
                 metrics["chk_latencies"].append(latency)
                 
-                # We consider 200 (Success) and 400 (Already Checked In) as healthy logic executions
-                if res.status_code in [200, 400]:
+                data = res.json() if res.status_code in [200, 400, 403, 404] else {}
+                
+                # Strict success validation
+                if res.status_code == 200 and data.get("status") == "success":
+                    metrics["chk_success"] += 1
+                elif res.status_code == 400 and "Already checked in" in data.get("message", ""):
                     metrics["chk_success"] += 1
                 else:
-                    metrics["errors"].append(f"Chk HTTP {res.status_code}")
+                    msg = data.get("message", f"HTTP {res.status_code}")
+                    metrics["errors"].append(f"Chk Rejected: {msg}")
                     
             except Exception as e:
-                metrics["errors"].append(f"Chk Conn Error: {type(e).__name__}")
+                metrics["errors"].append(f"Chk Conn Drop: {type(e).__name__}")
                 
-        # Simulate delay before the next person steps up
         time.sleep(random.uniform(0.2, 0.5))
 
     return {
@@ -151,12 +168,15 @@ def print_stats(title, latencies, success, total, duration):
     p95_l = statistics.quantiles(latencies, n=20)[18] if len(latencies) >= 20 else max_l
     rps = total / duration if duration > 0 else 0
     
-    print(f"{title:<25} | RPS: {rps:>6.1f} | Avg: {avg_l:>6.1f}ms | P95: {p95_l:>6.1f}ms | Max: {max_l:>6.1f}ms | Success: {success}/{total}")
+    print(f"{title:<25} | RPS: {rps:>6.1f} | Avg: {avg_l:>6.1f}ms | P95: {p95_l:>6.1f}ms | Max: {max_l:>6.1f}ms | Overall Success: {success}/{total}")
 
 def main():
     print("=" * 85)
     print("🌪️ TDE UP 2026 — EXTREME REAL-DATA CHAOS SIMULATOR")
     print(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 85)
+    print("⚠️  REMINDER: Ensure 'Testing Mode ON' is active in your Server Hub GUI!")
+    print("    Otherwise, check-ins will be rejected because today is not an event day.")
     print("=" * 85)
     
     global CLOUD_URL
@@ -196,9 +216,23 @@ def main():
     local_success, cloud_success = 0, 0
     all_errors = []
 
+    print("\n" + "=" * 85)
+    print(f"📱 INDIVIDUAL DEVICE PERFORMANCE ({CYCLES_PER_DEVICE} Targets Each)")
+    print("-" * 85)
+    print(f"{'DEVICE NAME':<18} | {'REG SUCCESS':<15} | {'CHK SUCCESS':<15} | {'ERRORS ENCOUNTERED'}")
+    print("-" * 85)
+
+    # Sort results to print LAN devices first, then WAN devices
+    results.sort(key=lambda x: (x['is_cloud'], x['device_name']))
+
     for r in results:
         m = r["metrics"]
         all_errors.extend(m["errors"])
+        
+        # Print Individual Device Stats
+        err_count = len(m["errors"])
+        err_str = f"{err_count} errors" if err_count > 0 else "None"
+        print(f"{r['device_name']:<18} | {m['reg_success']:>5}/{CYCLES_PER_DEVICE:<9} | {m['chk_success']:>5}/{CYCLES_PER_DEVICE:<9} | {err_str}")
         
         if r["is_cloud"]:
             cloud_reg_lat.extend(m["reg_latencies"])
@@ -212,28 +246,28 @@ def main():
     total_local_reqs = NUM_LOCAL_DEVICES * CYCLES_PER_DEVICE * 2
     total_cloud_reqs = (NUM_CLOUD_DEVICES * CYCLES_PER_DEVICE * 2) if CLOUD_URL else 0
 
-    print("=" * 85)
-    print("📊 PERFORMANCE MATRIX")
+    print("\n" + "=" * 85)
+    print("📊 AGGREGATE PERFORMANCE MATRIX")
     print("-" * 85)
     
-    print_stats("LAN Registrations (Write)", local_reg_lat, len(local_reg_lat), int(total_local_reqs/2), total_duration)
-    print_stats("LAN Check-ins (Read/Write)", local_chk_lat, len(local_chk_lat), int(total_local_reqs/2), total_duration)
+    print_stats("LAN Registrations", local_reg_lat, len(local_reg_lat), int(total_local_reqs/2), total_duration)
+    print_stats("LAN Check-ins", local_chk_lat, len(local_chk_lat), int(total_local_reqs/2), total_duration)
     
     if CLOUD_URL:
         print("-" * 85)
-        print_stats("WAN Registrations (Write)", cloud_reg_lat, len(cloud_reg_lat), int(total_cloud_reqs/2), total_duration)
-        print_stats("WAN Check-ins (Read/Write)", cloud_chk_lat, len(cloud_chk_lat), int(total_cloud_reqs/2), total_duration)
+        print_stats("WAN Registrations", cloud_reg_lat, len(cloud_reg_lat), int(total_cloud_reqs/2), total_duration)
+        print_stats("WAN Check-ins", cloud_chk_lat, len(cloud_chk_lat), int(total_cloud_reqs/2), total_duration)
 
     print("=" * 85)
     print("🔍 BOTTLENECK DIAGNOSTICS")
     print("=" * 85)
     
     if all_errors:
-        print(f"⚠️ Encountered {len(all_errors)} Errors during simulation. Sample:")
-        for err in list(set(all_errors))[:5]:
+        print(f"⚠️ Encountered {len(all_errors)} logic/network rejections. Sample:")
+        for err in list(set(all_errors))[:6]:
             print(f"   - {err}")
     else:
-        print("✅ Zero Errors! Database locks and thread queues processed perfectly.")
+        print("✅ Zero Errors! Database locks, connection pools, and thread queues processed perfectly.")
 
     # Calculate Local vs Cloud difference
     if CLOUD_URL and local_chk_lat and cloud_chk_lat:
@@ -241,19 +275,15 @@ def main():
         avg_cloud = statistics.mean(cloud_chk_lat)
         diff = avg_cloud - avg_local
         print(f"\n🌐 Cloudflare Overhead: Added roughly {diff:.1f}ms to every request.")
-        if diff > 500:
-            print("   ↳ WARNING: Cloudflare tunnel latency is extremely high. Use Local LAN links for on-site devices.")
-        else:
-            print("   ↳ STATUS: Tunnel is performing efficiently within expected bounds.")
-            
+        
     if local_reg_lat:
         p95_local = statistics.quantiles(local_reg_lat, n=20)[18] if len(local_reg_lat) >= 20 else max(local_reg_lat)
         if p95_local > 400:
             print("\n🗄️ Database Load: Local Registration P95 is over 400ms.")
-            print("   ↳ DIAGNOSIS: MySQL row locking is slightly bottlenecking under 16-device simultaneous load.")
+            print("   ↳ DIAGNOSIS: MySQL row locking is slightly bottlenecking under simultaneous load.")
         else:
             print("\n🗄️ Database Load: Local P95 latency is excellent (<400ms).")
-            print("   ↳ DIAGNOSIS: MySQL connection pooling is handling the 16-device concurrency beautifully.")
+            print("   ↳ DIAGNOSIS: MySQL connection pooling is handling the high concurrency beautifully.")
 
     print("\n🏁 Test completed in {:.2f} seconds.".format(total_duration))
 

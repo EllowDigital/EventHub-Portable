@@ -1,1 +1,1 @@
-local_modified and device_name is not resent in supabase
+Powershell Command to allow port through fireall : New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001
