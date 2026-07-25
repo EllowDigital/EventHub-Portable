@@ -57,7 +57,6 @@ PULL_COMMIT_BATCH_SIZE = 250
 # ==============================================================================
 def _build_portal_key_map():
     """
-    🛡️ FIX: Enforces strict Next.js portal key formatting.
     Transforms ALL date variables (e.g. "2026-08-30", "30 aug") back into 
     the EXACT requested human-readable keys: "30 August"
     """
@@ -370,7 +369,6 @@ class SyncManager:
         local_record.pincode = cloud_data.get('pincode') or local_record.pincode
         local_record.photo_url = cloud_data.get('photo_url') or local_record.photo_url
         
-        # Bring down the sheet sync state 
         local_record.needs_sheet_sync = cloud_data.get('needs_sheet_sync', local_record.needs_sheet_sync)
         if hasattr(local_record, 'needs_local_sync'):
             local_record.needs_local_sync = False
@@ -397,8 +395,8 @@ class SyncManager:
             "attendance_days": _coerce_list(record.attendance_days),
             "photo_url": record.photo_url,
             "checkin_history": _coerce_dict(record.checkin_history),
-            "needs_sheet_sync": getattr(record, 'needs_sheet_sync', True), # Ensure Cloud updates Sheets
-            "needs_local_sync": False, # Prevent cloud from bouncing it back
+            "needs_sheet_sync": getattr(record, 'needs_sheet_sync', True),
+            "needs_local_sync": False, 
             "needs_cloud_sync": False,
             "created_at": record.created_at.isoformat() if record.created_at else datetime.now(timezone.utc).isoformat(),
             "updated_at": record.updated_at.isoformat() if record.updated_at else datetime.now(timezone.utc).isoformat(),
@@ -625,7 +623,6 @@ class SyncManager:
                         outcome = self._apply_one_cloud_record(session, cloud_data)
                         if outcome == "pulled":
                             pulled += 1
-                            # 🛡️ Track IDs that came from the web portal needing sync
                             if cloud_data.get('needs_local_sync'):
                                 pulled_ids_to_clear.append(cloud_data['id'])
                         elif outcome == "conflict":
@@ -641,7 +638,6 @@ class SyncManager:
             finally:
                 session.close()
 
-        # 🛡️ Send clearance update back to Supabase so the admin dashboard knows it's downloaded
         if pulled_ids_to_clear:
             try:
                 for i in range(0, len(pulled_ids_to_clear), 200):
@@ -707,7 +703,6 @@ class SyncManager:
                 local_record.checkin_history, cloud_data.get('checkin_history', {})
             )
             
-            # 🛡️ FIX: Mark updated during pull so it persists back to local DB cleanly
             flag_modified(local_record, "checkin_history")
 
             if local_record.needs_cloud_sync:
@@ -825,6 +820,9 @@ class SyncManager:
         return resolved
 
     def get_dashboard_stats(self):
+        """
+        🛡️ OPTIMIZED: Uses rapid SQL queries to prevent CPU lockups during live polling.
+        """
         empty = {
             "mysql_total": 0, "sqlite_total": 0, "pending_push": 0, "kiosk_reg": 0,
             "conflict_count": len(self.conflicts), "checked_in": 0,
@@ -834,32 +832,55 @@ class SyncManager:
 
         mysql_session = self.SessionMySQL()
         sqlite_session = self.SessionSQLite() if self.SessionSQLite else None
+        
         try:
-            attendees = mysql_session.query(Attendee).all()
-            kiosk_regs = mysql_session.query(OfflineKioskAttendee).all()
-            all_records = attendees + kiosk_regs
+            # 1. Base counts
+            total_att = mysql_session.query(Attendee).count()
+            kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
+            
+            # 2. Pending Pushes
+            pending_main = mysql_session.query(Attendee).filter_by(needs_cloud_sync=True).count()
+            pending_kiosk = mysql_session.query(OfflineKioskAttendee).filter_by(needs_cloud_sync=True).count()
+            pending_push = pending_main + pending_kiosk
 
-            pending_push = 0
-            checked_in = 0
-            day_counts = {d: 0 for d in EVENT_DAYS}
-
-            for att in all_records:
-                if att.needs_cloud_sync: pending_push += 1
-                history = _coerce_dict(att.checkin_history)
-                if history:
-                    checked_in += 1
-                    seen_days = {_canonical_day_key(k) for k in history.keys()}
-                    for day in EVENT_DAYS:
-                        if day in seen_days: day_counts[day] += 1
-
+            # 3. SQLite total backup
             total_sqlite = 0
             if sqlite_session:
                 total_sqlite = sqlite_session.query(Attendee).count() + sqlite_session.query(OfflineKioskAttendee).count()
 
+            # 4. Check-in Day Counts
+            day_counts = {d: 0 for d in EVENT_DAYS}
+            checked_in = 0
+            
+            # Create a reverse map to match human readable JSON text ("30 August") to ISO output format
+            portal_to_iso = {}
+            for iso_day in EVENT_DAYS:
+                dt = datetime.strptime(iso_day, "%Y-%m-%d")
+                portal_to_iso[f"{dt.day} {dt.strftime('%B')}"] = iso_day
+
+            # Use rapid SQL LIKE queries
+            for human_date, iso_date in portal_to_iso.items():
+                c_main = mysql_session.query(Attendee).filter(
+                    (Attendee.checkin_history.like(f'%"{human_date}"%')) | 
+                    (Attendee.checkin_history.like(f'%"{iso_date}"%'))
+                ).count()
+                
+                c_kiosk = mysql_session.query(OfflineKioskAttendee).filter(
+                    (OfflineKioskAttendee.checkin_history.like(f'%"{human_date}"%')) |
+                    (OfflineKioskAttendee.checkin_history.like(f'%"{iso_date}"%'))
+                ).count()
+                
+                day_sum = c_main + c_kiosk
+                day_counts[iso_date] = day_sum
+                checked_in += day_sum
+
             return {
-                "mysql_total": len(attendees), "sqlite_total": total_sqlite,
-                "pending_push": pending_push, "kiosk_reg": len(kiosk_regs),
-                "conflict_count": len(self.conflicts), "checked_in": checked_in,
+                "mysql_total": total_att, 
+                "sqlite_total": total_sqlite,
+                "pending_push": pending_push, 
+                "kiosk_reg": kiosk_regs,
+                "conflict_count": len(self.conflicts), 
+                "checked_in": checked_in,
                 "day_counts": day_counts,
             }
         except Exception as e:
@@ -1090,9 +1111,10 @@ class SyncDashboard(ttk.Window):
         self.refresh_stats()
 
     def _schedule_periodic_refresh(self):
+        """🛡️ 3-SECOND AUTO-UPDATE LIVE POLLING"""
         if not self.is_syncing:
             self.refresh_stats()
-        self.after(30000, self._schedule_periodic_refresh)
+        self.after(3000, self._schedule_periodic_refresh)
 
     def build_ui(self):
         main_paned = ttk.Panedwindow(self, orient=HORIZONTAL)
@@ -1106,6 +1128,10 @@ class SyncDashboard(ttk.Window):
         header_row = ttk.Frame(content)
         header_row.pack(fill=X, pady=(0, 4))
         ttk.Label(header_row, text="Sync Dashboard", font="-size 19 -weight bold").pack(side=LEFT, anchor=W)
+        
+        # 🛡️ FIX: Added Manual Refresh Data button right in the header for visibility!
+        ttk.Button(header_row, text="⟳ Refresh Data", bootstyle="outline-info", command=self.refresh_stats).pack(side=RIGHT)
+        
         ttk.Label(content, text="TENT DECOR EXPO UP 2026", font="-size 10", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 20))
 
         self.stat_vars = {}
