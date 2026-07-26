@@ -10,8 +10,9 @@ import re
 import time
 import uuid
 import queue
+import ipaddress
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -21,18 +22,47 @@ from PIL import Image, ImageTk
 import webbrowser
 
 from flask import Flask, render_template, request, jsonify, Response
-from waitress import create_server  # 🚀 Waitress WSGI Engine for 20+ Concurrency
+from waitress import create_server  # 🚀 Waitress WSGI Engine (plain-HTTP port 5000 only)
+
+# 🔒 Cheroot WSGI Engine — real production server, replaces the old werkzeug
+# ad-hoc HTTPS server. Pure Python (no compiler needed, same portability
+# story as PyMySQL), with NATIVE SSL support and a real thread pool + connection
+# backlog — both of which werkzeug's dev server lacked. That gap is what capped
+# concurrent HTTPS devices at ~2.
+try:
+    from cheroot import wsgi as cheroot_wsgi
+    from cheroot.ssl.builtin import BuiltinSSLAdapter
+except ImportError:
+    cheroot_wsgi = None
+    BuiltinSSLAdapter = None
+
+# Generates a persistent, LAN-IP-aware self-signed certificate once instead of
+# a throwaway one on every start (werkzeug's ssl_context='adhoc' regenerated a
+# new cert every run, forcing every device to re-accept the "insecure site"
+# browser warning after every restart).
+try:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    CRYPTOGRAPHY_AVAILABLE = True
+except ImportError:
+    CRYPTOGRAPHY_AVAILABLE = False
 
 # 🛡️ Force SQLAlchemy to detect JSON column updates
 from sqlalchemy.orm.attributes import flag_modified
 
-# Windows DPI Awareness for crisp text
+# Windows DPI Awareness & Anti-Sleep Mode
 if platform.system() == "Windows":
     try:
         from ctypes import windll
+        # 1. Make text crisp on high-res displays
         windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass
+        # 2. Prevent Windows from going to sleep while server is running
+        # 0x80000000 (ES_CONTINUOUS) | 0x00000001 (ES_SYSTEM_REQUIRED)
+        windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+    except Exception as e:
+        print(f"Windows specific configuration failed: {e}")
 
 # Import models dynamically based on context
 try:
@@ -49,6 +79,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 HTTP_PORT = 5000   # Fast, unencrypted Local LAN traffic & Cloudflare tunnel target
 HTTPS_PORT = 5001  # Secure Local LAN traffic (allows iOS Camera Access natively)
+CERT_DIR = os.path.join(BASE_DIR, 'config', 'certs')
 
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
@@ -60,6 +91,11 @@ SERVER_TEST_DATE = "2026-08-30"
 
 ACTIVE_DEVICES = {}
 SCAN_CLIENTS = []  
+
+# 📱 Single source of truth for "is this device still connected?" — used by both
+# the GUI panel and the /api/network-data endpoint (previously 15s in one place
+# and 30s in the other, which made the two views disagree with each other).
+DEVICE_ONLINE_WINDOW = 20  # seconds since last heartbeat before a device is considered offline
 
 # 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion
 DB_SESSIONS_CACHE = None
@@ -77,6 +113,79 @@ NETWORK_LATENCY = {
     "local_status": "OFFLINE",
     "cloud_status": "OFFLINE"
 }
+
+# ==============================================================================
+# 🔒 PERSISTENT SSL CERTIFICATE (replaces werkzeug's ssl_context='adhoc')
+# ==============================================================================
+def _write_self_signed_cert(cert_path, key_path, local_ip):
+    """Generates one RSA key + self-signed cert covering localhost, 127.0.0.1,
+    and the current LAN IP, valid ~2 years."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TDE-EventHub-Local")])
+
+    san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+    try:
+        san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
+    except ValueError:
+        pass
+
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=730))
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+
+    with open(key_path, "wb") as f:
+        f.write(key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+
+def ensure_ssl_certificate(local_ip):
+    """Reuses the existing HTTPS certificate if it already covers this LAN IP,
+    otherwise (first run, or the IP changed because the laptop is on a new
+    network/venue) generates a fresh one. Reusing the same cert across restarts
+    means operators/devices that already clicked through the browser's
+    "insecure site" warning once won't be prompted again."""
+    if not CRYPTOGRAPHY_AVAILABLE:
+        raise RuntimeError(
+            "The 'cryptography' package is required to generate the HTTPS certificate. "
+            "Install it with:  pip install cryptography"
+        )
+
+    os.makedirs(CERT_DIR, exist_ok=True)
+    cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
+    key_path = os.path.join(CERT_DIR, 'hub_key.pem')
+    ip_marker_path = os.path.join(CERT_DIR, 'hub_cert_ip.txt')
+
+    reuse_existing = False
+    if os.path.exists(cert_path) and os.path.exists(key_path) and os.path.exists(ip_marker_path):
+        try:
+            with open(ip_marker_path, 'r') as f:
+                reuse_existing = f.read().strip() == local_ip
+        except Exception:
+            reuse_existing = False
+
+    if not reuse_existing:
+        print(f"[SSL] Generating new HTTPS certificate for {local_ip} (first run, or IP changed)...")
+        _write_self_signed_cert(cert_path, key_path, local_ip)
+        with open(ip_marker_path, 'w') as f:
+            f.write(local_ip)
+    else:
+        print(f"[SSL] Reusing existing HTTPS certificate for {local_ip}.")
+
+    return cert_path, key_path
 
 # ==============================================================================
 # FLASK MIDDLEWARE & EVENT BROADCASTER
@@ -369,7 +478,7 @@ def get_network_data():
     current_time = time.time()
     active_devices = {}
     for ip, data in list(ACTIVE_DEVICES.items()):
-        if current_time - data['last_seen'] < 30: active_devices[ip] = data
+        if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: active_devices[ip] = data
         else: del ACTIVE_DEVICES[ip]
 
     sessions = get_cached_sessions()
@@ -413,16 +522,42 @@ class WaitressHttpThread(threading.Thread):
         self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
-    """Runs Adhoc HTTPS strictly for local iOS devices requiring camera permissions"""
-    def __init__(self, app, host, port):
+    """Runs a real production HTTPS server (cheroot) for mobile browsers that need
+    a secure context for native camera access (QR/barcode scanning).
+
+    This replaces werkzeug's ssl_context='adhoc' dev server, which could only
+    reliably hold ~2 concurrent TLS connections before refusing/hanging on the
+    rest. Cheroot uses a real thread pool (same threading model as the Waitress
+    engine above — no exotic event-loop mixing) with a proper connection
+    backlog, so 20+ simultaneous phones connecting at once is no problem. It
+    also reuses the SAME persistent certificate across restarts instead of a
+    new one every time.
+    """
+    def __init__(self, app, host, port, numthreads=60):
         super().__init__()
-        from werkzeug.serving import make_server
-        self.server = make_server(host, port, app, threaded=True, ssl_context='adhoc')
+        if cheroot_wsgi is None:
+            raise RuntimeError(
+                "The 'cheroot' package is required for the HTTPS engine. "
+                "Install it with:  pip install cheroot"
+            )
+
+        cert_path, key_path = ensure_ssl_certificate(get_local_ip())
+
         self.ctx = app.app_context()
         self.ctx.push()
+        self.server = cheroot_wsgi.Server(
+            bind_addr=(host, port),
+            wsgi_app=app,
+            numthreads=numthreads,      # real thread pool -> handles 20+ devices concurrently
+            request_queue_size=128,     # OS-level backlog (werkzeug's default here was only 5)
+        )
+        self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
 
-    def run(self): self.server.serve_forever()
-    def shutdown(self): self.server.shutdown()
+    def run(self):
+        self.server.start()
+
+    def shutdown(self):
+        self.server.stop()
 
 def get_local_ip():
     try:
@@ -550,7 +685,14 @@ class ServerHub(ttk.Window):
 
     def network_ping_daemon(self):
         global NETWORK_LATENCY
+        
+        # Add a fake User-Agent so Cloudflare doesn't block the ping as a bot
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
         while True:
+            # --- Local Ping ---
             start_local = time.time()
             try:
                 requests.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
@@ -560,10 +702,12 @@ class ServerHub(ttk.Window):
                 NETWORK_LATENCY["local_ms"] = 0
                 NETWORK_LATENCY["local_status"] = "OFFLINE"
 
+            # --- Cloudflare Ping ---
             if self.cloudflare_url and self.cloudflare_url != "Offline":
                 start_cf = time.time()
                 try:
-                    requests.get(f"{self.cloudflare_url}/api/status", timeout=4, verify=False)
+                    # Added headers and increased timeout to 7 seconds
+                    requests.get(f"{self.cloudflare_url}/api/status", headers=headers, timeout=7, verify=False)
                     NETWORK_LATENCY["cloud_ms"] = int((time.time() - start_cf) * 1000)
                     NETWORK_LATENCY["cloud_status"] = "ONLINE"
                 except:
@@ -574,7 +718,7 @@ class ServerHub(ttk.Window):
                 NETWORK_LATENCY["cloud_status"] = "OFFLINE"
 
             time.sleep(1.5)
-
+            
     def process_gui_queue(self):
         while not self.gui_queue.empty():
             try:
@@ -720,8 +864,27 @@ class ServerHub(ttk.Window):
         self.lbl_stat_mysql.pack(side=LEFT, padx=10)
 
         ttk.Label(content, text="📡 ACTIVE CONNECTED DEVICES", font="-size 11 -weight bold", bootstyle=INFO).pack(anchor=W, pady=(5, 5))
-        self.lbl_devices = ttk.Label(content, text="Awaiting connections...", font=("Consolas", 11), bootstyle=SUCCESS)
-        self.lbl_devices.pack(anchor=W, pady=(0, 20))
+        devices_frame = ttk.Frame(content, borderwidth=1, relief="solid", bootstyle="dark")
+        devices_frame.pack(fill=X, pady=(0, 20))
+
+        self.tree_devices = ttk.Treeview(
+            devices_frame,
+            columns=("name", "ip", "last_seen", "status"),
+            show="headings",
+            height=6,
+            bootstyle=INFO,
+        )
+        self.tree_devices.heading("name", text="Device Name")
+        self.tree_devices.heading("ip", text="IP Address")
+        self.tree_devices.heading("last_seen", text="Last Seen")
+        self.tree_devices.heading("status", text="Status")
+        self.tree_devices.column("name", width=300, anchor=W)
+        self.tree_devices.column("ip", width=150, anchor=W)
+        self.tree_devices.column("last_seen", width=120, anchor=CENTER)
+        self.tree_devices.column("status", width=110, anchor=CENTER)
+        self.tree_devices.pack(fill=X, padx=2, pady=2)
+        self.tree_devices.tag_configure("online", foreground="#3fd66f")
+        self.tree_devices.tag_configure("empty", foreground="#888")
 
         ttk.Label(content, text="🗄️ DATABASE TELEMETRY", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 10))
         row1 = ttk.Frame(content)
@@ -806,17 +969,21 @@ class ServerHub(ttk.Window):
     def refresh_stats(self):
         global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES
         current_time = time.time()
-        active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < 15]
+        active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
         
         self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
-        
-        device_strings = []
-        for ip in active_ips:
-            name_str = ACTIVE_DEVICES[ip]['name']
-            device_strings.append(f"📱 {name_str} ({ip})")
-            
-        if device_strings: self.lbl_devices.configure(text="  |  ".join(device_strings), bootstyle=SUCCESS)
-        else: self.lbl_devices.configure(text="No external devices connected. Awaiting connections...", bootstyle=WARNING)
+
+        for row in self.tree_devices.get_children():
+            self.tree_devices.delete(row)
+
+        if active_ips:
+            sorted_ips = sorted(active_ips, key=lambda ip: ACTIVE_DEVICES[ip]['name'].lower())
+            for ip in sorted_ips:
+                name = ACTIVE_DEVICES[ip]['name']
+                seconds_ago = int(current_time - ACTIVE_DEVICES[ip]['last_seen'])
+                self.tree_devices.insert("", END, values=(name, ip, f"{seconds_ago}s ago", "🟢 Online"), tags=("online",))
+        else:
+            self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
 
         if self.SessionMySQL: self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
         else: self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
@@ -910,10 +1077,20 @@ class ServerHub(ttk.Window):
 
         def _run_cf():
             try:
-                cmd = ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{HTTP_PORT}", "--no-tls-verify"]
+                cmd = [
+                    "cloudflared", "tunnel", 
+                    "--url", f"http://127.0.0.1:{HTTP_PORT}", 
+                    "--http-host-header", "localhost",  # 👈 ADD THIS LINE
+                    "--no-tls-verify"
+                ]
                 creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 self.cf_process = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=creationflags
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,  # 👈 Force line-by-line unbuffered streaming
+                    creationflags=creationflags
                 )
 
                 url_found = False
@@ -930,8 +1107,9 @@ class ServerHub(ttk.Window):
                             url_found = True
                             
                             # 🛡️ FIX: Give Cloudflare's global edge 3 seconds to propagate DNS
-                            self._append_log(self.log_cf, "[INFO] Waiting 3 seconds for Cloudflare Edge DNS propagation...")
-                            time.sleep(3)
+                            # Give Cloudflare edge DNS slightly more time to propagate
+                            self._append_log(self.log_cf, "[INFO] Waiting 5 seconds for Cloudflare Edge DNS propagation...")
+                            time.sleep(5)
                             
                             # Update UI safely through thread queue
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))

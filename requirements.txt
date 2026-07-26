@@ -1,93 +1,24 @@
-# ==========================================================
-# EventHub Portable
-# Python Requirements
-# ==========================================================
-# Python Version : 3.14+
-# Purpose        : Offline Event Registration & Check-in Server
-# Database       : MySQL + SQLite
-# Framework      : Flask + Tkinter (ttkbootstrap)
-# ==========================================================
-
-
-# ==========================================================
-# GUI (Tkinter Modern UI)
-# ==========================================================
-
-# Pinned to avoid compatibility issues with ttkbootstrap v2.x
 ttkbootstrap==1.20.4
-
 Pillow>=11.0.0
-
-
-# ==========================================================
-# Web Server
-# Used by: server_hub.py
-# ==========================================================
 
 Flask>=3.1.0
 Flask-SocketIO>=5.5.0
 Werkzeug>=3.1.0
-
-
-# ==========================================================
-# Database
-# Used by: schema.py
-# ==========================================================
+cheroot
 
 SQLAlchemy>=2.0.40
 PyMySQL>=1.1.1
-
-# High-performance MySQL driver (recommended)
 mysqlclient>=2.2.7
-
-
-# ==========================================================
-# Cloud Sync
-# Used by: sync_manager.py
-# ==========================================================
 
 requests>=2.32.4
 supabase>=2.16.0
 cloudinary>=1.44.1
 
-
-# ==========================================================
-# QR Code & Camera
-# Used by: register.py, check_in.py
-# ==========================================================
-
 opencv-python>=4.12.0
 pyzbar>=0.1.9
 
-
-# ==========================================================
-# Configuration
-# ==========================================================
-
 python-dotenv>=1.1.1
 
-
-# ==========================================================
-# Optional Production Server
-# Uncomment if required
-# ==========================================================
-
-# eventlet>=0.40.0
-# gevent>=25.5.1
-# gevent-websocket>=0.10.1
-
-
-# ==========================================================
-# Notes
-# ==========================================================
-#
-# SQLite support is built into Python.
-#
-# SQLAlchemy automatically works with:
-#   - SQLite
-#   - MySQL (via PyMySQL or mysqlclient)
-#
-# mysqlclient is faster than PyMySQL.
-# Keep PyMySQL as a fallback if mysqlclient cannot be installed.
-#
-# ==========================================================
+indian-cities
+indian-states
+indiapins

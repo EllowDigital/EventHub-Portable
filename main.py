@@ -10,6 +10,9 @@ Single entry point for the whole offline kit. Double-click this file
   2. Open one dashboard with a button to silently launch each tool.
 """
 
+from ttkbootstrap.widgets.scrolled import ScrolledText
+from ttkbootstrap.constants import *
+import ttkbootstrap as ttk
 import os
 import sys
 import subprocess
@@ -51,7 +54,8 @@ def _bootstrap_first_run():
     print("=" * 64)
 
     if not os.path.isfile(REQUIREMENTS_FILE):
-        print(f"\nERROR: requirements.txt not found at:\n  {REQUIREMENTS_FILE}")
+        print(
+            f"\nERROR: requirements.txt not found at:\n  {REQUIREMENTS_FILE}")
         _pause()
         sys.exit(1)
 
@@ -61,7 +65,8 @@ def _bootstrap_first_run():
 
     if ret != 0:
         print("\nSomething went wrong installing dependencies (see above).")
-        print(f'Try running this manually:\n  "{sys.executable}" -m pip install -r requirements.txt')
+        print(
+            f'Try running this manually:\n  "{sys.executable}" -m pip install -r requirements.txt')
         _pause()
         sys.exit(1)
 
@@ -84,9 +89,6 @@ _bootstrap_first_run()
 # ==============================================================================
 # MAIN APPLICATION
 # ==============================================================================
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-from ttkbootstrap.widgets.scrolled import ScrolledText
 
 # ==============================================================================
 # TOOL REGISTRY
@@ -170,9 +172,10 @@ class LauncherApp(ttk.Window):
 
         title_frame = ttk.Frame(header)
         title_frame.pack(fill=X)
-        
-        ttk.Label(title_frame, text="EventHub Portable", font="-size 22 -weight bold").pack(side=LEFT)
-        
+
+        ttk.Label(title_frame, text="EventHub Portable",
+                  font="-size 22 -weight bold").pack(side=LEFT)
+
         # FIX: Removed the invalid size="sm" argument here
         ttk.Button(
             title_frame, text="⟳ Check Dependencies", bootstyle=(OUTLINE, INFO),
@@ -188,16 +191,20 @@ class LauncherApp(ttk.Window):
         status_frame = ttk.Frame(self, padding=(25, 0, 25, 15))
         status_frame.pack(fill=X)
 
-        self.lbl_python = ttk.Label(status_frame, text="Python: checking…", font="-size 9")
+        self.lbl_python = ttk.Label(
+            status_frame, text="Python: checking…", font="-size 9")
         self.lbl_python.pack(side=LEFT, padx=(0, 20))
 
-        self.lbl_deps = ttk.Label(status_frame, text="⏳ Dependencies: checking…", font="-size 9")
+        self.lbl_deps = ttk.Label(
+            status_frame, text="⏳ Dependencies: checking…", font="-size 9")
         self.lbl_deps.pack(side=LEFT, padx=(0, 20))
 
-        self.lbl_cloudflared = ttk.Label(status_frame, text="Cloudflared: checking…", font="-size 9")
+        self.lbl_cloudflared = ttk.Label(
+            status_frame, text="Cloudflared: checking…", font="-size 9")
         self.lbl_cloudflared.pack(side=LEFT, padx=(0, 20))
 
-        self.lbl_config = ttk.Label(status_frame, text="Config: checking…", font="-size 9")
+        self.lbl_config = ttk.Label(
+            status_frame, text="Config: checking…", font="-size 9")
         self.lbl_config.pack(side=LEFT)
 
         ttk.Separator(self).pack(fill=X, padx=25)
@@ -215,23 +222,23 @@ class LauncherApp(ttk.Window):
 
         # Left Actions (Folders)
         ttk.Button(
-            action_bar, text="📁 Project Root", bootstyle=(OUTLINE, SECONDARY), 
+            action_bar, text="📁 Project Root", bootstyle=(OUTLINE, SECONDARY),
             command=lambda: self.open_folder(ROOT_DIR)
         ).pack(side=LEFT, padx=(0, 10))
 
         ttk.Button(
-            action_bar, text="⚙️ Config Folder", bootstyle=(OUTLINE, SECONDARY), 
+            action_bar, text="⚙️ Config Folder", bootstyle=(OUTLINE, SECONDARY),
             command=lambda: self.open_folder(CONFIG_DIR)
         ).pack(side=LEFT)
 
         # Right Actions (Controls)
         ttk.Button(
-            action_bar, text="🛑 Stop All Tools", bootstyle=DANGER, 
+            action_bar, text="🛑 Stop All Tools", bootstyle=DANGER,
             command=self.stop_all_tools
         ).pack(side=RIGHT, padx=(10, 0))
 
         ttk.Button(
-            action_bar, text="🗑️ Clear Log", bootstyle=(OUTLINE, SECONDARY), 
+            action_bar, text="🗑️ Clear Log", bootstyle=(OUTLINE, SECONDARY),
             command=self.clear_log
         ).pack(side=RIGHT)
 
@@ -239,10 +246,11 @@ class LauncherApp(ttk.Window):
         log_frame = ttk.Labelframe(self, text="Activity Log", padding=10)
         log_frame.pack(fill=BOTH, expand=False, padx=25, pady=(5, 20))
 
-        self.log_box = ScrolledText(log_frame, height=8, autohide=True, wrap="word")
+        self.log_box = ScrolledText(
+            log_frame, height=8, autohide=True, wrap="word")
         self.log_box.pack(fill=BOTH, expand=True)
         self.log_box.text.configure(state="disabled", font=("Consolas", 9))
-        
+
         self.log("Launcher initialized. Ready.")
 
     def _build_tool_card(self, parent, tool):
@@ -318,18 +326,22 @@ class LauncherApp(ttk.Window):
                 text=f"Python: {py_version} (⚠ needs {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+)",
                 bootstyle=WARNING)
         else:
-            self.lbl_python.configure(text=f"Python: {py_version} ✓", bootstyle=SUCCESS)
+            self.lbl_python.configure(
+                text=f"Python: {py_version} ✓", bootstyle=SUCCESS)
 
         self._refresh_cloudflared_status()
         self._refresh_config_status()
 
         if not os.path.isfile(REQUIREMENTS_FILE):
-            self.lbl_deps.configure(text="✗ Dependencies: requirements.txt missing", bootstyle=DANGER)
+            self.lbl_deps.configure(
+                text="✗ Dependencies: requirements.txt missing", bootstyle=DANGER)
             self.log(f"requirements.txt not found at {REQUIREMENTS_FILE}")
             return
 
-        self.lbl_deps.configure(text="⏳ Dependencies: checking…", bootstyle=WARNING)
-        threading.Thread(target=self._install_requirements_thread, daemon=True).start()
+        self.lbl_deps.configure(
+            text="⏳ Dependencies: checking…", bootstyle=WARNING)
+        threading.Thread(
+            target=self._install_requirements_thread, daemon=True).start()
 
     def _install_requirements_thread(self):
         cmd = [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE,
@@ -353,15 +365,19 @@ class LauncherApp(ttk.Window):
 
     def _on_deps_done(self, success):
         if success:
-            self.lbl_deps.configure(text="Dependencies: OK ✓", bootstyle=SUCCESS)
+            self.lbl_deps.configure(
+                text="Dependencies: OK ✓", bootstyle=SUCCESS)
         else:
-            self.lbl_deps.configure(text="⚠ Dependencies: Error", bootstyle=DANGER)
+            self.lbl_deps.configure(
+                text="⚠ Dependencies: Error", bootstyle=DANGER)
 
     def _refresh_cloudflared_status(self):
         if shutil.which("cloudflared") is not None:
-            self.lbl_cloudflared.configure(text="Cloudflared: found ✓", bootstyle=SUCCESS)
+            self.lbl_cloudflared.configure(
+                text="Cloudflared: found ✓", bootstyle=SUCCESS)
         else:
-            self.lbl_cloudflared.configure(text="Cloudflared: missing ⚠", bootstyle=WARNING)
+            self.lbl_cloudflared.configure(
+                text="Cloudflared: missing ⚠", bootstyle=WARNING)
 
     def _refresh_config_status(self):
         has_schema = os.path.isfile(SCHEMA_CONFIG)
@@ -369,7 +385,8 @@ class LauncherApp(ttk.Window):
         if has_schema and has_secrets:
             self.lbl_config.configure(text="Config: OK ✓", bootstyle=SUCCESS)
         else:
-            self.lbl_config.configure(text="Config: missing ⚠", bootstyle=WARNING)
+            self.lbl_config.configure(
+                text="Config: missing ⚠", bootstyle=WARNING)
 
     # ==========================================================================
     # TOOL PROCESS MANAGEMENT (SILENT EXECUTION)
@@ -397,9 +414,9 @@ class LauncherApp(ttk.Window):
             }
             if os.name == "nt":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-                
+
             proc = subprocess.Popen([sys.executable, script_path], **kwargs)
-            
+
         except Exception as e:
             self.log(f"[ERROR] Failed to launch {tool['label']}: {e}")
             return
@@ -423,7 +440,7 @@ class LauncherApp(ttk.Window):
             if tool and self.processes[key].poll() is None:
                 self.stop_tool(tool)
                 running_count += 1
-                
+
         if running_count > 0:
             self.log(f"Successfully stopped {running_count} active tools.")
         else:
@@ -434,13 +451,14 @@ class LauncherApp(ttk.Window):
         tool = next((t for t in TOOLS if t["key"] == key), None)
         if not widgets or not tool:
             return
-            
+
         btn = widgets["button"]
         status_lbl = widgets["status"]
-        
+
         if running:
             status_lbl.configure(text="Running", bootstyle=SUCCESS)
-            btn.configure(text="Stop", bootstyle=DANGER, command=lambda t=tool: self.stop_tool(t))
+            btn.configure(text="Stop", bootstyle=DANGER,
+                          command=lambda t=tool: self.stop_tool(t))
         else:
             status_lbl.configure(text="Idle", bootstyle=SECONDARY)
             btn.configure(text="Launch", bootstyle=tool["bootstyle"],
@@ -456,7 +474,7 @@ class LauncherApp(ttk.Window):
                 self.log(f"Exited: {label} (code {proc.returncode}).")
                 del self.processes[key]
                 self._set_tool_status(key, running=False)
-                
+
         # Polling rate of 1.5 seconds is light on CPU but responsive enough for UI
         self.after(1500, self._poll_processes)
 
@@ -485,7 +503,8 @@ class LauncherApp(ttk.Window):
             self.log(f"Couldn't open folder: {e}")
 
     def on_close(self):
-        active_tools = [key for key, proc in self.processes.items() if proc.poll() is None]
+        active_tools = [key for key,
+                        proc in self.processes.items() if proc.poll() is None]
 
         if active_tools:
             proceed = messagebox.askyesno(
@@ -495,10 +514,11 @@ class LauncherApp(ttk.Window):
             )
             if not proceed:
                 return
-                
+
             self.stop_all_tools()
 
         self.destroy()
+
 
 if __name__ == "__main__":
     app = LauncherApp()
