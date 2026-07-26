@@ -380,7 +380,6 @@ class OfflineKioskApp(ttk.Window):
     def _check_mobile_status(self, mobile_num):
         """Background thread to query if a mobile number is already registered."""
         try:
-            # Expected Endpoint: GET /api/check_mobile?mobile=9999999999
             res = requests.get(
                 f"{self.server_url}/api/check_mobile", 
                 params={"mobile": mobile_num}, 
@@ -391,7 +390,6 @@ class OfflineKioskApp(ttk.Window):
             if res.status_code == 200:
                 data = res.json()
                 
-                # If the backend confirms it is registered
                 if data.get('status') in ['already_registered', 'registered', 'exists']:
                     aid = data.get('attendee_id', 'UNKNOWN ID')
                     self.gui_queue.put(lambda: self.errors['mobile'].configure(
@@ -403,12 +401,23 @@ class OfflineKioskApp(ttk.Window):
                         text="✓ Ready", 
                         foreground="#00e676"
                     ))
+            elif res.status_code == 404:
+                # This will tell you if the backend route is missing!
+                self.gui_queue.put(lambda: self.errors['mobile'].configure(
+                    text="⚠ Backend missing '/api/check_mobile' route", 
+                    foreground="#ff4444"
+                ))
             else:
-                # If the endpoint doesn't exist yet, silently clear the checking label
                 self.gui_queue.put(lambda: self.errors['mobile'].configure(text=""))
+                
+        except requests.exceptions.Timeout:
+            self.gui_queue.put(lambda: self.errors['mobile'].configure(
+                text="⚠ Server timeout", foreground="#ff4444"
+            ))
         except Exception:
-            # Clear label gracefully if the server is offline or unreachable
-            self.gui_queue.put(lambda: self.errors['mobile'].configure(text=""))
+            self.gui_queue.put(lambda: self.errors['mobile'].configure(
+                text="⚠ Server offline", foreground="#ff4444"
+            ))
             
     def on_pincode_change(self, *args):
         val = self.vars['pincode'].get()

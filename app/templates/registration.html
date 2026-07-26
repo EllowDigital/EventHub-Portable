@@ -173,6 +173,11 @@
         min-height: 14px;
         font-weight: bold;
       }
+      /* Utility classes for dynamic message colors */
+      .msg-info { color: var(--primary); }
+      .msg-success { color: var(--success); }
+      .msg-warning { color: var(--warning); }
+
       .row {
         display: flex;
         gap: 15px;
@@ -442,16 +447,6 @@
       </div>
       <div class="row">
         <div class="input-group">
-          <label>City *</label>
-          <input type="text" id="f-city" placeholder="City" />
-          <div class="err-msg" id="e-city"></div>
-        </div>
-        <div class="input-group">
-          <label>State *</label>
-          <input type="text" id="f-state" placeholder="State" />
-          <div class="err-msg" id="e-state"></div>
-        </div>
-        <div class="input-group">
           <label>Pincode *</label>
           <input
             type="tel"
@@ -460,6 +455,16 @@
             maxlength="6"
           />
           <div class="err-msg" id="e-pincode"></div>
+        </div>
+        <div class="input-group">
+          <label>City *</label>
+          <input type="text" id="f-city" placeholder="City" />
+          <div class="err-msg" id="e-city"></div>
+        </div>
+        <div class="input-group">
+          <label>State *</label>
+          <input type="text" id="f-state" placeholder="State" />
+          <div class="err-msg" id="e-state"></div>
         </div>
       </div>
 
@@ -667,7 +672,7 @@
         catSel.appendChild(new Option(label, val)),
       );
 
-      // --- REACTIVITY ---
+      // --- REACTIVITY & LIVE CHECKS ---
       document.getElementById("f-type").addEventListener("change", (e) => {
         const otherInput = document.getElementById("f-othercat");
         if (e.target.value === "MEDIA") {
@@ -693,23 +698,91 @@
         clearFieldErr("othercat");
       });
 
-      ["mobile", "pincode"].forEach((id) => {
-        document
-          .getElementById("f-" + id)
-          .addEventListener(
-            "input",
-            (e) => (e.target.value = e.target.value.replace(/\D/g, "")),
-          );
+      // Live Mobile Check Handler
+      const fMobile = document.getElementById("f-mobile");
+      fMobile.addEventListener("input", async (e) => {
+        e.target.value = e.target.value.replace(/\D/g, "");
+        const val = e.target.value;
+        const errDiv = document.getElementById("e-mobile");
+
+        if (val.length === 10) {
+          errDiv.textContent = "⏳ Checking number...";
+          errDiv.className = "err-msg msg-info";
+          try {
+            const res = await fetch(`/api/check_mobile?mobile=${val}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === 'already_registered' || data.status === 'exists') {
+                errDiv.textContent = `⚠ Already Registered! ID: ${data.attendee_id || 'Found'}`;
+                errDiv.className = "err-msg msg-warning";
+              } else {
+                errDiv.textContent = "✓ Ready";
+                errDiv.className = "err-msg msg-success";
+              }
+            } else {
+               errDiv.textContent = "";
+            }
+          } catch (err) {
+            errDiv.textContent = "";
+          }
+        } else {
+          errDiv.textContent = "";
+          errDiv.className = "err-msg";
+          fMobile.classList.remove("err");
+        }
+      });
+
+      // Live Pincode Check Handler (Uses Free Postal API)
+      const fPincode = document.getElementById("f-pincode");
+      fPincode.addEventListener("input", async (e) => {
+        e.target.value = e.target.value.replace(/\D/g, "");
+        const val = e.target.value;
+        const errDiv = document.getElementById("e-pincode");
+
+        if (val.length === 6) {
+          errDiv.textContent = "⏳ Finding location...";
+          errDiv.className = "err-msg msg-info";
+          try {
+            const res = await fetch(`https://api.postalpincode.in/pincode/${val}`);
+            const data = await res.json();
+            
+            if (data && data[0].Status === "Success") {
+              const po = data[0].PostOffice[0];
+              document.getElementById("f-state").value = po.State;
+              document.getElementById("f-city").value = po.District;
+              errDiv.textContent = "";
+              errDiv.className = "err-msg";
+            } else {
+              errDiv.textContent = "⚠ Pincode not found. Enter manually.";
+              errDiv.className = "err-msg msg-warning";
+            }
+          } catch (err) {
+            errDiv.textContent = "";
+            errDiv.className = "err-msg";
+          }
+        } else {
+          errDiv.textContent = "";
+          errDiv.className = "err-msg";
+          fPincode.classList.remove("err");
+        }
       });
 
       function setFieldErr(key, msg) {
         document.getElementById("f-" + key).classList.add("err");
-        document.getElementById("e-" + key).textContent = "⚠ " + msg;
+        const el = document.getElementById("e-" + key);
+        el.textContent = "⚠ " + msg;
+        el.className = "err-msg"; // Reset to standard red danger text
       }
       function clearFieldErr(key) {
         document.getElementById("f-" + key).classList.remove("err");
-        document.getElementById("e-" + key).textContent = "";
+        const el = document.getElementById("e-" + key);
+        // Do not clear the helper text if it's currently showing a valid success/warning state
+        if (!el.classList.contains("msg-success") && !el.classList.contains("msg-warning")) {
+          el.textContent = "";
+          el.className = "err-msg";
+        }
       }
+      
       function clearAllErrors() {
         [
           "name",
@@ -863,6 +936,12 @@
         document.getElementById("day-1").checked = false;
         document.getElementById("day-2").checked = false;
         document.getElementById("day-3").checked = false;
+
+        // Force clear all helper states explicitly after successful submission
+        document.getElementById("e-mobile").className = "err-msg";
+        document.getElementById("e-mobile").textContent = "";
+        document.getElementById("e-pincode").className = "err-msg";
+        document.getElementById("e-pincode").textContent = "";
 
         const btn = document.getElementById("submit-btn");
         btn.disabled = false;

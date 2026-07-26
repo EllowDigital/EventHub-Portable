@@ -473,6 +473,41 @@ def process_registration():
     finally:
         session.close()
 
+@app.route('/api/check_mobile', methods=['GET'])
+def check_mobile():
+    mobile_number = request.args.get('mobile', '').strip()
+    
+    if not mobile_number:
+        return jsonify({"status": "error", "message": "Mobile number required"}), 400
+        
+    sessions = get_cached_sessions()
+    session = sessions.get('mysql')()
+    
+    try:
+        # 1. Check the main Attendee table first
+        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
+        if existing_main:
+            return jsonify({
+                "status": "already_registered",
+                "attendee_id": existing_main.attendee_id
+            }), 200
+
+        # 2. Check the local OfflineKioskAttendee table
+        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
+        if existing_kiosk:
+            return jsonify({
+                "status": "already_registered",
+                "attendee_id": existing_kiosk.attendee_id
+            }), 200
+
+        # 3. If not found in either table, return not_found
+        return jsonify({"status": "not_found"}), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+    finally:
+        session.close()
+
 @app.route('/api/network-data', methods=['GET'])
 def get_network_data():
     current_time = time.time()
@@ -1079,8 +1114,8 @@ class ServerHub(ttk.Window):
             try:
                 cmd = [
                     "cloudflared", "tunnel", 
-                    "--url", f"http://127.0.0.1:{HTTP_PORT}", 
-                    "--http-host-header", "localhost",  # 👈 ADD THIS LINE
+                    "--url", f"http://{self.local_ip}:{HTTP_PORT}",
+                    "--http-host-header", "localhost",  
                     "--no-tls-verify"
                 ]
                 creationflags = subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
