@@ -36,7 +36,7 @@
         align-items: center;
         border-bottom: 1px solid #333;
         padding-bottom: 15px;
-        margin-bottom: 30px;
+        margin-bottom: 20px;
       }
 
       .btn-back {
@@ -53,10 +53,68 @@
       .btn-back:active {
         transform: scale(0.95);
       }
+      .btn-back:hover {
+        background: #2a2d35;
+        color: #fff;
+      }
+
+      .version-tag {
+        font-size: 0.75rem;
+        background: #333;
+        color: var(--primary);
+        padding: 4px 10px;
+        border-radius: 6px;
+        letter-spacing: 1px;
+        font-family: monospace;
+        margin-left: 10px;
+        vertical-align: middle;
+      }
+
+      /* --- ENHANCED BANNERS --- */
+      .test-mode-banner {
+        display: none;
+        background-color: var(--danger);
+        color: #fff;
+        width: 100%;
+        text-align: center;
+        padding: 10px;
+        font-size: 0.9rem;
+        font-weight: 900;
+        border-radius: 8px;
+        margin-bottom: 25px;
+        box-shadow: 0 4px 15px rgba(255, 68, 68, 0.4);
+        box-sizing: border-box;
+        animation: pulseTest 2s infinite;
+      }
+      @keyframes pulseTest {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.85;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+
+      .offline-banner {
+        display: none;
+        background-color: #555;
+        color: #fff;
+        width: 100%;
+        text-align: center;
+        padding: 10px;
+        font-size: 0.9rem;
+        font-weight: 900;
+        border-radius: 8px;
+        margin-bottom: 25px;
+        box-sizing: border-box;
+      }
 
       .grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
         gap: 20px;
         margin-bottom: 40px;
       }
@@ -74,11 +132,10 @@
         transform: translateY(-5px);
         border-color: rgba(255, 255, 255, 0.1);
       }
-
       .card h3 {
         margin: 0 0 10px 0;
-        color: var(--primary);
-        font-size: 0.95rem;
+        color: var(--text-dim);
+        font-size: 0.85rem;
         text-transform: uppercase;
         letter-spacing: 1px;
       }
@@ -87,6 +144,25 @@
         font-size: 3rem;
         font-weight: 800;
         text-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+      }
+
+      .card.highlight h3 {
+        color: var(--primary);
+      }
+      .card.highlight p {
+        color: var(--primary);
+        text-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
+      }
+
+      .card.success-border {
+        border-bottom: 4px solid var(--success);
+      }
+      .card.success-border h3 {
+        color: var(--success);
+      }
+      .card.success-border p {
+        color: var(--success);
+        text-shadow: 0 0 15px rgba(0, 230, 118, 0.2);
       }
 
       .section-title {
@@ -126,8 +202,6 @@
       tr:last-child td {
         border-bottom: none;
       }
-
-      /* Smooth row animations */
       tbody tr {
         transition: background 0.3s;
       }
@@ -163,7 +237,6 @@
         height: 10px;
         border-radius: 50%;
       }
-
       .status-good {
         background: var(--success);
         box-shadow: 0 0 10px var(--success);
@@ -181,28 +254,13 @@
         background: #757575;
       }
 
-      @keyframes pulse {
-        0% {
-          transform: scale(0.95);
-          opacity: 0.8;
-        }
-        50% {
-          transform: scale(1.1);
-          opacity: 1;
-        }
-        100% {
-          transform: scale(0.95);
-          opacity: 0.8;
-        }
-      }
-
-      /* Advanced Latency Bar */
+      /* Advanced Health Bar for Devices */
       .latency-container {
-        width: 100px;
+        width: 120px;
         background: #000;
         border-radius: 10px;
         overflow: hidden;
-        height: 8px;
+        height: 6px;
         margin-bottom: 5px;
       }
       .latency-bar {
@@ -213,11 +271,16 @@
       }
       .latency-text {
         font-family: monospace;
-        font-size: 0.85rem;
+        font-size: 0.8rem;
         color: #ccc;
       }
 
-      @media (max-width: 600px) {
+      @media (max-width: 768px) {
+        .grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 480px) {
         .grid {
           grid-template-columns: 1fr;
         }
@@ -226,8 +289,10 @@
   </head>
   <body>
     <div class="header">
-      <a href="/" class="btn-back">⬅ Back to Hub</a>
-      <h2 style="margin: 0">Dashboard & Telemetry</h2>
+      <a href="/" class="btn-back" onclick="playClick()">⬅ Back to Hub</a>
+      <h2 style="margin: 0; display: flex; align-items: center">
+        Telemetry <span class="version-tag">v2.5.0 Pro</span>
+      </h2>
       <div class="status-wrapper">
         <span id="hub-status-text" style="font-size: 0.9rem; color: #aaa"
           >Syncing...</span
@@ -236,8 +301,24 @@
       </div>
     </div>
 
+    <!-- NOTIFICATION BANNERS -->
+    <div id="test-mode-banner" class="test-mode-banner">
+      ⚠️ TEST MODE METRICS ACTIVE (OVERRIDE:
+      <span id="test-mode-date">...</span>)
+    </div>
+
+    <div id="offline-banner" class="offline-banner">
+      📡 CONNECTION LOST — Dashboard metrics are currently frozen.
+    </div>
+
     <div class="grid">
       <div class="card">
+        <h3>Hub Latency</h3>
+        <p id="hub-latency" style="font-size: 2.2rem; margin-top: 10px">
+          -- ms
+        </p>
+      </div>
+      <div class="card highlight">
         <h3>Kiosk Registrations</h3>
         <p id="tot-reg">0</p>
       </div>
@@ -245,9 +326,9 @@
         <h3>Total Scans (All Time)</h3>
         <p id="tot-scans">0</p>
       </div>
-      <div class="card" style="border-bottom: 4px solid var(--success)">
-        <h3 style="color: var(--success)">Today's Check-ins</h3>
-        <p id="today-scans" style="color: var(--success)">0</p>
+      <div class="card success-border">
+        <h3>Today's Check-ins</h3>
+        <p id="today-scans">0</p>
       </div>
     </div>
 
@@ -256,7 +337,7 @@
       <button
         class="btn-back"
         style="font-size: 0.8rem; background: transparent"
-        onclick="fetchStats()"
+        onclick="manualRefresh()"
       >
         ⟳ Refresh
       </button>
@@ -269,15 +350,14 @@
             <th>Connection</th>
             <th>Device Name</th>
             <th>IP Address</th>
-            <th>Network Latency</th>
-            <th>Check-ins Today</th>
+            <th>Device Health (Heartbeat)</th>
             <th>Action</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td
-              colspan="6"
+              colspan="5"
               style="text-align: center; color: #aaa; padding: 30px"
             >
               Loading network data...
@@ -288,13 +368,69 @@
     </div>
 
     <script>
+      // Audio Engine for Dashboard
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      function playClick() {
+        try {
+          if (audioCtx.state === "suspended") audioCtx.resume();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(
+            0.01,
+            audioCtx.currentTime + 0.1,
+          );
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.1);
+        } catch (e) {}
+      }
+
+      function manualRefresh() {
+        playClick();
+        fetchStats();
+      }
+
       async function fetchStats() {
+        const testBanner = document.getElementById("test-mode-banner");
+        const testDate = document.getElementById("test-mode-date");
+        const offlineBanner = document.getElementById("offline-banner");
+
+        if (!navigator.onLine) {
+          offlineBanner.style.display = "block";
+          testBanner.style.display = "none";
+          document.getElementById("hub-status-text").innerText = "Offline";
+          document.getElementById("hub-status-dot").className =
+            "status-dot status-offline";
+          return;
+        } else {
+          offlineBanner.style.display = "none";
+        }
+
         const start = performance.now();
         try {
-          const res = await fetch("/api/network-data");
-          const data = await res.json();
-
+          // 1. Fetch Server Status (Checks Test Mode & Real Latency)
+          const statusRes = await fetch("/api/status", { cache: "no-store" });
           const latency = Math.round(performance.now() - start);
+
+          document.getElementById("hub-latency").innerText = latency + " ms";
+
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.test_mode) {
+              testBanner.style.display = "block";
+              testDate.textContent = statusData.test_date || "Unknown";
+            } else {
+              testBanner.style.display = "none";
+            }
+          }
+
+          // 2. Fetch Core Stats
+          const res = await fetch("/api/network-data", { cache: "no-store" });
+          const data = await res.json();
 
           document.getElementById("hub-status-text").innerText = "Live";
           document.getElementById("hub-status-dot").className =
@@ -312,63 +448,62 @@
 
           if (Object.keys(data.active_devices).length === 0) {
             tbody.innerHTML =
-              '<tr><td colspan="6" style="text-align:center; color:#aaa; padding:30px;">No active devices found on the network. Make sure scanners have their screens open.</td></tr>';
+              '<tr><td colspan="5" style="text-align:center; color:#aaa; padding:30px;">No active devices detected on the network. Make sure scanners have their screens open.</td></tr>';
             return;
           }
 
+          // Render Active Devices
           for (const [ip, info] of Object.entries(data.active_devices)) {
             const tr = document.createElement("tr");
 
             const secondsAgo = Math.round(Date.now() / 1000 - info.last_seen);
             let statusClass = "status-good";
             let statusText = "Online";
+            let barColor = "var(--success)";
+            let healthScore = 100;
+
             if (secondsAgo > 10) {
               statusClass = "status-fair";
               statusText = "Lagging";
+              barColor = "var(--warning)";
+              healthScore = 60;
             }
-            if (secondsAgo > 25) {
+            if (secondsAgo > 20) {
               statusClass = "status-poor";
               statusText = "Dropping";
+              barColor = "var(--danger)";
+              healthScore = 20;
             }
 
-            // Calculate latency bar width and color
-            let barWidth = Math.min((latency / 500) * 100, 100);
-            let barColor = "var(--success)";
-            if (latency > 200) barColor = "var(--warning)";
-            if (latency > 500) barColor = "var(--danger)";
-
-            const scansToday = data.device_scans
-              ? data.device_scans[info.name] || 0
-              : 0;
-
             tr.innerHTML = `
-                        <td>
-                            <div class="status-wrapper">
-                                <span class="status-dot ${statusClass}"></span> 
-                                <span style="font-size: 0.85rem; color:#ccc;">${statusText} (${secondsAgo}s)</span>
-                            </div>
-                        </td>
-                        <td><strong style="font-size: 1.05rem;">${info.name}</strong></td>
-                        <td style="font-family: monospace; color: #888;">${ip}</td>
-                        <td>
-                            <div class="latency-container"><div class="latency-bar" style="width: ${barWidth}%; background: ${barColor};"></div></div>
-                            <span class="latency-text">${latency} ms ping</span>
-                        </td>
-                        <td><strong style="font-size: 1.1rem; color: var(--primary);">${scansToday}</strong></td>
-                        <td>
-                            <button class="btn-edit" onclick="renameDevice('${ip}', '${info.name.replace(/'/g, "\'")}')">Edit Name</button>
-                        </td>
-                    `;
+                <td>
+                    <div class="status-wrapper">
+                        <span class="status-dot ${statusClass}"></span> 
+                        <span style="font-size: 0.85rem; color:#ccc;">${statusText}</span>
+                    </div>
+                </td>
+                <td><strong style="font-size: 1.05rem; color: #fff;">${info.name}</strong></td>
+                <td style="font-family: monospace; color: #888;">${ip}</td>
+                <td>
+                    <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${barColor};"></div></div>
+                    <span class="latency-text">Pinged ${secondsAgo}s ago</span>
+                </td>
+                <td>
+                    <button class="btn-edit" onclick="renameDevice('${ip}', '${info.name.replace(/'/g, "\\'")}')">Edit Name</button>
+                </td>
+            `;
             tbody.appendChild(tr);
           }
         } catch (e) {
           document.getElementById("hub-status-text").innerText = "Hub Offline";
           document.getElementById("hub-status-dot").className =
             "status-dot status-poor";
+          document.getElementById("hub-latency").innerText = "FAIL";
         }
       }
 
       async function renameDevice(ip, oldName) {
+        playClick();
         const newName = prompt(
           `Enter a new custom name for the device at ${ip}:`,
           oldName,
@@ -382,13 +517,16 @@
             });
             fetchStats();
           } catch (err) {
-            alert("Failed to rename device.");
+            alert("Failed to rename device. Ensure the hub is online.");
           }
         }
       }
 
-      setInterval(fetchStats, 3000);
-      fetchStats();
+      // Initialize
+      window.addEventListener("load", () => {
+        fetchStats();
+        setInterval(fetchStats, 3000);
+      });
     </script>
   </body>
 </html>

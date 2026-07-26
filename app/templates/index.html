@@ -1,431 +1,524 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-    />
-    <title>TDE UP 2026 — Operations Hub</title>
-    <style>
-      :root {
-        --bg-dark: #0f1115;
-        --card-bg: rgba(30, 32, 38, 0.7);
-        --primary: #00d2ff;
-        --success: #00e676;
-        --warning: #ffbb33;
-        --danger: #ff4444;
-        --text-light: #ffffff;
-        --text-dim: #9ba1a6;
-        --border-dim: rgba(255, 255, 255, 0.1);
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>TDE UP 2026 — Operations Hub</title>
+  <style>
+    :root {
+      --bg-dark: #0f1115;
+      --card-bg: rgba(30, 32, 38, 0.7);
+      --primary: #00d2ff;
+      --success: #00e676;
+      --warning: #ffbb33;
+      --danger: #ff4444;
+      --text-light: #ffffff;
+      --text-dim: #9ba1a6;
+      --border-dim: rgba(255, 255, 255, 0.1);
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at top right, #1a202c, var(--bg-dark));
+      color: var(--text-light);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+
+    /* Top Status Bar */
+    .top-bar {
+      width: 100%;
+      max-width: 550px;
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 20px;
+    }
+
+    .network-pill {
+      font-size: 0.75rem;
+      padding: 8px 14px;
+      border-radius: 20px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid var(--border-dim);
+      backdrop-filter: blur(10px);
+      transition: all 0.3s ease;
+    }
+
+    .net-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    .net-excellent {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    .net-fair {
+      background: var(--warning);
+      box-shadow: 0 0 10px var(--warning);
+    }
+
+    .net-poor {
+      background: var(--danger);
+      box-shadow: 0 0 10px var(--danger);
+    }
+
+    .net-offline {
+      background: #555;
+    }
+
+    @keyframes pulse {
+      0% {
+        transform: scale(0.95);
+        opacity: 0.8;
       }
 
-      body {
-        font-family:
-          system-ui,
-          -apple-system,
-          sans-serif;
-        background: radial-gradient(
-          circle at top right,
-          #1a202c,
-          var(--bg-dark)
-        );
-        color: var(--text-light);
-        margin: 0;
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        min-height: 100vh;
-        box-sizing: border-box;
-      }
-
-      /* Top Status Bar */
-      .top-bar {
-        width: 100%;
-        max-width: 550px;
-        display: flex;
-        justify-content: flex-end;
-        margin-bottom: 20px;
-      }
-
-      .network-pill {
-        font-size: 0.75rem;
-        padding: 8px 14px;
-        border-radius: 20px;
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        background: rgba(0, 0, 0, 0.4);
-        border: 1px solid var(--border-dim);
-        backdrop-filter: blur(10px);
-        transition: all 0.3s ease;
-      }
-
-      .net-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
-      }
-      .net-excellent {
-        background: var(--success);
-        box-shadow: 0 0 10px var(--success);
-        animation: pulse 2s infinite;
-      }
-      .net-fair {
-        background: var(--warning);
-        box-shadow: 0 0 10px var(--warning);
-      }
-      .net-poor {
-        background: var(--danger);
-        box-shadow: 0 0 10px var(--danger);
-      }
-      .net-offline {
-        background: #555;
-      }
-
-      @keyframes pulse {
-        0% {
-          transform: scale(0.95);
-          opacity: 0.8;
-        }
-        50% {
-          transform: scale(1.1);
-          opacity: 1;
-        }
-        100% {
-          transform: scale(0.95);
-          opacity: 0.8;
-        }
-      }
-
-      /* Header Branding */
-      .header {
-        text-align: center;
-        margin-bottom: 40px;
-        width: 100%;
-        max-width: 550px;
-      }
-
-      .header h1 {
-        margin: 0;
-        font-size: 2.5rem;
-        color: var(--text-light);
-        letter-spacing: 2px;
-        text-transform: uppercase;
-      }
-
-      .header h1 span {
-        color: var(--primary);
-        text-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
-      }
-
-      .header p {
-        margin: 10px 0 0 0;
-        color: var(--text-dim);
-        font-size: 1rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 3px;
-      }
-
-      /* Dashboard Grid */
-      .menu-container {
-        display: flex;
-        flex-direction: column;
-        gap: 20px;
-        width: 100%;
-        max-width: 550px;
-        flex: 1;
-      }
-
-      .menu-card {
-        display: flex;
-        align-items: center;
-        padding: 25px;
-        background: var(--card-bg);
-        border: 1px solid var(--border-dim);
-        border-radius: 16px;
-        text-decoration: none;
-        color: var(--text-light);
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-        backdrop-filter: blur(12px);
-        position: relative;
-        overflow: hidden;
-      }
-
-      .menu-card::before {
-        content: "";
-        position: absolute;
-        top: 0;
-        left: -100%;
-        width: 50%;
-        height: 100%;
-        background: linear-gradient(
-          to right,
-          transparent,
-          rgba(255, 255, 255, 0.05),
-          transparent
-        );
-        transform: skewX(-20deg);
-        transition: all 0.5s;
-      }
-
-      .menu-card:hover::before {
-        left: 150%;
-      }
-      .menu-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-      }
-      .menu-card:active {
-        transform: translateY(2px) scale(0.98);
-      }
-
-      .card-cyan:hover {
-        border-color: var(--primary);
-        background: rgba(0, 210, 255, 0.05);
-      }
-      .card-green:hover {
-        border-color: var(--success);
-        background: rgba(0, 230, 118, 0.05);
-      }
-      .card-dark:hover {
-        border-color: #888;
-        background: rgba(255, 255, 255, 0.05);
-      }
-
-      .icon-box {
-        width: 65px;
-        height: 65px;
-        border-radius: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 32px;
-        margin-right: 20px;
-        flex-shrink: 0;
-        transition: transform 0.3s;
-      }
-
-      .menu-card:hover .icon-box {
+      50% {
         transform: scale(1.1);
+        opacity: 1;
       }
 
-      .card-cyan .icon-box {
-        background: rgba(0, 210, 255, 0.15);
-        color: var(--primary);
-        box-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
+      100% {
+        transform: scale(0.95);
+        opacity: 0.8;
       }
-      .card-green .icon-box {
-        background: rgba(0, 230, 118, 0.15);
-        color: var(--success);
-        box-shadow: 0 0 15px rgba(0, 230, 118, 0.2);
-      }
-      .card-dark .icon-box {
-        background: rgba(255, 255, 255, 0.08);
-        color: #fff;
-        box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+    }
+
+    /* --- NEW BANNERS --- */
+    .test-mode-banner {
+      display: none;
+      background-color: var(--danger);
+      color: #fff;
+      width: 100%;
+      max-width: 550px;
+      text-align: center;
+      padding: 10px;
+      font-size: 0.85rem;
+      font-weight: 900;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      box-shadow: 0 4px 15px rgba(255, 68, 68, 0.4);
+      box-sizing: border-box;
+      animation: pulseTest 2s infinite;
+    }
+
+    @keyframes pulseTest {
+      0% {
+        opacity: 1;
       }
 
-      .card-content {
-        display: flex;
-        flex-direction: column;
+      50% {
+        opacity: 0.85;
       }
 
-      .card-title {
-        font-size: 1.25rem;
-        font-weight: 700;
-        margin-bottom: 6px;
+      100% {
+        opacity: 1;
       }
+    }
 
-      .card-desc {
-        font-size: 0.9rem;
-        color: var(--text-dim);
-        line-height: 1.4;
-      }
+    .unsynced-warning {
+      display: none;
+      background-color: var(--warning);
+      color: #000;
+      width: 100%;
+      max-width: 550px;
+      text-align: center;
+      padding: 12px;
+      font-size: 0.9rem;
+      font-weight: 900;
+      border-radius: 8px;
+      margin-bottom: 25px;
+      box-shadow: 0 4px 15px rgba(255, 187, 51, 0.4);
+      box-sizing: border-box;
+      border: 2px solid #e65100;
+    }
 
-      /* Support & Contact Section */
-      .support-box {
-        width: 100%;
-        max-width: 550px;
-        background: rgba(255, 187, 51, 0.05);
-        border: 1px dashed rgba(255, 187, 51, 0.4);
-        border-radius: 16px;
-        padding: 25px;
-        text-align: center;
-        margin-top: 40px;
-        box-sizing: border-box;
-        backdrop-filter: blur(10px);
-      }
+    /* Header Branding */
+    .header {
+      text-align: center;
+      margin-bottom: 30px;
+      width: 100%;
+      max-width: 550px;
+    }
 
-      .support-box p {
-        margin: 0 0 15px 0;
-        color: #ccc;
-        font-size: 0.95rem;
-      }
+    .header h1 {
+      margin: 0;
+      font-size: 2.5rem;
+      color: var(--text-light);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
 
-      .btn-call {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        background: var(--warning);
-        color: #000;
-        text-decoration: none;
-        padding: 14px 28px;
-        border-radius: 30px;
-        font-weight: 800;
-        font-size: 1rem;
-        transition: all 0.2s;
-        box-shadow: 0 5px 15px rgba(255, 187, 51, 0.3);
-      }
+    .header h1 span.highlight {
+      color: var(--primary);
+      text-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
+    }
 
-      .btn-call:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 20px rgba(255, 187, 51, 0.4);
-      }
-      .btn-call:active {
-        transform: translateY(1px);
-        box-shadow: 0 2px 10px rgba(255, 187, 51, 0.3);
-      }
+    .version-tag {
+      font-size: 0.8rem;
+      background: #333;
+      color: var(--primary);
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 1px;
+      font-family: monospace;
+    }
 
-      /* Footer */
-      .footer {
-        margin-top: 40px;
-        text-align: center;
-        color: #666;
-        font-size: 0.8rem;
-        padding-bottom: 20px;
-        line-height: 1.5;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="top-bar">
-      <div id="network-pill" class="network-pill">
-        <span id="net-dot" class="net-dot net-offline"></span>
-        <span id="net-text">Connecting...</span>
+    .header p {
+      margin: 10px 0 0 0;
+      color: var(--text-dim);
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+    }
+
+    /* Dashboard Grid */
+    .menu-container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      width: 100%;
+      max-width: 550px;
+      flex: 1;
+    }
+
+    .menu-card {
+      display: flex;
+      align-items: center;
+      padding: 25px;
+      background: var(--card-bg);
+      border: 1px solid var(--border-dim);
+      border-radius: 16px;
+      text-decoration: none;
+      color: var(--text-light);
+      transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+      backdrop-filter: blur(12px);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .menu-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: -100%;
+      width: 50%;
+      height: 100%;
+      background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.05), transparent);
+      transform: skewX(-20deg);
+      transition: all 0.5s;
+    }
+
+    .menu-card:hover::before {
+      left: 150%;
+    }
+
+    .menu-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .menu-card:active {
+      transform: translateY(2px) scale(0.98);
+    }
+
+    .card-cyan:hover {
+      border-color: var(--primary);
+      background: rgba(0, 210, 255, 0.05);
+    }
+
+    .card-green:hover {
+      border-color: var(--success);
+      background: rgba(0, 230, 118, 0.05);
+    }
+
+    .card-dark:hover {
+      border-color: #888;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .icon-box {
+      width: 65px;
+      height: 65px;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 32px;
+      margin-right: 20px;
+      flex-shrink: 0;
+      transition: transform 0.3s;
+    }
+
+    .menu-card:hover .icon-box {
+      transform: scale(1.1);
+    }
+
+    .card-cyan .icon-box {
+      background: rgba(0, 210, 255, 0.15);
+      color: var(--primary);
+      box-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
+    }
+
+    .card-green .icon-box {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--success);
+      box-shadow: 0 0 15px rgba(0, 230, 118, 0.2);
+    }
+
+    .card-dark .icon-box {
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+    }
+
+    .card-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .card-desc {
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      line-height: 1.4;
+    }
+
+    /* Support & Contact Section */
+    .support-box {
+      width: 100%;
+      max-width: 550px;
+      background: rgba(255, 187, 51, 0.05);
+      border: 1px dashed rgba(255, 187, 51, 0.4);
+      border-radius: 16px;
+      padding: 25px;
+      text-align: center;
+      margin-top: 40px;
+      box-sizing: border-box;
+      backdrop-filter: blur(10px);
+    }
+
+    .support-box p {
+      margin: 0 0 15px 0;
+      color: #ccc;
+      font-size: 0.95rem;
+    }
+
+    .btn-call {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: var(--warning);
+      color: #000;
+      text-decoration: none;
+      padding: 14px 28px;
+      border-radius: 30px;
+      font-weight: 800;
+      font-size: 1rem;
+      transition: all 0.2s;
+      box-shadow: 0 5px 15px rgba(255, 187, 51, 0.3);
+    }
+
+    .btn-call:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 20px rgba(255, 187, 51, 0.4);
+    }
+
+    .btn-call:active {
+      transform: translateY(1px);
+      box-shadow: 0 2px 10px rgba(255, 187, 51, 0.3);
+    }
+
+    .footer {
+      margin-top: 40px;
+      text-align: center;
+      color: #666;
+      font-size: 0.8rem;
+      padding-bottom: 20px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="top-bar">
+    <div id="network-pill" class="network-pill">
+      <span id="net-dot" class="net-dot net-offline"></span>
+      <span id="net-text">Connecting...</span>
+    </div>
+  </div>
+
+  <!-- TEST MODE BANNER -->
+  <div id="test-mode-banner" class="test-mode-banner">
+    ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+  </div>
+
+  <!-- UNSYNCED DATA WARNING -->
+  <div id="unsynced-warning" class="unsynced-warning">
+    ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records trapped on this device!
+    <br><span style="font-size: 0.8rem; font-weight: normal; margin-top: 5px; display: inline-block;">Open the Scanner
+      or Registration tab while online to sync them.</span>
+  </div>
+
+  <div class="header">
+    <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">v2.5.0 Pro</span></h1>
+    <p>Operations Portal</p>
+  </div>
+
+  <div class="menu-container">
+    <a href="/scanner" class="menu-card card-cyan" onclick="playClick()">
+      <div class="icon-box">📷</div>
+      <div class="card-content">
+        <div class="card-title">Live Check-in Scanner</div>
+        <div class="card-desc">
+          Scan attendee QR badges or manually search IDs. Supports background Offline Queuing.
+        </div>
       </div>
-    </div>
+    </a>
 
-    <div class="header">
-      <h1>TDE UP <span>2026</span></h1>
-      <p>Operations Portal</p>
-    </div>
-
-    <div class="menu-container">
-      <a href="/scanner" class="menu-card card-cyan" onclick="playClick()">
-        <div class="icon-box">📷</div>
-        <div class="card-content">
-          <div class="card-title">Live Check-in Scanner</div>
-          <div class="card-desc">
-            Scan attendee QR badges or manually search IDs for rapid entry.
-          </div>
+    <a href="/register" class="menu-card card-green" onclick="playClick()">
+      <div class="icon-box">📝</div>
+      <div class="card-content">
+        <div class="card-title">Kiosk Registration</div>
+        <div class="card-desc">
+          Register new walk-in attendees and auto-generate ID passes instantly.
         </div>
-      </a>
+      </div>
+    </a>
 
-      <a href="/register" class="menu-card card-green" onclick="playClick()">
-        <div class="icon-box">📝</div>
-        <div class="card-content">
-          <div class="card-title">Kiosk Registration</div>
-          <div class="card-desc">
-            Register new walk-in attendees and auto-generate ID passes
-            instantly.
-          </div>
+    <a href="/stats" class="menu-card card-dark" onclick="playClick()">
+      <div class="icon-box">📊</div>
+      <div class="card-content">
+        <div class="card-title">Network Statistics</div>
+        <div class="card-desc">
+          View live device connections, sync status, and event metrics in real-time.
         </div>
-      </a>
+      </div>
+    </a>
+  </div>
 
-      <a href="/stats" class="menu-card card-dark" onclick="playClick()">
-        <div class="icon-box">📊</div>
-        <div class="card-content">
-          <div class="card-title">Network Statistics</div>
-          <div class="card-desc">
-            View live device connections, sync status, and event metrics in
-            real-time.
-          </div>
-        </div>
-      </a>
-    </div>
+  <div class="support-box">
+    <p>Experiencing hardware or network issues?</p>
+    <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
+  </div>
 
-    <div class="support-box">
-      <p>Experiencing hardware or network issues?</p>
-      <a href="tel:8960446756" class="btn-call" onclick="playClick()"
-        >📞 Call Tech Support</a
-      >
-    </div>
+  <div class="footer">
+    Engineered for Event Resilience<br />
+    Powered by EllowDigital
+  </div>
 
-    <div class="footer">
-      Engineered for Event Resilience<br />
-      Powered by EllowDigital
-    </div>
+  <script>
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function playClick() {
+      try {
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = "sine"; osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+      } catch (e) { }
+    }
 
-    <script>
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      function playClick() {
-        try {
-          if (audioCtx.state === "suspended") audioCtx.resume();
-          const osc = audioCtx.createOscillator();
-          const gain = audioCtx.createGain();
-          osc.connect(gain);
-          gain.connect(audioCtx.destination);
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-          gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-          gain.gain.exponentialRampToValueAtTime(
-            0.01,
-            audioCtx.currentTime + 0.1,
-          );
-          osc.start();
-          osc.stop(audioCtx.currentTime + 0.1);
-        } catch (e) {}
+    function getDeviceName() { return localStorage.getItem("hub_device_name") || "Hub Operations"; }
+
+    function checkPendingSyncs() {
+      let scans = JSON.parse(localStorage.getItem("offline_scans") || "[]");
+      let regs = JSON.parse(localStorage.getItem("offline_regs") || "[]");
+      let total = scans.length + regs.length;
+
+      const warningBanner = document.getElementById("unsynced-warning");
+      if (total > 0) {
+        warningBanner.style.display = "block";
+        document.getElementById("unsynced-count").textContent = total;
+      } else {
+        warningBanner.style.display = "none";
+      }
+    }
+
+    async function syncServerStatus() {
+      const dot = document.getElementById("net-dot");
+      const text = document.getElementById("net-text");
+      const testBanner = document.getElementById("test-mode-banner");
+      const testDate = document.getElementById("test-mode-date");
+
+      // Always check local storage for stranded data on loop
+      checkPendingSyncs();
+
+      if (!navigator.onLine) {
+        dot.className = "net-dot net-offline";
+        text.textContent = "Offline";
+        testBanner.style.display = "none";
+        return;
       }
 
-      async function checkNetworkQuality() {
-        const dot = document.getElementById("net-dot");
-        const text = document.getElementById("net-text");
+      const startTime = performance.now();
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
 
-        if (!navigator.onLine) {
-          dot.className = "net-dot net-offline";
-          text.textContent = "Offline";
-          return;
+        const response = await fetch(`/api/status?device_name=${encodeURIComponent(getDeviceName())}`, {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+
+        const duration = performance.now() - startTime;
+        if (duration < 150) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
+        else if (duration < 500) { dot.className = "net-dot net-fair"; text.textContent = "Fair"; }
+        else { dot.className = "net-dot net-poor"; text.textContent = "Poor"; }
+
+        // Parse JSON to check if Test Mode is active
+        if (response.ok) {
+          try {
+            const data = await response.json();
+            if (data.test_mode) {
+              testBanner.style.display = "block";
+              testDate.textContent = data.test_date || "Unknown";
+            } else {
+              testBanner.style.display = "none";
+            }
+          } catch (err) { }
         }
-
-        const startTime = performance.now();
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2000);
-          await fetch("/api/status", {
-            method: "GET",
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-
-          const duration = performance.now() - startTime;
-          if (duration < 150) {
-            dot.className = "net-dot net-excellent";
-            text.textContent = "Excellent";
-          } else if (duration < 500) {
-            dot.className = "net-dot net-fair";
-            text.textContent = "Fair";
-          } else {
-            dot.className = "net-dot net-poor";
-            text.textContent = "Poor";
-          }
-        } catch (e) {
-          dot.className = "net-dot net-poor";
-          text.textContent = "Unstable";
-        }
+      } catch (e) {
+        dot.className = "net-dot net-poor";
+        text.textContent = "Unstable";
       }
+    }
 
-      window.addEventListener("load", () => {
-        checkNetworkQuality();
-        setInterval(checkNetworkQuality, 4000);
-      });
-      window.addEventListener("online", checkNetworkQuality);
-      window.addEventListener("offline", checkNetworkQuality);
-    </script>
-  </body>
+    window.addEventListener("load", () => {
+      syncServerStatus();
+      setInterval(syncServerStatus, 4000);
+    });
+    window.addEventListener("online", syncServerStatus);
+    window.addEventListener("offline", syncServerStatus);
+  </script>
+</body>
+
 </html>

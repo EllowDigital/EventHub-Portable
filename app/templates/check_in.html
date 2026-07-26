@@ -20,7 +20,6 @@
         --danger: #ff4444;
         --surface: #1a1d24;
       }
-
       body {
         font-family:
           system-ui,
@@ -41,9 +40,8 @@
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 20px;
+        margin-bottom: 15px;
       }
-
       .btn-back {
         color: #aaa;
         text-decoration: none;
@@ -52,7 +50,6 @@
         padding: 8px 14px;
         background: var(--surface);
         border-radius: 8px;
-        transition: all 0.2s;
         border: 1px solid rgba(255, 255, 255, 0.1);
       }
       .btn-back:active {
@@ -92,6 +89,49 @@
         background: #757575;
       }
 
+      .test-mode-banner {
+        display: none;
+        background-color: var(--danger);
+        color: #fff;
+        width: 100%;
+        max-width: 500px;
+        text-align: center;
+        padding: 8px;
+        font-size: 0.85rem;
+        font-weight: 900;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-sizing: border-box;
+        animation: pulseTest 2s infinite;
+      }
+      @keyframes pulseTest {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.85;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+
+      /* --- NEW OFFLINE QUEUE BADGE --- */
+      .offline-badge {
+        display: none;
+        background-color: var(--warning);
+        color: #000;
+        width: 100%;
+        max-width: 500px;
+        text-align: center;
+        padding: 8px;
+        font-size: 0.85rem;
+        font-weight: 900;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-sizing: border-box;
+      }
+
       .device-identity {
         width: 100%;
         max-width: 500px;
@@ -105,10 +145,6 @@
         border-radius: 8px;
         border: 1px solid rgba(255, 255, 255, 0.05);
         box-sizing: border-box;
-        transition: background 0.2s;
-      }
-      .device-identity:active {
-        background: #222;
       }
       .device-identity span {
         color: var(--primary);
@@ -157,7 +193,6 @@
         background: #000;
         min-height: 250px;
       }
-
       #reader {
         width: 100%;
         border: none !important;
@@ -222,11 +257,7 @@
         font-weight: 800;
         cursor: pointer;
         margin-top: 15px;
-        transition: all 0.2s;
         box-shadow: 0 4px 15px rgba(255, 187, 51, 0.2);
-      }
-      .camera-toggle-btn:active {
-        transform: scale(0.98);
       }
       .camera-toggle-btn.paused {
         background: var(--success);
@@ -235,27 +266,50 @@
 
       .zoom-toolbar {
         display: flex;
-        justify-content: center;
+        flex-direction: column;
         gap: 10px;
         margin-top: 15px;
         width: 100%;
-      }
-      .zoom-btn {
         background: var(--surface);
-        color: #fff;
-        border: 1px solid #444;
-        padding: 10px 20px;
-        border-radius: 20px;
-        font-weight: bold;
-        font-size: 0.9rem;
-        cursor: pointer;
-        transition: all 0.2s;
+        padding: 15px;
+        border-radius: 12px;
+        box-sizing: border-box;
       }
-      .zoom-btn:active,
-      .zoom-btn.active {
+      .zoom-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        font-size: 0.85rem;
+        color: var(--primary);
+        font-weight: bold;
+      }
+      .zoom-slider {
+        -webkit-appearance: none;
+        width: 100%;
+        height: 6px;
+        background: #333;
+        border-radius: 5px;
+        outline: none;
+      }
+      .zoom-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--primary);
+        cursor: pointer;
+        box-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
+      }
+      .auto-zoom-badge {
         background: var(--primary);
         color: #000;
-        border-color: var(--primary);
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        opacity: 0;
+        transition: opacity 0.3s;
       }
 
       .manual-wrapper {
@@ -268,7 +322,6 @@
         border: 1px solid rgba(255, 255, 255, 0.05);
         box-sizing: border-box;
       }
-
       .input-group {
         margin-bottom: 20px;
         display: flex;
@@ -290,14 +343,11 @@
         font-size: 1.1rem;
         font-family: monospace;
         text-align: center;
-        transition: all 0.2s;
       }
       .input-group input:focus {
         outline: none;
         border-color: var(--primary);
-        box-shadow: 0 0 10px rgba(0, 210, 255, 0.2);
       }
-
       .btn-submit {
         width: 100%;
         padding: 14px;
@@ -308,15 +358,11 @@
         font-size: 1rem;
         font-weight: bold;
         cursor: pointer;
-        transition: all 0.2s;
       }
       .btn-submit:active {
         background: var(--primary);
         color: #000;
-        border-color: var(--primary);
-        transform: scale(0.98);
       }
-
       .divider {
         text-align: center;
         margin: 25px 0;
@@ -341,7 +387,6 @@
         right: 0;
       }
 
-      /* Animated Slide-in Result Card */
       #result-card {
         position: fixed;
         bottom: -100px;
@@ -362,7 +407,6 @@
       #result-card.show {
         bottom: 30px;
       }
-
       .res-success {
         background-color: var(--success);
         color: #000;
@@ -378,8 +422,12 @@
         color: #fff;
         border: 2px solid #d50000;
       }
+      .res-offline {
+        background-color: #ff9100;
+        color: #000;
+        border: 2px solid #e65100;
+      } /* Specific offline styling */
 
-      /* Device Modal */
       #device-modal {
         display: none;
         position: fixed;
@@ -421,10 +469,6 @@
         border: none;
         border-radius: 8px;
         cursor: pointer;
-        transition: 0.2s;
-      }
-      .dev-modal-content button:active {
-        transform: scale(0.95);
       }
     </style>
   </head>
@@ -439,16 +483,25 @@
       </div>
     </div>
 
+    <div id="test-mode-banner" class="test-mode-banner">
+      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+    </div>
+
+    <!-- NEW: OFFLINE QUEUE BADGE -->
+    <div id="offline-badge" class="offline-badge">
+      ⏳ <span id="offline-count">0</span> Scans Pending Sync
+    </div>
+
     <div class="device-identity" onclick="promptDeviceName()">
       Scanner Name: <span id="display-device-name">Loading...</span> ✏️
     </div>
 
     <div class="tabs">
       <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">
-        📷 QR Scanner
+        📷 Auto Scan
       </button>
       <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">
-        ⌨️ Manual Entry
+        ⌨️ Manual
       </button>
     </div>
 
@@ -459,26 +512,31 @@
           <div class="scan-laser"></div>
         </div>
       </div>
-
+      <div class="zoom-toolbar" id="zoom-controls" style="display: none">
+        <div class="zoom-header">
+          <span>Manual Zoom</span>
+          <span id="auto-zoom-badge" class="auto-zoom-badge"
+            >Auto-Focusing...</span
+          >
+          <span id="zoom-val-display">1.0x</span>
+        </div>
+        <input
+          type="range"
+          id="zoom-slider"
+          class="zoom-slider"
+          min="1"
+          max="3"
+          step="0.1"
+          value="1"
+        />
+      </div>
       <button
         class="camera-toggle-btn"
         id="camera-toggle-btn"
         onclick="toggleCamera()"
       >
-        ⏸ Pause Scanner (Save Battery)
+        ⏸ Pause Scanner
       </button>
-
-      <div class="zoom-toolbar" id="zoom-controls" style="display: none">
-        <button class="zoom-btn" id="btn-zoom-1" onclick="adjustZoom(1)">
-          1x
-        </button>
-        <button class="zoom-btn active" id="btn-zoom-2" onclick="adjustZoom(2)">
-          2x Auto
-        </button>
-        <button class="zoom-btn" id="btn-zoom-3" onclick="adjustZoom(3)">
-          3x
-        </button>
-      </div>
     </div>
 
     <div class="manual-wrapper" id="manual-view">
@@ -499,9 +557,7 @@
           Check In by ID
         </button>
       </div>
-
       <div class="divider">OR</div>
-
       <div class="input-group">
         <label>Find by Phone Number</label>
         <input
@@ -539,7 +595,6 @@
     </div>
 
     <script>
-      // --- ADVANCED AUDIO ENGINE ---
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       function playAudioTone(type) {
         try {
@@ -550,7 +605,7 @@
           gain.connect(audioCtx.destination);
           const now = audioCtx.currentTime;
 
-          if (type === "SUCCESS") {
+          if (type === "SUCCESS" || type === "OFFLINE") {
             osc.type = "sine";
             osc.frequency.setValueAtTime(880, now);
             osc.frequency.setValueAtTime(1200, now + 0.1);
@@ -566,7 +621,6 @@
             osc.start(now);
             osc.stop(now + 0.4);
           } else if (type === "DUPLICATE") {
-            // Double beep
             osc.type = "square";
             osc.frequency.setValueAtTime(400, now);
             gain.gain.setValueAtTime(0.5, now);
@@ -589,14 +643,29 @@
               osc2.stop(audioCtx.currentTime + 0.15);
             }, 200);
           }
-        } catch (e) {
-          console.error("Audio block", e);
-        }
+        } catch (e) {}
       }
 
       let html5QrCode = null;
       let isCameraActive = false;
       let isProcessing = false;
+      let currentTrack = null;
+      let minZoom = 1;
+      let maxZoom = 3;
+      let autoZoomInterval = null;
+      let isSyncing = false; // Prevents overlapping sync runs
+
+      const scanConfig = {
+        fps: 30,
+        qrbox: { width: 220, height: 220 },
+        formatsToSupport: [0],
+        aspectRatio: 1.0,
+        videoConstraints: {
+          facingMode: "environment",
+          focusMode: ["continuous", "macro"],
+          advanced: [{ zoom: 1.0 }],
+        },
+      };
 
       async function startHardware() {
         if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
@@ -604,34 +673,17 @@
           const btn = document.getElementById("camera-toggle-btn");
           btn.innerHTML = "⏳ Starting Camera...";
           btn.classList.remove("paused");
-          const config = {
-            fps: 20,
-            qrbox: { width: 220, height: 220 },
-            aspectRatio: 1.0,
-            videoConstraints: {
-              facingMode: "environment",
-              focusMode: "continuous",
-            },
-          };
           try {
             await html5QrCode.start(
-              config.videoConstraints,
-              config,
+              scanConfig.videoConstraints,
+              scanConfig,
               onScanSuccess,
             );
             isCameraActive = true;
-            btn.innerHTML = "⏸ Pause Scanner (Save Battery)";
+            btn.innerHTML = "⏸ Pause Scanner";
             document.getElementById("scan-overlay").style.display = "block";
-            setTimeout(() => {
-              try {
-                const track = html5QrCode.getRunningTrack();
-                if (track && track.getCapabilities().zoom) {
-                  document.getElementById("zoom-controls").style.display =
-                    "flex";
-                  adjustZoom(2);
-                }
-              } catch (err) {}
-            }, 1000);
+            setTimeout(initAdvancedCameraControls, 1000);
+            startAutoZoomSweep();
           } catch (err) {
             showToast("Camera permission denied.", "ERROR");
             btn.innerHTML = "▶ Camera Failed";
@@ -640,20 +692,74 @@
         }
       }
 
+      function initAdvancedCameraControls() {
+        try {
+          currentTrack = html5QrCode.getRunningTrack();
+          if (currentTrack) {
+            const cap = currentTrack.getCapabilities();
+            if (cap.zoom) {
+              minZoom = cap.zoom.min || 1;
+              maxZoom = cap.zoom.max || 3;
+              const slider = document.getElementById("zoom-slider");
+              slider.min = minZoom;
+              slider.max = maxZoom;
+              slider.step = (maxZoom - minZoom) / 20;
+              slider.value = minZoom;
+              document.getElementById("zoom-controls").style.display = "flex";
+              slider.addEventListener("input", (e) => {
+                applyZoom(parseFloat(e.target.value));
+                resetAutoZoomTimer();
+              });
+            }
+          }
+        } catch (e) {}
+      }
+
+      async function applyZoom(val) {
+        if (!currentTrack) return;
+        try {
+          await currentTrack.applyConstraints({ advanced: [{ zoom: val }] });
+          document.getElementById("zoom-val-display").innerText =
+            val.toFixed(1) + "x";
+          document.getElementById("zoom-slider").value = val;
+        } catch (e) {}
+      }
+
+      function startAutoZoomSweep() {
+        let toggle = false;
+        autoZoomInterval = setInterval(() => {
+          if (!isCameraActive || isProcessing) return;
+          const badge = document.getElementById("auto-zoom-badge");
+          badge.style.opacity = 1;
+          applyZoom(toggle ? minZoom : minZoom + (maxZoom - minZoom) * 0.2);
+          toggle = !toggle;
+          setTimeout(() => {
+            badge.style.opacity = 0;
+          }, 800);
+        }, 5000);
+      }
+
+      function resetAutoZoomTimer() {
+        clearInterval(autoZoomInterval);
+        setTimeout(startAutoZoomSweep, 10000);
+      }
+
       async function stopHardware() {
         if (html5QrCode && isCameraActive) {
           try {
+            clearInterval(autoZoomInterval);
             if (html5QrCode.getState() === 2) await html5QrCode.stop();
             isCameraActive = false;
-            const btn = document.getElementById("camera-toggle-btn");
-            btn.innerHTML = "▶ Resume Scanner";
-            btn.classList.add("paused");
+            document.getElementById("camera-toggle-btn").innerHTML =
+              "▶ Resume Scanner";
+            document
+              .getElementById("camera-toggle-btn")
+              .classList.add("paused");
             document.getElementById("scan-overlay").style.display = "none";
             document.getElementById("zoom-controls").style.display = "none";
           } catch (e) {}
         }
       }
-
       async function toggleCamera() {
         if (isCameraActive) await stopHardware();
         else await startHardware();
@@ -692,10 +798,7 @@
             ? document.getElementById("manual-id").value.trim()
             : document.getElementById("manual-phone").value.trim();
         if (type === "id" && !/^TDE26-[BGME]-[A-Z0-9]{6}$/i.test(val))
-          return showToast(
-            "Invalid Format. Must be TDE26-[B/G/M/E]-XXXXXX",
-            "ERROR",
-          );
+          return showToast("Invalid Format.", "ERROR");
         if (type === "phone" && val.length !== 10)
           return showToast("Phone must be exactly 10 digits", "ERROR");
         processCheckin(val, type);
@@ -718,30 +821,92 @@
           localStorage.setItem("hub_device_name", val);
           document.getElementById("display-device-name").textContent = val;
           document.getElementById("device-modal").style.display = "none";
-        } else alert("Enter a valid name.");
+        }
       }
       function promptDeviceName() {
         document.getElementById("device-name-input").value = getDeviceName();
         document.getElementById("device-modal").style.display = "flex";
       }
 
+      // --- OFFLINE QUEUE LOGIC ---
+      function getOfflineQueue() {
+        return JSON.parse(localStorage.getItem("offline_scans") || "[]");
+      }
+      function saveOfflineQueue(queue) {
+        localStorage.setItem("offline_scans", JSON.stringify(queue));
+        updateOfflineBadge();
+      }
+
+      function updateOfflineBadge() {
+        const queue = getOfflineQueue();
+        const badge = document.getElementById("offline-badge");
+        if (queue.length > 0) {
+          badge.style.display = "block";
+          document.getElementById("offline-count").textContent = queue.length;
+        } else {
+          badge.style.display = "none";
+        }
+      }
+
+      async function processOfflineQueue() {
+        if (isSyncing || !navigator.onLine) return;
+        let queue = getOfflineQueue();
+        if (queue.length === 0) return;
+
+        isSyncing = true;
+        let remainingQueue = [];
+
+        for (let i = 0; i < queue.length; i++) {
+          try {
+            let res = await fetch("/api/checkin", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(queue[i]),
+            });
+            // If it returns an explicit error (like 400 Already Checked In, or 404 Not Found),
+            // we remove it from the queue because it was processed and rejected properly.
+            // If it throws a 500 server crash, we keep it to try again later.
+            if (!res.ok && res.status >= 500) remainingQueue.push(queue[i]);
+          } catch (e) {
+            // Network completely failed mid-sync
+            remainingQueue.push(queue[i]);
+          }
+        }
+
+        saveOfflineQueue(remainingQueue);
+        isSyncing = false;
+
+        if (remainingQueue.length < queue.length) {
+          showToast(
+            `Synced ${queue.length - remainingQueue.length} offline records!`,
+            "SUCCESS",
+          );
+        }
+      }
+
       async function syncServerStatus() {
         const dot = document.getElementById("net-dot"),
           text = document.getElementById("net-text");
+        const testBanner = document.getElementById("test-mode-banner"),
+          testDate = document.getElementById("test-mode-date");
+
         if (!navigator.onLine) {
           dot.className = "net-dot net-offline";
           text.textContent = "Offline";
+          testBanner.style.display = "none";
           return;
         }
+
         const start = performance.now();
         try {
           const c = new AbortController();
           const id = setTimeout(() => c.abort(), 2000);
-          await fetch(
+          const response = await fetch(
             `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
             { cache: "no-store", signal: c.signal },
           );
           clearTimeout(id);
+
           const dur = performance.now() - start;
           if (dur < 150) {
             dot.className = "net-dot net-excellent";
@@ -753,6 +918,19 @@
             dot.className = "net-dot net-poor";
             text.textContent = "Poor";
           }
+
+          if (response.ok) {
+            try {
+              const data = await response.json();
+              if (data.test_mode) {
+                testBanner.style.display = "block";
+                testDate.textContent = data.test_date || "Unknown";
+              } else testBanner.style.display = "none";
+
+              // IF SERVER IS REACHABLE, TRY TO SYNC PENDING OFFLINE SCANS
+              processOfflineQueue();
+            } catch (err) {}
+          }
         } catch (e) {
           dot.className = "net-dot net-poor";
           text.textContent = "Unstable";
@@ -762,15 +940,19 @@
       function processCheckin(identifier, type = "id") {
         if (isProcessing) return;
         isProcessing = true;
+        clearInterval(autoZoomInterval);
+
+        const payload = {
+          attendee_id: identifier,
+          search_type: type,
+          device_name: getDeviceName(),
+          offline_scan_time: new Date().toISOString(),
+        };
 
         fetch("/api/checkin", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            attendee_id: identifier,
-            search_type: type,
-            device_name: getDeviceName(),
-          }),
+          body: JSON.stringify(payload),
         })
           .then((r) =>
             r.json().then((data) => ({ status: r.status, body: data })),
@@ -778,29 +960,38 @@
           .then((res) => {
             let sType = "ERROR";
             if (res.status === 200) sType = "SUCCESS";
-            else if (res.body.message.includes("Already checked in"))
+            else if (
+              res.body.message &&
+              res.body.message.includes("Already checked in")
+            )
               sType = "DUPLICATE";
             showToast(res.body.message, sType);
           })
-          .catch(() => showToast("Network Error. Cannot reach Hub.", "ERROR"));
+          .catch(() => {
+            // INTERCEPT NETWORK FAILURE HERE
+            let queue = getOfflineQueue();
+            queue.push(payload);
+            saveOfflineQueue(queue);
+            showToast(`Saved Offline: ${identifier}`, "OFFLINE");
+          });
       }
 
       let toastTimeout;
       function showToast(message, type) {
         const card = document.getElementById("result-card");
         card.textContent = message;
-        card.className =
-          type === "SUCCESS"
-            ? "res-success show"
-            : type === "DUPLICATE"
-              ? "res-duplicate show"
-              : "res-error show";
-        playAudioTone(type);
 
+        if (type === "SUCCESS") card.className = "res-success show";
+        else if (type === "DUPLICATE") card.className = "res-duplicate show";
+        else if (type === "OFFLINE") card.className = "res-offline show";
+        else card.className = "res-error show";
+
+        playAudioTone(type);
         clearTimeout(toastTimeout);
         toastTimeout = setTimeout(() => {
           card.classList.remove("show");
           isProcessing = false;
+          resetAutoZoomTimer();
         }, 2500);
       }
 
@@ -810,35 +1001,14 @@
         try {
           const p = JSON.parse(id);
           if (typeof p === "object" && p !== null)
-            id = p.attendeeId || p.attendee_id || p.id || id;
+            id = p.attendeeId || p.id || id;
         } catch (e) {}
         processCheckin(id, "id");
       }
 
-      async function adjustZoom(level) {
-        if (!html5QrCode || !isCameraActive) return;
-        document
-          .querySelectorAll(".zoom-btn")
-          .forEach((b) => b.classList.remove("active"));
-        document.getElementById(`btn-zoom-${level}`).classList.add("active");
-        try {
-          const track = html5QrCode.getRunningTrack();
-          if (!track) return;
-          const cap = track.getCapabilities();
-          if (cap && cap.zoom) {
-            const min = cap.zoom.min || 1,
-              max = cap.zoom.max || 3;
-            let target =
-              level === 1 ? min : level === 2 ? min + (max - min) * 0.35 : max;
-            await track.applyConstraints({
-              advanced: [{ zoom: Math.min(Math.max(target, min), max) }],
-            });
-          }
-        } catch (e) {}
-      }
-
       window.addEventListener("load", () => {
         initDeviceName();
+        updateOfflineBadge();
         startHardware();
         setInterval(syncServerStatus, 3000);
         syncServerStatus();

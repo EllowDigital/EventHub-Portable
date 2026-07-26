@@ -86,6 +86,60 @@
         background: #757575;
       }
 
+      /* --- ENHANCED BANNERS --- */
+      .test-mode-banner {
+        display: none;
+        background-color: var(--danger);
+        color: #fff;
+        width: 100%;
+        max-width: 650px;
+        text-align: center;
+        padding: 8px;
+        font-size: 0.85rem;
+        font-weight: 900;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-shadow: 0 4px 15px rgba(255, 68, 68, 0.4);
+        box-sizing: border-box;
+        animation: pulseTest 2s infinite;
+      }
+      @keyframes pulseTest {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.85;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+
+      .offline-badge {
+        display: none;
+        background-color: var(--warning);
+        color: #000;
+        width: 100%;
+        max-width: 650px;
+        text-align: center;
+        padding: 8px;
+        font-size: 0.85rem;
+        font-weight: 900;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-sizing: border-box;
+      }
+
+      .version-tag {
+        font-size: 0.65rem;
+        background: #333;
+        color: var(--primary);
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+
       .device-identity {
         width: 100%;
         max-width: 650px;
@@ -173,10 +227,15 @@
         min-height: 14px;
         font-weight: bold;
       }
-      /* Utility classes for dynamic message colors */
-      .msg-info { color: var(--primary); }
-      .msg-success { color: var(--success); }
-      .msg-warning { color: var(--warning); }
+      .msg-info {
+        color: var(--primary);
+      }
+      .msg-success {
+        color: var(--success);
+      }
+      .msg-warning {
+        color: var(--warning);
+      }
 
       .row {
         display: flex;
@@ -233,7 +292,6 @@
         box-shadow: 0 2px 8px rgba(0, 210, 255, 0.2);
       }
 
-      /* Custom Toast Notification */
       #toast {
         position: fixed;
         bottom: -100px;
@@ -253,7 +311,6 @@
         bottom: 30px;
       }
 
-      /* Fullscreen Success Modal */
       #success-modal {
         position: fixed;
         inset: 0;
@@ -350,11 +407,23 @@
   <body>
     <div class="header">
       <a href="/" class="btn-back">⬅ Hub</a>
-      <h3 style="margin: 0">Kiosk Registration</h3>
+      <h3 style="margin: 0; display: flex; align-items: center">
+        Kiosk Reg <span class="version-tag">v2.5.0 Pro</span>
+      </h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
         <span id="net-text">Checking...</span>
       </div>
+    </div>
+
+    <!-- TEST MODE BANNER -->
+    <div id="test-mode-banner" class="test-mode-banner">
+      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+    </div>
+
+    <!-- OFFLINE QUEUE BADGE -->
+    <div id="offline-badge" class="offline-badge">
+      ⏳ <span id="offline-count">0</span> Registrations Pending Sync
     </div>
 
     <div class="device-identity" onclick="promptDeviceName()">
@@ -488,7 +557,6 @@
       </button>
     </div>
 
-    <!-- Toast Notification (Replaces Alerts) -->
     <div id="toast">Error Message</div>
 
     <div id="success-modal">
@@ -530,7 +598,7 @@
     </div>
 
     <script>
-      // --- ADVANCED AUDIO ENGINE ---
+      // --- AUDIO ENGINE ---
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       function playAudioTone(type) {
         try {
@@ -541,7 +609,7 @@
           gain.connect(audioCtx.destination);
           const now = audioCtx.currentTime;
 
-          if (type === "SUCCESS") {
+          if (type === "SUCCESS" || type === "OFFLINE") {
             osc.type = "sine";
             osc.frequency.setValueAtTime(880, now);
             osc.frequency.setValueAtTime(1200, now + 0.1);
@@ -615,24 +683,82 @@
         document.getElementById("device-modal").style.display = "flex";
       }
 
+      // --- OFFLINE QUEUE LOGIC ---
+      let isSyncing = false;
+      function getOfflineQueue() {
+        return JSON.parse(localStorage.getItem("offline_regs") || "[]");
+      }
+      function saveOfflineQueue(queue) {
+        localStorage.setItem("offline_regs", JSON.stringify(queue));
+        updateOfflineBadge();
+      }
+
+      function updateOfflineBadge() {
+        const queue = getOfflineQueue();
+        const badge = document.getElementById("offline-badge");
+        if (queue.length > 0) {
+          badge.style.display = "block";
+          document.getElementById("offline-count").textContent = queue.length;
+        } else {
+          badge.style.display = "none";
+        }
+      }
+
+      async function processOfflineQueue() {
+        if (isSyncing || !navigator.onLine) return;
+        let queue = getOfflineQueue();
+        if (queue.length === 0) return;
+
+        isSyncing = true;
+        let remainingQueue = [];
+
+        for (let i = 0; i < queue.length; i++) {
+          try {
+            let res = await fetch("/api/register", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(queue[i]),
+            });
+            if (!res.ok && res.status >= 500) remainingQueue.push(queue[i]);
+          } catch (e) {
+            remainingQueue.push(queue[i]);
+          }
+        }
+
+        saveOfflineQueue(remainingQueue);
+        isSyncing = false;
+
+        if (remainingQueue.length < queue.length) {
+          showToast(
+            `Synced ${queue.length - remainingQueue.length} offline registrations!`,
+          );
+          playAudioTone("SUCCESS");
+        }
+      }
+
       // --- NETWORK PING ---
       async function syncServerStatus() {
         const dot = document.getElementById("net-dot"),
           text = document.getElementById("net-text");
+        const testBanner = document.getElementById("test-mode-banner"),
+          testDate = document.getElementById("test-mode-date");
+
         if (!navigator.onLine) {
           dot.className = "net-dot net-offline";
           text.textContent = "Offline";
+          testBanner.style.display = "none";
           return;
         }
         const start = performance.now();
         try {
           const c = new AbortController();
           const id = setTimeout(() => c.abort(), 2000);
-          await fetch(
+          const response = await fetch(
             `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
             { cache: "no-store", signal: c.signal },
           );
           clearTimeout(id);
+
           const dur = performance.now() - start;
           if (dur < 150) {
             dot.className = "net-dot net-excellent";
@@ -640,6 +766,21 @@
           } else {
             dot.className = "net-dot net-poor";
             text.textContent = "Poor";
+          }
+
+          if (response.ok) {
+            try {
+              const data = await response.json();
+              if (data.test_mode) {
+                testBanner.style.display = "block";
+                testDate.textContent = data.test_date || "Unknown";
+              } else {
+                testBanner.style.display = "none";
+              }
+
+              // IF SERVER IS REACHABLE, PUSH OFFLINE QUEUE
+              processOfflineQueue();
+            } catch (err) {}
           }
         } catch (e) {
           dot.className = "net-dot net-poor";
@@ -698,13 +839,11 @@
         clearFieldErr("othercat");
       });
 
-      // Live Mobile Check Handler
       const fMobile = document.getElementById("f-mobile");
       fMobile.addEventListener("input", async (e) => {
         e.target.value = e.target.value.replace(/\D/g, "");
         const val = e.target.value;
         const errDiv = document.getElementById("e-mobile");
-
         if (val.length === 10) {
           errDiv.textContent = "⏳ Checking number...";
           errDiv.className = "err-msg msg-info";
@@ -712,19 +851,22 @@
             const res = await fetch(`/api/check_mobile?mobile=${val}`);
             if (res.ok) {
               const data = await res.json();
-              if (data.status === 'already_registered' || data.status === 'exists') {
-                errDiv.textContent = `⚠ Already Registered! ID: ${data.attendee_id || 'Found'}`;
+              if (
+                data.status === "already_registered" ||
+                data.status === "exists"
+              ) {
+                errDiv.textContent = `⚠ Already Registered! ID: ${data.attendee_id || "Found"}`;
                 errDiv.className = "err-msg msg-warning";
               } else {
                 errDiv.textContent = "✓ Ready";
                 errDiv.className = "err-msg msg-success";
               }
             } else {
-               errDiv.textContent = "";
+              errDiv.textContent = "";
             }
           } catch (err) {
             errDiv.textContent = "";
-          }
+          } // Fail silently if offline
         } else {
           errDiv.textContent = "";
           errDiv.className = "err-msg";
@@ -732,20 +874,19 @@
         }
       });
 
-      // Live Pincode Check Handler (Uses Free Postal API)
       const fPincode = document.getElementById("f-pincode");
       fPincode.addEventListener("input", async (e) => {
         e.target.value = e.target.value.replace(/\D/g, "");
         const val = e.target.value;
         const errDiv = document.getElementById("e-pincode");
-
         if (val.length === 6) {
           errDiv.textContent = "⏳ Finding location...";
           errDiv.className = "err-msg msg-info";
           try {
-            const res = await fetch(`https://api.postalpincode.in/pincode/${val}`);
+            const res = await fetch(
+              `https://api.postalpincode.in/pincode/${val}`,
+            );
             const data = await res.json();
-            
             if (data && data[0].Status === "Success") {
               const po = data[0].PostOffice[0];
               document.getElementById("f-state").value = po.State;
@@ -771,18 +912,19 @@
         document.getElementById("f-" + key).classList.add("err");
         const el = document.getElementById("e-" + key);
         el.textContent = "⚠ " + msg;
-        el.className = "err-msg"; // Reset to standard red danger text
+        el.className = "err-msg";
       }
       function clearFieldErr(key) {
         document.getElementById("f-" + key).classList.remove("err");
         const el = document.getElementById("e-" + key);
-        // Do not clear the helper text if it's currently showing a valid success/warning state
-        if (!el.classList.contains("msg-success") && !el.classList.contains("msg-warning")) {
+        if (
+          !el.classList.contains("msg-success") &&
+          !el.classList.contains("msg-warning")
+        ) {
           el.textContent = "";
           el.className = "err-msg";
         }
       }
-      
       function clearAllErrors() {
         [
           "name",
@@ -857,7 +999,6 @@
           setFieldErr("pincode", "6-digit pincode");
           ok = false;
         }
-
         if (
           !document.getElementById("day-1").checked &&
           !document.getElementById("day-2").checked &&
@@ -871,15 +1012,16 @@
       }
 
       let cdTimer = null;
-      function showModal(id, isDuplicate = false) {
+      function showModal(id, type = "SUCCESS") {
         const title = document.getElementById("modal-title"),
           desc = document.getElementById("modal-desc");
         const box = document.getElementById("modal-box"),
           idText = document.getElementById("modal-id-text");
         const modal = document.getElementById("success-modal");
+
         idText.textContent = id;
 
-        if (isDuplicate) {
+        if (type === "DUPLICATE") {
           title.textContent = "Already Registered!";
           title.style.color = "var(--warning)";
           box.style.borderColor = "var(--warning)";
@@ -887,6 +1029,14 @@
             "This mobile number is already in the system. Existing ID:";
           idText.style.color = "var(--warning)";
           playAudioTone("WARNING");
+        } else if (type === "OFFLINE") {
+          title.textContent = "Saved Offline!";
+          title.style.color = "var(--warning)";
+          box.style.borderColor = "var(--warning)";
+          desc.textContent =
+            "Network disconnected. Data will sync automatically. Temporary pass:";
+          idText.style.color = "var(--warning)";
+          playAudioTone("OFFLINE");
         } else {
           title.textContent = "Registration Saved!";
           title.style.color = "var(--success)";
@@ -937,7 +1087,6 @@
         document.getElementById("day-2").checked = false;
         document.getElementById("day-3").checked = false;
 
-        // Force clear all helper states explicitly after successful submission
         document.getElementById("e-mobile").className = "err-msg";
         document.getElementById("e-mobile").textContent = "";
         document.getElementById("e-pincode").className = "err-msg";
@@ -989,9 +1138,10 @@
         })
           .then((res) => res.json())
           .then((data) => {
-            if (data.status === "success") showModal(data.attendee_id, false);
+            if (data.status === "success")
+              showModal(data.attendee_id, "SUCCESS");
             else if (data.status === "already_registered")
-              showModal(data.attendee_id, true);
+              showModal(data.attendee_id, "DUPLICATE");
             else {
               showToast("Server Error: " + data.message);
               btn.disabled = false;
@@ -1000,15 +1150,19 @@
             }
           })
           .catch(() => {
-            showToast("Connection Error. Cannot reach Hub.");
-            btn.disabled = false;
-            btn.textContent = "Register Offline Attendee";
-            playAudioTone("ERROR");
+            // INTERCEPT NETWORK CRASH: SAVE OFFLINE
+            let queue = getOfflineQueue();
+            queue.push(payload);
+            saveOfflineQueue(queue);
+
+            // Show modal indicating offline status, using their mobile number as a temporary pass
+            showModal(payload.mobile, "OFFLINE");
           });
       }
 
       window.addEventListener("load", () => {
         initDeviceName();
+        updateOfflineBadge();
         setInterval(syncServerStatus, 3000);
         syncServerStatus();
       });
