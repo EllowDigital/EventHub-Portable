@@ -147,7 +147,7 @@ class GateDisplay(ttk.Window):
 
         self.config_manager = ConfigManager()
         self.gui_queue = queue.Queue()
-        self.scan_queue = queue.Queue()  # Dedicated pacing queue for simultaneous scans
+        self.scan_queue = queue.Queue()  
         
         self.is_polling = True
         self.sound_enabled = True
@@ -156,21 +156,21 @@ class GateDisplay(ttk.Window):
 
         self.build_ui()
         self.after(100, self.process_queue)
-        self.after(100, self.process_scan_queue)  # Start the visual queue worker
-        self.start_stream_thread()
+        self.after(100, self.process_scan_queue)
+        self.start_threads()
 
     def build_ui(self):
         # --- TOP NAVBAR ---
-        nav = ttk.Frame(self, padding=10, bootstyle=DARK)
-        nav.pack(fill=X)
+        self.nav = ttk.Frame(self, padding=10, bootstyle=DARK)
+        self.nav.pack(fill=X)
         
-        title_frame = ttk.Frame(nav, bootstyle=DARK)
+        title_frame = ttk.Frame(self.nav, bootstyle=DARK)
         title_frame.pack(side=LEFT)
         ttk.Label(title_frame, text="🎟️ Gate Display Terminal", font="-size 16 -weight bold", bootstyle=INVERSE).pack(anchor=W)
         self.lbl_subtitle = ttk.Label(title_frame, text=f"{self.config_manager.config['device_name']} • TDE UP 2026", font="-size 9", foreground="#888")
         self.lbl_subtitle.pack(anchor=W)
 
-        controls = ttk.Frame(nav, bootstyle=DARK)
+        controls = ttk.Frame(self.nav, bootstyle=DARK)
         controls.pack(side=RIGHT)
         
         ttk.Button(controls, text="⚙️", bootstyle="outline-light", command=self.open_settings).pack(side=LEFT, padx=5)
@@ -184,17 +184,18 @@ class GateDisplay(ttk.Window):
         self.lbl_hub_status = ttk.Label(controls, text="● Connecting...", font="-weight bold", bootstyle=WARNING)
         self.lbl_hub_status.pack(side=LEFT, padx=15)
 
-        # --- TEST MODE BANNER ---
-        test_banner = ttk.Frame(self, bootstyle=WARNING)
-        test_banner.pack(fill=X)
-        ttk.Label(test_banner, text="🧪 Live Event Mode", font="-weight bold", bootstyle="inverse-warning").pack(side=LEFT, padx=20, pady=5)
+        # --- DYNAMIC TEST MODE BANNER ---
+        self.test_banner = ttk.Frame(self, bootstyle=DANGER)
+        self.lbl_test_mode = ttk.Label(self.test_banner, text="⚠️ TEST MODE ACTIVE", font="-weight bold -size 11", bootstyle="inverse-danger")
+        self.lbl_test_mode.pack(pady=5)
+        # Not packed initially; it gets packed by the status polling thread if Test Mode is True.
         
         # --- MAIN CONTENT GRID ---
-        content = ttk.Frame(self, padding=20)
-        content.pack(fill=BOTH, expand=True)
+        self.content = ttk.Frame(self, padding=20)
+        self.content.pack(fill=BOTH, expand=True)
 
         # LEFT PANEL (Display)
-        left_panel = ttk.Frame(content)
+        left_panel = ttk.Frame(self.content)
         left_panel.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 20))
 
         # Banner
@@ -247,7 +248,7 @@ class GateDisplay(ttk.Window):
         self.bottom_banner.pack(fill=X, side=BOTTOM, ipady=15)
 
         # RIGHT PANEL (Sidebar)
-        right_panel = ttk.Frame(content, width=380)
+        right_panel = ttk.Frame(self.content, width=380)
         right_panel.pack(side=RIGHT, fill=Y)
         right_panel.pack_propagate(False)
 
@@ -343,7 +344,6 @@ class GateDisplay(ttk.Window):
         rel_dir = self.config_manager.config.get("photo_directory", DEFAULT_PHOTO_DIR)
         abs_directory = os.path.normpath(os.path.join(BASE_DIR, rel_dir))
         
-        # Failsafe: Ensure directory exists so manual drops don't fail
         os.makedirs(abs_directory, exist_ok=True)
         
         for ext in ['.jpg', '.png', '.jpeg']:
@@ -466,12 +466,46 @@ class GateDisplay(ttk.Window):
             old = self.recent_scans.pop()
             old.destroy()
 
-    def start_stream_thread(self):
+    def start_threads(self):
         self.is_polling = True
-        self.stream_thread = threading.Thread(target=self.listen_to_server, daemon=True)
+        self.stream_thread = threading.Thread(target=self.listen_to_server_stream, daemon=True)
         self.stream_thread.start()
+        
+        self.status_thread = threading.Thread(target=self.poll_server_status, daemon=True)
+        self.status_thread.start()
 
-    def listen_to_server(self):
+    # --- ADVANCED POLLING: CHECKS TEST MODE AND REGISTERS DEVICE PRESENCE ---
+    def poll_server_status(self):
+        while self.is_polling:
+            hub_url = self.config_manager.config.get('hub_url', '').rstrip('/')
+            device_name = self.config_manager.config.get('device_name', '')
+            url = f"{hub_url}/api/status?device_name={requests.utils.quote(device_name)}"
+            
+            try:
+                resp = requests.get(url, timeout=3, verify=False)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    is_test = data.get("test_mode", False)
+                    test_date = data.get("test_date", "Unknown")
+                    self.gui_queue.put(lambda t=is_test, d=test_date: self.update_test_banner(t, d))
+                else:
+                    self.gui_queue.put(lambda: self.update_test_banner(False, ""))
+            except requests.exceptions.RequestException:
+                # If network fails, silently hide the test banner
+                self.gui_queue.put(lambda: self.update_test_banner(False, ""))
+            
+            time.sleep(3)
+
+    def update_test_banner(self, is_test_mode, test_date):
+        if is_test_mode:
+            self.lbl_test_mode.configure(text=f"⚠️ TEST MODE ACTIVE (OVERRIDE: {test_date})")
+            if not self.test_banner.winfo_ismapped():
+                self.test_banner.pack(fill=X, before=self.content)
+        else:
+            if self.test_banner.winfo_ismapped():
+                self.test_banner.pack_forget()
+
+    def listen_to_server_stream(self):
         while self.is_polling:
             hub_url = self.config_manager.config.get('hub_url', '')
             url = f"{hub_url}/api/stream-scans"
@@ -512,7 +546,6 @@ class GateDisplay(ttk.Window):
         
         def _post():
             try:
-                # verify=False prevents SSL blocking when talking to Flask Hub
                 requests.post(url, json=payload, timeout=3, verify=False)
             except Exception:
                 err_payload = {
@@ -525,8 +558,6 @@ class GateDisplay(ttk.Window):
                 self.scan_queue.put(err_payload)
 
         threading.Thread(target=_post, daemon=True).start()
-        
-        # Clear entries
         self.gui_queue.put(lambda: [e.delete(0, END) or e.event_generate('<FocusOut>') for e in (self.ent_id, self.ent_phone)])
 
     def open_settings(self):
@@ -535,8 +566,8 @@ class GateDisplay(ttk.Window):
     def on_settings_saved(self):
         self.lbl_subtitle.config(text=f"{self.config_manager.config['device_name']} • TDE UP 2026")
         self.is_polling = False
-        time.sleep(0.2)
-        self.start_stream_thread()
+        time.sleep(0.5)
+        self.start_threads()
 
 if __name__ == "__main__":
     app = GateDisplay()
