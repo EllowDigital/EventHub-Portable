@@ -12,6 +12,7 @@ import uuid
 import queue
 import ipaddress
 import requests
+import urllib3
 from datetime import datetime, timezone, timedelta
 
 import ttkbootstrap as ttk
@@ -23,6 +24,9 @@ import webbrowser
 
 from flask import Flask, render_template, request, jsonify, Response
 from waitress import create_server  # 🚀 Waitress WSGI Engine (plain-HTTP port 5000 only)
+
+# Disable InsecureRequestWarning for Cloudflare pings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 🔒 Cheroot WSGI Engine — real production server, replaces the old werkzeug
 # ad-hoc HTTPS server. Pure Python (no compiler needed, same portability
@@ -90,12 +94,14 @@ SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
 ACTIVE_DEVICES = {}
-SCAN_CLIENTS = []  
+SCAN_CLIENTS = []
+scan_clients_lock = threading.Lock()
 
 # 📱 Single source of truth for "is this device still connected?" — used by both
 # the GUI panel and the /api/network-data endpoint (previously 15s in one place
 # and 30s in the other, which made the two views disagree with each other).
 DEVICE_ONLINE_WINDOW = 20  # seconds since last heartbeat before a device is considered offline
+
 
 # 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion
 DB_SESSIONS_CACHE = None
@@ -235,15 +241,30 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
         "attendee": att_dict
     }
     
-    for q in list(SCAN_CLIENTS):
+    # Safely take a snapshot of the current clients list
+    with scan_clients_lock:
+        clients_snapshot = list(SCAN_CLIENTS)
+
+    # Broadcast to all active queues
+    for q in clients_snapshot:
         try:
             q.put_nowait(event)
+        except queue.Full:
+            # Client stopped reading (queue is full), safely remove them
+            with scan_clients_lock:
+                if q in SCAN_CLIENTS:
+                    SCAN_CLIENTS.remove(q)
         except Exception:
-            pass
+            # Catch any other unexpected queue errors and remove the client
+            with scan_clients_lock:
+                if q in SCAN_CLIENTS:
+                    SCAN_CLIENTS.remove(q)
 
 # ==============================================================================
 # FLASK ROUTES & APIS
 # ==============================================================================
+device_lock = threading.Lock()
+
 @app.route('/')
 def index(): return render_template('index.html')
 
@@ -261,14 +282,19 @@ def get_server_status():
     ip = request.remote_addr
     custom_device_name = request.args.get('device_name', 'Unknown Device')
     if custom_device_name and custom_device_name != "null":
-        ACTIVE_DEVICES[ip] = {'last_seen': time.time(), 'name': custom_device_name}
+        with device_lock:
+            ACTIVE_DEVICES[ip] = {'last_seen': time.time(), 'name': custom_device_name}
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
 
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
         q = queue.Queue(maxsize=50)
-        SCAN_CLIENTS.append(q)
+        
+        # safely add the new client queue using the lock
+        with scan_clients_lock:
+            SCAN_CLIENTS.append(q)
+            
         try:
             while True:
                 try:
@@ -279,9 +305,20 @@ def stream_scans():
         except GeneratorExit:
             pass 
         finally:
-            if q in SCAN_CLIENTS:
-                SCAN_CLIENTS.remove(q)
-    return Response(event_stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive'})
+            # safely remove the client queue using the lock on disconnect
+            with scan_clients_lock:
+                if q in SCAN_CLIENTS:
+                    SCAN_CLIENTS.remove(q)
+                    
+    return Response(
+        event_stream(), 
+        mimetype='text/event-stream', 
+        headers={
+            'Cache-Control': 'no-cache', 
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'  # Prevents Nginx/Cloudflare from buffering the stream
+        }
+    )
 
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
@@ -380,8 +417,9 @@ def process_checkin():
 
     except Exception as e:
         session.rollback()
-        log_event_clean("CHECKIN", device_name, str(e), 500)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        # Log real error, but send a clean sanitized message back to client device
+        log_event_clean("CHECKIN", device_name, f"DB Error: {str(e)}", 500)
+        return jsonify({"status": "error", "message": "An internal server error occurred while processing the request."}), 500
     finally:
         session.close()
 
@@ -468,8 +506,9 @@ def process_registration():
 
     except Exception as e:
         session.rollback()
-        log_event_clean("REGISTER", device_label, str(e), 500)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        # Log real error, but send a clean sanitized message back to client device
+        log_event_clean("REGISTER", device_label, f"DB Error: {str(e)}", 500)
+        return jsonify({"status": "error", "message": "An internal server error occurred while processing the request."}), 500
     finally:
         session.close()
 
@@ -512,9 +551,10 @@ def check_mobile():
 def get_network_data():
     current_time = time.time()
     active_devices = {}
-    for ip, data in list(ACTIVE_DEVICES.items()):
-        if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: active_devices[ip] = data
-        else: del ACTIVE_DEVICES[ip]
+    with device_lock:
+        for ip, data in list(ACTIVE_DEVICES.items()):
+            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: active_devices[ip] = data
+            else: del ACTIVE_DEVICES[ip]
 
     sessions = get_cached_sessions()
     session = sessions.get('mysql')()
@@ -741,7 +781,8 @@ class ServerHub(ttk.Window):
             if self.cloudflare_url and self.cloudflare_url != "Offline":
                 start_cf = time.time()
                 try:
-                    # Added headers and increased timeout to 7 seconds
+                    # Added headers and increased timeout to 7 seconds, with verify=False 
+                    # warnings suppressed via urllib3 at the top of the file
                     requests.get(f"{self.cloudflare_url}/api/status", headers=headers, timeout=7, verify=False)
                     NETWORK_LATENCY["cloud_ms"] = int((time.time() - start_cf) * 1000)
                     NETWORK_LATENCY["cloud_status"] = "ONLINE"
@@ -904,19 +945,19 @@ class ServerHub(ttk.Window):
 
         self.tree_devices = ttk.Treeview(
             devices_frame,
-            columns=("name", "ip", "last_seen", "status"),
+            columns=("name", "ip", "status", "indicator"),
             show="headings",
             height=6,
             bootstyle=INFO,
         )
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
-        self.tree_devices.heading("last_seen", text="Last Seen")
-        self.tree_devices.heading("status", text="Status")
+        self.tree_devices.heading("status", text="Last Seen")
+        self.tree_devices.heading("indicator", text="Status")
         self.tree_devices.column("name", width=300, anchor=W)
         self.tree_devices.column("ip", width=150, anchor=W)
-        self.tree_devices.column("last_seen", width=120, anchor=CENTER)
-        self.tree_devices.column("status", width=110, anchor=CENTER)
+        self.tree_devices.column("status", width=120, anchor=CENTER)
+        self.tree_devices.column("indicator", width=110, anchor=CENTER)
         self.tree_devices.pack(fill=X, padx=2, pady=2)
         self.tree_devices.tag_configure("online", foreground="#3fd66f")
         self.tree_devices.tag_configure("empty", foreground="#888")
@@ -1004,7 +1045,11 @@ class ServerHub(ttk.Window):
     def refresh_stats(self):
         global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES
         current_time = time.time()
-        active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
+        
+        # Protect dictionary access properly on Tkinter's main loop
+        with device_lock:
+            active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
+            device_names = {ip: ACTIVE_DEVICES[ip]['name'] for ip in active_ips}
         
         self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
 
@@ -1012,11 +1057,10 @@ class ServerHub(ttk.Window):
             self.tree_devices.delete(row)
 
         if active_ips:
-            sorted_ips = sorted(active_ips, key=lambda ip: ACTIVE_DEVICES[ip]['name'].lower())
+            sorted_ips = sorted(active_ips, key=lambda ip: device_names[ip].lower())
             for ip in sorted_ips:
-                name = ACTIVE_DEVICES[ip]['name']
-                seconds_ago = int(current_time - ACTIVE_DEVICES[ip]['last_seen'])
-                self.tree_devices.insert("", END, values=(name, ip, f"{seconds_ago}s ago", "🟢 Online"), tags=("online",))
+                name = device_names[ip]
+                self.tree_devices.insert("", END, values=(name, ip, "🟢 Online", "Active"), tags=("online",))
         else:
             self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
 
@@ -1174,7 +1218,11 @@ class ServerHub(ttk.Window):
         
         if self.cf_process:
             try:
-                self.cf_process.terminate()
+                # Force kill the process tree to clear zombie cloudflared.exe on Windows
+                if platform.system() == "Windows":
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.cf_process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    self.cf_process.terminate()
             except Exception: pass
             finally: self.cf_process = None
 
@@ -1182,6 +1230,7 @@ class ServerHub(ttk.Window):
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel connection closed.")
+
 
 if __name__ == "__main__":
     app_window = ServerHub()
