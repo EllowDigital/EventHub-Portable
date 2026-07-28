@@ -1,6 +1,44 @@
+"""
+TDE UP 2026 — Event Hub (server_hub.py) — V2.2 (Hardened)
+
+Combines a Flask HTTP/HTTPS server (for scanner/kiosk devices on the LAN),
+a Tkinter operator dashboard, and background workers, in one process.
+
+Hardening pass changes, in one place for whoever reads this next:
+
+  1. DB WRITE QUEUE — /api/checkin and /api/register hand their DB work to a
+     small pool of writer threads (DB_WRITER_THREADS) via a queue.Queue +
+     concurrent.futures.Future, instead of opening a transaction directly on
+     whichever Waitress/Cheroot request thread received the HTTP call. Bounds
+     concurrent MySQL writes to a small, known number no matter how many of
+     the 20+ scanner/kiosk devices POST at once. See "DB WRITE QUEUE ENGINE".
+
+  2. STATS CACHE — one background thread (stats_refresher_loop) computes the
+     dashboard's DB-derived numbers on a timer. /api/network-data and the
+     GUI's refresh_stats() both just read the cached result now, instead of
+     each independently re-running the same expensive queries — and instead
+     of the GUI running them directly on its own main thread, where a slow
+     MySQL round-trip used to freeze the whole window.
+
+  3. LOGGING — a real, rotating logs/server_hub.log now exists (previously
+     the only module in this project without one). Every check-in,
+     registration, and error is durably recorded, not just shown on screen.
+
+  4. Smaller fixes: daemon server threads + a WM_DELETE_WINDOW handler (so
+     closing the window can't orphan a running engine/tunnel in the
+     background), a duplicate-mobile race in registration resolved via
+     IntegrityError instead of a raw 500, a device grid that shows real
+     heartbeat freshness instead of a static "Online" string, and a request
+     size limit.
+
+schema.py is intentionally untouched — all of the above works within its
+existing session/model layer.
+"""
+
 import os
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import threading
 import subprocess
 import socket
@@ -10,6 +48,8 @@ import re
 import time
 import uuid
 import queue
+import concurrent.futures
+from dataclasses import dataclass, field
 import ipaddress
 import requests
 import urllib3
@@ -18,6 +58,7 @@ from datetime import datetime, timezone, timedelta
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.widgets.scrolled import ScrolledText
+from ttkbootstrap.dialogs import Messagebox
 import qrcode
 from PIL import Image, ImageTk
 import webbrowser
@@ -55,6 +96,7 @@ except ImportError:
 
 # 🛡️ Force SQLAlchemy to detect JSON column updates
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.exc import IntegrityError
 
 # Windows DPI Awareness & Anti-Sleep Mode
 if platform.system() == "Windows":
@@ -85,9 +127,40 @@ HTTP_PORT = 5000   # Fast, unencrypted Local LAN traffic & Cloudflare tunnel tar
 HTTPS_PORT = 5001  # Secure Local LAN traffic (allows iOS Camera Access natively)
 CERT_DIR = os.path.join(BASE_DIR, 'config', 'certs')
 
+# 🧵 Concurrency & robustness tuning — grouped here so it's easy to retune
+# on-site without hunting through the file.
+DB_WRITER_THREADS = 4            # Parallel workers draining the DB write queue (checkin/register).
+                                  # Bounds concurrent MySQL writes to a small, known number instead
+                                  # of every one of the 20+ scanner/kiosk devices opening its own
+                                  # write transaction the instant it POSTs.
+DB_JOB_QUEUE_MAXSIZE = 300       # Backpressure limit. If ever exceeded (DB truly stuck), new
+                                  # requests fail fast with a clean 503 instead of piling up.
+DB_JOB_TIMEOUT = 8               # Seconds a request waits for its DB job before getting a clean
+                                  # timeout response — so one stuck DB call can never hold an HTTP
+                                  # worker thread (and eventually the whole pool) hostage forever.
+STATS_REFRESH_INTERVAL_SEC = 3   # How often the background thread recomputes dashboard stats.
+SLOW_REQUEST_THRESHOLD_MS = 500  # Requests slower than this log a WARNING — visibility into
+                                  # "is the network/DB actually slow right now?" during the event.
+
+# ==============================================================================
+# 📝 LOGGING — a real, rotating log file. Before this, server_hub.py was the
+# only one of the app's modules with no persistent log (sync_manager.py and
+# photo_down.py already wrote to logs/*.log) — every check-in, registration,
+# and error only ever lived in the on-screen panels, gone the moment the
+# window closed or crashed. RotatingFileHandler caps growth over the 3-day
+# event instead of one file growing without bound.
+# ==============================================================================
+LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
+_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=5, encoding='utf-8')
+_file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
+
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
+# Generous but bounded — rejects broken/abusive oversized payloads with a
+# clean 413 instead of a worker thread spending time reading them.
+app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  # 2MB
 
 gui_log_callback = None
 SERVER_TEST_MODE = False
@@ -105,11 +178,14 @@ DEVICE_ONLINE_WINDOW = 20  # seconds since last heartbeat before a device is con
 
 # 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion
 DB_SESSIONS_CACHE = None
+_db_cache_lock = threading.Lock()
 
 def get_cached_sessions():
     global DB_SESSIONS_CACHE
     if DB_SESSIONS_CACHE is None:
-        DB_SESSIONS_CACHE = get_database_sessions()
+        with _db_cache_lock:
+            if DB_SESSIONS_CACHE is None:  # double-checked locking: avoid a rare
+                DB_SESSIONS_CACHE = get_database_sessions()  # startup race creating 2 engines
     return DB_SESSIONS_CACHE
 
 # 📡 TELEMETRY ENGINE GLOBALS
@@ -119,6 +195,29 @@ NETWORK_LATENCY = {
     "local_status": "OFFLINE",
     "cloud_status": "OFFLINE"
 }
+network_latency_lock = threading.Lock()
+
+# ==============================================================================
+# 📊 DASHBOARD STATS CACHE — refreshed by ONE background thread (defined
+# below, started once at app launch), never on a Flask request thread or the
+# Tkinter main thread. /api/network-data and the GUI's refresh_stats() both
+# just read this dict now. Previously both of them independently ran the same
+# 3 expensive full-table-scan LIKE-count queries every few seconds — and the
+# GUI ran its copy directly on the Tkinter main thread, so any slow MySQL
+# round-trip froze the entire operator window for its duration.
+# ==============================================================================
+STATS_CACHE = {
+    "total_attendees": 0,
+    "total_registrations": 0,
+    "chk_30": 0,
+    "chk_31": 0,
+    "chk_01": 0,
+    "total_scans": 0,
+    "today_scans": 0,
+    "last_refreshed": 0.0,
+    "last_error": None,
+}
+stats_lock = threading.Lock()
 
 # ==============================================================================
 # 🔒 PERSISTENT SSL CERTIFICATE (replaces werkzeug's ssl_context='adhoc')
@@ -184,27 +283,44 @@ def ensure_ssl_certificate(local_ip):
             reuse_existing = False
 
     if not reuse_existing:
-        print(f"[SSL] Generating new HTTPS certificate for {local_ip} (first run, or IP changed)...")
+        logging.info(f"[SSL] Generating new HTTPS certificate for {local_ip} (first run, or IP changed)...")
         _write_self_signed_cert(cert_path, key_path, local_ip)
         with open(ip_marker_path, 'w') as f:
             f.write(local_ip)
     else:
-        print(f"[SSL] Reusing existing HTTPS certificate for {local_ip}.")
+        logging.info(f"[SSL] Reusing existing HTTPS certificate for {local_ip}.")
 
     return cert_path, key_path
 
 # ==============================================================================
 # FLASK MIDDLEWARE & EVENT BROADCASTER
 # ==============================================================================
+@app.before_request
+def _start_request_timer():
+    request._start_time = time.time()
+
 @app.after_request
 def log_request(response):
-    if request.path in ['/api/status', '/api/network-data', '/api/stream-scans'] or request.path.startswith('/static') or request.path.startswith('/favicon.ico'):
-        return response  
-        
+    # /api/stream-scans is a deliberately long-lived SSE connection — "how long
+    # has it been open" is meaningless there and would look like every request
+    # is slow, so it stays excluded from timing along with static assets.
+    if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans':
+        return response
+
+    try:
+        duration_ms = (time.time() - getattr(request, '_start_time', time.time())) * 1000
+        if duration_ms > SLOW_REQUEST_THRESHOLD_MS:
+            logging.warning(f"Slow request: {request.method} {request.path} took {duration_ms:.0f}ms (status {response.status_code})")
+    except Exception:
+        pass
+
     return response
 
 def log_event_clean(action_type, device_name, details, status_code):
-    """Formats clean, human-readable operations logs for the GUI."""
+    """Formats clean, human-readable operations logs for the GUI, and durably
+    persists the same event to logs/server_hub.log — previously this only
+    ever reached the on-screen panel, so closing the window or a crash lost
+    the entire check-in/registration history for the event."""
     time_str = datetime.now().strftime('%H:%M:%S')
     
     if action_type == "REGISTER":
@@ -218,6 +334,14 @@ def log_event_clean(action_type, device_name, details, status_code):
         
     if gui_log_callback:
         gui_log_callback(msg)
+
+    plain_msg = f"[{device_name}] {action_type}: {details} (status {status_code})"
+    if status_code >= 500:
+        logging.error(plain_msg)
+    elif status_code >= 400:
+        logging.warning(plain_msg)
+    else:
+        logging.info(plain_msg)
 
 def broadcast_scan(attendee, status, message, device_name, scan_time):
     att_dict = None
@@ -259,6 +383,349 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             with scan_clients_lock:
                 if q in SCAN_CLIENTS:
                     SCAN_CLIENTS.remove(q)
+
+# ==============================================================================
+# 📊 DASHBOARD STATS ENGINE — one background thread computes these numbers on
+# a timer; the API endpoint and the GUI both just read the cached result.
+# ==============================================================================
+def _compute_stats_snapshot():
+    """Runs the actual (relatively expensive) COUNT queries exactly once. Only
+    ever called from stats_refresher_loop()'s background thread — never from a
+    Flask request thread or the Tkinter main thread — so a slow MySQL
+    round-trip can never block an HTTP response or freeze the operator GUI."""
+    sessions = get_cached_sessions()
+    mysql_factory = sessions.get('mysql') if sessions else None
+    if not mysql_factory:
+        return None
+
+    session = mysql_factory()
+    try:
+        total_attendees = session.query(Attendee).count()
+        total_registrations = session.query(OfflineKioskAttendee).count()
+        # Still LIKE-based (checkin_history is a JSON column, not a dedicated
+        # per-day column, and schema.py is intentionally left untouched) — but
+        # now it runs once every STATS_REFRESH_INTERVAL_SEC instead of once
+        # per poll from every viewer, PLUS once more per GUI tick.
+        chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
+        chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
+        chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
+        return {
+            "total_attendees": total_attendees,
+            "total_registrations": total_registrations,
+            "chk_30": chk_30, "chk_31": chk_31, "chk_01": chk_01,
+            "total_scans": chk_30 + chk_31 + chk_01,
+        }
+    finally:
+        session.close()
+
+def stats_refresher_loop():
+    """Runs for the lifetime of the app (started once from ServerHub.__init__),
+    independent of whether the Waitress/Cheroot engines are running."""
+    while True:
+        try:
+            snapshot = _compute_stats_snapshot()
+            if snapshot is not None:
+                today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                today_scans = {
+                    "2026-08-30": snapshot["chk_30"],
+                    "2026-08-31": snapshot["chk_31"],
+                    "2026-09-01": snapshot["chk_01"],
+                }.get(today_date, 0)
+                with stats_lock:
+                    STATS_CACHE.update(snapshot)
+                    STATS_CACHE["today_scans"] = today_scans
+                    STATS_CACHE["last_refreshed"] = time.time()
+                    STATS_CACHE["last_error"] = None
+        except Exception as e:
+            logging.exception("Stats refresh failed")
+            with stats_lock:
+                STATS_CACHE["last_error"] = str(e)
+        time.sleep(STATS_REFRESH_INTERVAL_SEC)
+
+
+# ==============================================================================
+# 🧵 DB WRITE QUEUE ENGINE — "no DB bottlenecks" in practice: /api/checkin and
+# /api/register no longer open a DB transaction directly on whichever
+# Waitress/Cheroot request thread happens to handle them. Instead they build a
+# small job, drop it on a queue, and wait (with a timeout) on a Future. A
+# small fixed pool of writer threads (DB_WRITER_THREADS) drains that queue.
+#
+# Why this is safe for correctness, not just throughput:
+#   - Check-in already used SELECT ... FOR UPDATE on the attendee's own row,
+#     so two simultaneous scans of the SAME badge correctly serialize via a
+#     real DB row lock no matter how many writer threads exist.
+#   - Registration's "does this mobile number already exist?" check does NOT
+#     lock anything when nothing is found (there's no row to lock), so two
+#     kiosks submitting the same mobile number at the same instant could
+#     previously both pass the check and both try to INSERT — the loser saw a
+#     raw 500 instead of a friendly "already registered". Fixed below by
+#     catching the unique-constraint violation directly, which is correct
+#     regardless of how many writer threads are running.
+# ==============================================================================
+@dataclass
+class DBJob:
+    kind: str
+    payload: dict
+    future: concurrent.futures.Future = field(default_factory=concurrent.futures.Future)
+
+DB_WRITE_QUEUE = queue.Queue(maxsize=DB_JOB_QUEUE_MAXSIZE)
+_db_writer_threads = []
+
+def _submit_db_job(kind, payload):
+    """Enqueues a job and blocks (only this one Flask request thread) until a
+    writer thread finishes it or DB_JOB_TIMEOUT elapses. Returns the exact
+    (status_code, body_dict) tuple the route should respond with."""
+    job = DBJob(kind=kind, payload=payload)
+    try:
+        DB_WRITE_QUEUE.put(job, timeout=1)
+    except queue.Full:
+        logging.error(f"DB write queue full — rejecting a '{kind}' request")
+        return 503, {"status": "error", "message": "Server is busy right now — please try again in a moment."}
+
+    try:
+        return job.future.result(timeout=DB_JOB_TIMEOUT)
+    except concurrent.futures.TimeoutError:
+        logging.error(f"DB job timed out after {DB_JOB_TIMEOUT}s ('{kind}')")
+        return 504, {"status": "error", "message": "The request took too long to process. Please try again."}
+    except Exception:
+        logging.exception(f"Unhandled error waiting on DB job ('{kind}')")
+        return 500, {"status": "error", "message": "An internal server error occurred while processing the request."}
+
+def _handle_checkin_job(payload):
+    """The exact check-in logic that used to run inline inside the Flask
+    route — moved here unchanged so it now runs on a writer thread instead."""
+    identifier = payload["identifier"]
+    search_type = payload["search_type"]
+    device_name = payload["device_name"]
+    iso_timestamp = payload["iso_timestamp"]
+
+    if not identifier:
+        msg = "No ID or Phone provided"
+        log_event_clean("CHECKIN", device_name, msg, 400)
+        broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
+        return 400, {"status": "error", "message": msg}
+
+    sessions = get_cached_sessions()
+    session = sessions.get('mysql')()
+
+    try:
+        attendee = None
+        if search_type == 'phone':
+            attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
+            if not attendee:
+                attendee = session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
+        else:
+            attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first()
+            if not attendee:
+                attendee = session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
+
+        if not attendee:
+            msg = f"Not found: {identifier}"
+            log_event_clean("CHECKIN", device_name, msg, 404)
+            broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
+            return 404, {"status": "error", "message": msg}
+
+        history = attendee.checkin_history
+        if isinstance(history, str):
+            try: history = json.loads(history)
+            except: history = {}
+        if not isinstance(history, dict): history = {}
+
+        current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
+
+        if current_date_str not in date_map:
+            msg = f"Date invalid: {current_date_str}"
+            log_event_clean("CHECKIN", device_name, msg, 400)
+            broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
+            return 400, {"status": "error", "message": msg}
+
+        today_key = date_map[current_date_str]
+        att_days = attendee.attendance_days or []
+        if isinstance(att_days, str):
+            try: att_days = json.loads(att_days)
+            except: att_days = []
+
+        if today_key not in att_days:
+            msg = f"Access Denied (No pass for {today_key})"
+            log_event_clean("CHECKIN", device_name, msg, 403)
+            broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
+            return 403, {"status": "error", "message": msg}
+
+        if today_key in history:
+            msg = f"Already checked in: {attendee.full_name}"
+            log_event_clean("CHECKIN", device_name, msg, 400)
+            broadcast_scan(attendee, "DUPLICATE", msg, device_name, iso_timestamp)
+            return 400, {"status": "error", "message": msg}
+
+        history[today_key] = {
+            "timestamp": iso_timestamp,
+            "source": "offline_hub",
+            "device": device_name,
+            "date_code": current_date_str,
+            "display_date": today_key
+        }
+
+        attendee.checkin_history = history
+        flag_modified(attendee, "checkin_history")
+
+        attendee.needs_cloud_sync = True
+        attendee.needs_sheet_sync = True
+        attendee.needs_local_sync = False
+        attendee.local_modified = True
+
+        session.commit()
+
+        success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
+        log_event_clean("CHECKIN", device_name, success_msg, 200)
+        broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
+
+        return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
+
+    except Exception as e:
+        session.rollback()
+        logging.exception("Checkin DB error")
+        log_event_clean("CHECKIN", device_name, f"DB Error: {str(e)}", 500)
+        return 500, {"status": "error", "message": "An internal server error occurred while processing the request."}
+    finally:
+        session.close()
+
+def _handle_register_job(payload):
+    """The exact registration logic that used to run inline inside the Flask
+    route, plus a fix for the duplicate-mobile race described above."""
+    data = payload["data"]
+    device_label = payload["device_label"]
+    iso_timestamp = payload["iso_timestamp"]
+    mobile_number = payload["mobile_number"]
+
+    sessions = get_cached_sessions()
+    session = sessions.get('mysql')()
+
+    try:
+        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
+        if existing_main:
+            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
+            return 200, {"status": "already_registered", "message": "Already registered.", "attendee_id": existing_main.attendee_id}
+
+        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).with_for_update().first()
+        if existing_kiosk:
+            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
+            return 200, {"status": "already_registered", "message": "Already registered.", "attendee_id": existing_kiosk.attendee_id}
+
+        def gen_id(att_type: str) -> str:
+            prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
+            chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+            for _ in range(5000):
+                code = "".join(random.choices(chars, k=6))
+                aid = f"TDE26-{prefix}-{code}"
+                if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first():
+                    return aid
+            raise RuntimeError("ID generation failed")
+
+        new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
+        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
+
+        checkin_history_dict = {}
+        if today_date in valid_event_days:
+            date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
+            key = date_map[today_date]
+            checkin_history_dict[key] = {
+                "timestamp": iso_timestamp,
+                "source": "offline_hub",
+                "device": device_label,
+                "date_code": today_date,
+                "display_date": key
+            }
+
+        new_kiosk_reg = OfflineKioskAttendee(
+            id=str(uuid.uuid4()),
+            attendee_id=new_attendee_id,
+            full_name=data.get('full_name'),
+            mobile=mobile_number,
+            email=data.get('email', ''),
+            gender=data.get('gender'),
+            attendee_type=data.get('attendee_type'),
+            business_name=data.get('business_name', ''),
+            business_category=data.get('business_category', ''),
+            other_category=data.get('other_category', ''),
+            address=data.get('address', ''),
+            city=data.get('city', ''),
+            state=data.get('state', ''),
+            pincode=data.get('pincode', ''),
+            attendance_days=data.get('attendance_days', []),
+            photo_url=None,
+            checkin_history=checkin_history_dict,
+            device_name=device_label,
+            needs_cloud_sync=True,
+            needs_sheet_sync=True,
+            needs_local_sync=False,
+            local_modified=True
+        )
+        try:
+            session.add(new_kiosk_reg)
+            session.commit()
+        except IntegrityError:
+            # Another writer thread won the race and inserted this same
+            # mobile number a moment ago (e.g. two kiosks submitting the same
+            # person at the same instant). Treat it exactly like the
+            # "already registered" path above instead of surfacing a 500.
+            session.rollback()
+            existing = (session.query(Attendee).filter_by(mobile=mobile_number).first()
+                        or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first())
+            if existing:
+                log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists - Race Resolved)", 200)
+                return 200, {"status": "already_registered", "message": "Already registered.", "attendee_id": existing.attendee_id}
+            masked = f"...{mobile_number[-4:]}" if len(mobile_number) >= 4 else "****"
+            logging.error(f"IntegrityError on register but no matching record found for mobile {masked}")
+            return 500, {"status": "error", "message": "An internal server error occurred while processing the request."}
+
+        log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
+        return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
+
+    except Exception as e:
+        session.rollback()
+        logging.exception("Registration DB error")
+        log_event_clean("REGISTER", device_label, f"DB Error: {str(e)}", 500)
+        return 500, {"status": "error", "message": "An internal server error occurred while processing the request."}
+    finally:
+        session.close()
+
+def db_writer_loop(worker_id):
+    logging.info(f"DB writer thread #{worker_id} started")
+    while True:
+        job = DB_WRITE_QUEUE.get()
+        if job is None:  # shutdown sentinel
+            DB_WRITE_QUEUE.task_done()
+            break
+        try:
+            if job.kind == "checkin":
+                result = _handle_checkin_job(job.payload)
+            elif job.kind == "register":
+                result = _handle_register_job(job.payload)
+            else:
+                result = (500, {"status": "error", "message": "Unknown job type"})
+            if not job.future.done():
+                job.future.set_result(result)
+        except Exception as e:
+            logging.exception(f"Unhandled error in DB writer thread #{worker_id}")
+            if not job.future.done():
+                job.future.set_exception(e)
+        finally:
+            DB_WRITE_QUEUE.task_done()
+    logging.info(f"DB writer thread #{worker_id} stopped")
+
+def start_db_writers():
+    for i in range(DB_WRITER_THREADS):
+        t = threading.Thread(target=db_writer_loop, args=(i + 1,), daemon=True, name=f"DBWriter-{i+1}")
+        t.start()
+        _db_writer_threads.append(t)
+
+def stop_db_writers():
+    for _ in range(len(_db_writer_threads)):
+        DB_WRITE_QUEUE.put(None)
+    _db_writer_threads.clear()
+
 
 # ==============================================================================
 # FLASK ROUTES & APIS
@@ -322,195 +789,36 @@ def stream_scans():
 
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
-    global SERVER_TEST_MODE, SERVER_TEST_DATE
+    """Thin & fast: validate the shape of the request, hand the actual DB
+    work to the write-queue (see _handle_checkin_job above), then translate
+    the result into the exact same JSON shape scanner clients already expect."""
     data = request.json or {}
-    
-    # Accept multiple possible input keys from various scanner scripts
-    identifier = str(data.get('attendee_id', data.get('qr_data', data.get('id', '')))).strip()
-    search_type = data.get('search_type', 'id')
-    device_name = data.get('device_name', f"Scanner ({request.remote_addr})")
-    
-    iso_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    
-    if not identifier:
-        msg = "No ID or Phone provided"
-        log_event_clean("CHECKIN", device_name, msg, 400)
-        broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
-        return jsonify({"status": "error", "message": msg}), 400
-
-    sessions = get_cached_sessions()
-    session = sessions.get('mysql')()
-    
-    try:
-        attendee = None
-        if search_type == 'phone':
-            attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first()
-            if not attendee:
-                attendee = session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
-        else:
-            attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first()
-            if not attendee:
-                attendee = session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
-
-        if not attendee:
-            msg = f"Not found: {identifier}"
-            log_event_clean("CHECKIN", device_name, msg, 404)
-            broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
-            return jsonify({"status": "error", "message": msg}), 404
-
-        history = attendee.checkin_history
-        if isinstance(history, str):
-            try: history = json.loads(history)
-            except: history = {}
-        if not isinstance(history, dict): history = {}
-
-        current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
-        
-        if current_date_str not in date_map:
-            msg = f"Date invalid: {current_date_str}"
-            log_event_clean("CHECKIN", device_name, msg, 400)
-            broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
-            return jsonify({"status": "error", "message": msg}), 400
-            
-        today_key = date_map[current_date_str]
-        att_days = attendee.attendance_days or []
-        if isinstance(att_days, str):
-            try: att_days = json.loads(att_days)
-            except: att_days = []
-            
-        if today_key not in att_days:
-            msg = f"Access Denied (No pass for {today_key})"
-            log_event_clean("CHECKIN", device_name, msg, 403)
-            broadcast_scan(attendee, "ERROR", msg, device_name, iso_timestamp)
-            return jsonify({"status": "error", "message": msg}), 403
-
-        if today_key in history:
-            msg = f"Already checked in: {attendee.full_name}"
-            log_event_clean("CHECKIN", device_name, msg, 400)
-            broadcast_scan(attendee, "DUPLICATE", msg, device_name, iso_timestamp)
-            return jsonify({"status": "error", "message": msg}), 400
-
-        history[today_key] = {
-            "timestamp": iso_timestamp,
-            "source": "offline_hub",
-            "device": device_name,
-            "date_code": current_date_str,
-            "display_date": today_key
-        }
-
-        attendee.checkin_history = history 
-        flag_modified(attendee, "checkin_history")
-        
-        attendee.needs_cloud_sync = True
-        attendee.needs_sheet_sync = True
-        attendee.needs_local_sync = False 
-        attendee.local_modified = True
-        
-        session.commit()
-        
-        success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
-        log_event_clean("CHECKIN", device_name, success_msg, 200)
-        broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
-            
-        return jsonify({"status": "success", "message": success_msg, "time": iso_timestamp}), 200
-
-    except Exception as e:
-        session.rollback()
-        # Log real error, but send a clean sanitized message back to client device
-        log_event_clean("CHECKIN", device_name, f"DB Error: {str(e)}", 500)
-        return jsonify({"status": "error", "message": "An internal server error occurred while processing the request."}), 500
-    finally:
-        session.close()
+    payload = {
+        # Accept multiple possible input keys from various scanner scripts
+        "identifier": str(data.get('attendee_id', data.get('qr_data', data.get('id', '')))).strip(),
+        "search_type": data.get('search_type', 'id'),
+        "device_name": data.get('device_name', f"Scanner ({request.remote_addr})"),
+        "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+    }
+    status_code, body = _submit_db_job("checkin", payload)
+    return jsonify(body), status_code
 
 @app.route('/api/register', methods=['POST'])
 def process_registration():
-    global SERVER_TEST_MODE, SERVER_TEST_DATE
+    """Thin & fast: validate the shape of the request, hand the actual DB
+    work to the write-queue (see _handle_register_job above), then translate
+    the result into the exact same JSON shape kiosk clients already expect."""
     data = request.json or {}
-    sessions = get_cached_sessions()
-    session = sessions.get('mysql')()
-    
-    mobile_number = data.get('mobile', '').strip()
     req_ip = request.remote_addr
     req_os = request.user_agent.platform or "Unknown"
-    device_label = data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})")
-
-    iso_timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-
-    try:
-        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
-        if existing_main: 
-            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
-            return jsonify({"status": "already_registered", "message": "Already registered.", "attendee_id": existing_main.attendee_id}), 200
-
-        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).with_for_update().first()
-        if existing_kiosk: 
-            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
-            return jsonify({"status": "already_registered", "message": "Already registered.", "attendee_id": existing_kiosk.attendee_id}), 200
-
-        def gen_id(att_type: str) -> str:
-            prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
-            chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-            for _ in range(5000):
-                code = "".join(random.choices(chars, k=6))
-                aid = f"TDE26-{prefix}-{code}"
-                if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first():
-                    return aid
-            raise RuntimeError("ID generation failed")
-
-        new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
-        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        valid_event_days = ["2026-08-30", "2026-08-31", "2026-09-01"]
-        
-        checkin_history_dict = {}
-        if today_date in valid_event_days:
-            date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
-            key = date_map[today_date]
-            checkin_history_dict[key] = {
-                "timestamp": iso_timestamp,
-                "source": "offline_hub",
-                "device": device_label,
-                "date_code": today_date,
-                "display_date": key
-            }
-
-        new_kiosk_reg = OfflineKioskAttendee(
-            id=str(uuid.uuid4()), 
-            attendee_id=new_attendee_id, 
-            full_name=data.get('full_name'),
-            mobile=mobile_number,
-            email=data.get('email', ''),
-            gender=data.get('gender'),
-            attendee_type=data.get('attendee_type'),
-            business_name=data.get('business_name', ''),
-            business_category=data.get('business_category', ''),
-            other_category=data.get('other_category', ''),
-            address=data.get('address', ''),
-            city=data.get('city', ''),
-            state=data.get('state', ''),
-            pincode=data.get('pincode', ''),
-            attendance_days=data.get('attendance_days', []),
-            photo_url=None, 
-            checkin_history=checkin_history_dict, 
-            device_name=device_label,
-            needs_cloud_sync=True,
-            needs_sheet_sync=True,
-            needs_local_sync=False, 
-            local_modified=True
-        )
-        session.add(new_kiosk_reg)
-        session.commit()
-        
-        log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
-        return jsonify({"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}), 200
-
-    except Exception as e:
-        session.rollback()
-        # Log real error, but send a clean sanitized message back to client device
-        log_event_clean("REGISTER", device_label, f"DB Error: {str(e)}", 500)
-        return jsonify({"status": "error", "message": "An internal server error occurred while processing the request."}), 500
-    finally:
-        session.close()
+    payload = {
+        "data": data,
+        "mobile_number": data.get('mobile', '').strip(),
+        "device_label": data.get('device_name', f"Kiosk ({req_os.capitalize()} - {req_ip})"),
+        "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z'),
+    }
+    status_code, body = _submit_db_job("register", payload)
+    return jsonify(body), status_code
 
 @app.route('/api/check_mobile', methods=['GET'])
 def check_mobile():
@@ -549,6 +857,10 @@ def check_mobile():
 
 @app.route('/api/network-data', methods=['GET'])
 def get_network_data():
+    """Fast, no DB call in the request path at all — reads the in-memory
+    device map and the background-refreshed STATS_CACHE. Previously this ran
+    3 full-table LIKE-count queries on every single poll from every viewer of
+    /stats (every 3s), on top of the GUI running the same queries again."""
     current_time = time.time()
     active_devices = {}
     with device_lock:
@@ -556,26 +868,12 @@ def get_network_data():
             if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: active_devices[ip] = data
             else: del ACTIVE_DEVICES[ip]
 
-    sessions = get_cached_sessions()
-    session = sessions.get('mysql')()
-    global_stats = {"total_scans": 0, "total_registrations": 0, "today_scans": 0}
-    
-    try:
-        global_stats["total_registrations"] = session.query(OfflineKioskAttendee).count()
-        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        
-        chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
-        chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
-        chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
-        
-        global_stats["total_scans"] = chk_30 + chk_31 + chk_01
-        if today_date == "2026-08-30": global_stats["today_scans"] = chk_30
-        elif today_date == "2026-08-31": global_stats["today_scans"] = chk_31
-        elif today_date == "2026-09-01": global_stats["today_scans"] = chk_01
-    except Exception: 
-        pass
-    finally: 
-        session.close()
+    with stats_lock:
+        global_stats = {
+            "total_scans": STATS_CACHE["total_scans"],
+            "total_registrations": STATS_CACHE["total_registrations"],
+            "today_scans": STATS_CACHE["today_scans"],
+        }
 
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
@@ -585,14 +883,17 @@ def get_network_data():
 class WaitressHttpThread(threading.Thread):
     """Runs Waitress WSGI server optimized for 30+ concurrent low-latency LAN connections"""
     def __init__(self, app, host, port):
-        super().__init__()
+        super().__init__(daemon=True)  # never let a forgotten "Stop Engine" click hang process exit
         self.server = create_server(app, host=host, port=port, threads=30)
         self.ctx = app.app_context()
         self.ctx.push()
 
-    def run(self): 
-        self.server.run()
-        
+    def run(self):
+        try:
+            self.server.run()
+        except Exception:
+            logging.exception("Waitress HTTP engine crashed")
+
     def shutdown(self): 
         self.server.close()
 
@@ -609,7 +910,7 @@ class HttpsFlaskThread(threading.Thread):
     new one every time.
     """
     def __init__(self, app, host, port, numthreads=60):
-        super().__init__()
+        super().__init__(daemon=True)  # never let a forgotten "Stop Engine" click hang process exit
         if cheroot_wsgi is None:
             raise RuntimeError(
                 "The 'cheroot' package is required for the HTTPS engine. "
@@ -629,7 +930,10 @@ class HttpsFlaskThread(threading.Thread):
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
 
     def run(self):
-        self.server.start()
+        try:
+            self.server.start()
+        except Exception:
+            logging.exception("Cheroot HTTPS engine crashed")
 
     def shutdown(self):
         self.server.stop()
@@ -694,20 +998,22 @@ class NetworkTelemetryWindow(ttk.Toplevel):
 
     def refresh_meters(self):
         if not self.winfo_exists(): return
-        global NETWORK_LATENCY
-        
-        loc_ms = NETWORK_LATENCY["local_ms"]
+
+        with network_latency_lock:
+            snap = dict(NETWORK_LATENCY)
+
+        loc_ms = snap["local_ms"]
         self.meter_local.configure(amountused=min(loc_ms, 1000))
-        if NETWORK_LATENCY["local_status"] == "ONLINE":
+        if snap["local_status"] == "ONLINE":
             self.meter_local.configure(bootstyle=SUCCESS if loc_ms < 150 else WARNING)
             self.lbl_local_status.configure(text="Status: LIVE & CONNECTED", bootstyle=SUCCESS)
         else:
             self.meter_local.configure(amountused=0, bootstyle=SECONDARY)
             self.lbl_local_status.configure(text="Status: SERVER OFF", bootstyle=DANGER)
 
-        cf_ms = NETWORK_LATENCY["cloud_ms"]
+        cf_ms = snap["cloud_ms"]
         self.meter_cloud.configure(amountused=min(cf_ms, 1000))
-        if NETWORK_LATENCY["cloud_status"] == "ONLINE":
+        if snap["cloud_status"] == "ONLINE":
             self.meter_cloud.configure(bootstyle=SUCCESS if cf_ms < 300 else WARNING)
             self.lbl_cloud_status.configure(text="Status: SECURE TUNNEL ACTIVE", bootstyle=SUCCESS)
         else:
@@ -722,7 +1028,7 @@ class NetworkTelemetryWindow(ttk.Toplevel):
 # ==============================================================================
 class ServerHub(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.1 (Multi-Threaded)")
+        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.2 (Hardened)")
         self.geometry("1600x950")
         self.minsize(1000, 700)
         
@@ -747,16 +1053,26 @@ class ServerHub(ttk.Window):
         self.build_ui()
         self.process_gui_queue() 
         self.refresh_stats()
-        
+
+        # Closing the window with the [X] button used to leave Waitress/Cheroot
+        # (non-daemon by default before this pass) running invisibly in the
+        # background with the ports still held. Route the close button through
+        # a real shutdown instead of Tk's default destroy.
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
+        # Feeds STATS_CACHE for both this GUI and /api/network-data — runs for
+        # the app's whole lifetime, independent of Start/Stop Engine, exactly
+        # like the ping daemon above.
+        threading.Thread(target=stats_refresher_loop, daemon=True, name="StatsRefresher").start()
 
     def connect_db(self):
         try:
             sessions = get_cached_sessions()
             self.SessionMySQL = sessions.get('mysql')
             self.SessionSQLite = sessions.get('sqlite')
-        except Exception as e:
-            logging.error(f"Database Connection Failed: {e}")
+        except Exception:
+            logging.exception("Database connection failed")
 
     def network_ping_daemon(self):
         global NETWORK_LATENCY
@@ -771,11 +1087,9 @@ class ServerHub(ttk.Window):
             start_local = time.time()
             try:
                 requests.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
-                NETWORK_LATENCY["local_ms"] = int((time.time() - start_local) * 1000)
-                NETWORK_LATENCY["local_status"] = "ONLINE"
-            except:
-                NETWORK_LATENCY["local_ms"] = 0
-                NETWORK_LATENCY["local_status"] = "OFFLINE"
+                local_ms, local_status = int((time.time() - start_local) * 1000), "ONLINE"
+            except Exception:
+                local_ms, local_status = 0, "OFFLINE"
 
             # --- Cloudflare Ping ---
             if self.cloudflare_url and self.cloudflare_url != "Offline":
@@ -784,14 +1098,17 @@ class ServerHub(ttk.Window):
                     # Added headers and increased timeout to 7 seconds, with verify=False 
                     # warnings suppressed via urllib3 at the top of the file
                     requests.get(f"{self.cloudflare_url}/api/status", headers=headers, timeout=7, verify=False)
-                    NETWORK_LATENCY["cloud_ms"] = int((time.time() - start_cf) * 1000)
-                    NETWORK_LATENCY["cloud_status"] = "ONLINE"
-                except:
-                    NETWORK_LATENCY["cloud_ms"] = 0
-                    NETWORK_LATENCY["cloud_status"] = "OFFLINE"
+                    cloud_ms, cloud_status = int((time.time() - start_cf) * 1000), "ONLINE"
+                except Exception:
+                    cloud_ms, cloud_status = 0, "OFFLINE"
             else:
-                NETWORK_LATENCY["cloud_ms"] = 0
-                NETWORK_LATENCY["cloud_status"] = "OFFLINE"
+                cloud_ms, cloud_status = 0, "OFFLINE"
+
+            with network_latency_lock:
+                NETWORK_LATENCY["local_ms"] = local_ms
+                NETWORK_LATENCY["local_status"] = local_status
+                NETWORK_LATENCY["cloud_ms"] = cloud_ms
+                NETWORK_LATENCY["cloud_status"] = cloud_status
 
             time.sleep(1.5)
             
@@ -829,6 +1146,23 @@ class ServerHub(ttk.Window):
 
     def open_telemetry_window(self):
         NetworkTelemetryWindow(self, self)
+
+    def on_close(self):
+        """Runs when the operator closes the window with the [X] button.
+        Before this, doing that while the engine/tunnel were running left
+        Waitress/Cheroot (and possibly cloudflared.exe) alive in the
+        background with the ports still held — invisible, no window, still
+        running — until the machine was rebooted."""
+        try:
+            logging.info("Shutdown requested — stopping engine, tunnel, and DB writers...")
+            if self.http_thread or self.https_thread:
+                self.stop_flask()
+            if self.cf_process:
+                self.stop_cf()
+        except Exception:
+            logging.exception("Error while shutting down")
+        finally:
+            self.destroy()
 
     def build_ui(self):
         self.root_container = ttk.Frame(self)
@@ -939,27 +1273,43 @@ class ServerHub(ttk.Window):
         self.lbl_stat_mysql = ttk.Label(status_frame, text="● MYSQL: CHECKING", bootstyle=INFO, font="-weight bold")
         self.lbl_stat_mysql.pack(side=LEFT, padx=10)
 
-        ttk.Label(content, text="📡 ACTIVE CONNECTED DEVICES", font="-size 11 -weight bold", bootstyle=INFO).pack(anchor=W, pady=(5, 5))
+        devices_header_row = ttk.Frame(content)
+        devices_header_row.pack(fill=X, pady=(5, 5))
+        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES", font="-size 11 -weight bold", bootstyle=INFO)
+        self.lbl_devices_header.pack(side=LEFT, anchor=W)
+        self.lbl_stats_health = ttk.Label(devices_header_row, text="", font="-size 9", bootstyle=WARNING)
+        self.lbl_stats_health.pack(side=RIGHT, anchor=E)
+
         devices_frame = ttk.Frame(content, borderwidth=1, relief="solid", bootstyle="dark")
         devices_frame.pack(fill=X, pady=(0, 20))
 
+        # A slightly tighter row height than the theme default — more devices
+        # visible at once without scrolling, without shrinking the font enough
+        # to hurt readability on a gate laptop viewed from arm's length.
+        self.style.configure("Treeview", rowheight=22)
+
         self.tree_devices = ttk.Treeview(
             devices_frame,
-            columns=("name", "ip", "status", "indicator"),
+            columns=("name", "ip", "last_seen", "signal"),
             show="headings",
             height=6,
             bootstyle=INFO,
         )
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
-        self.tree_devices.heading("status", text="Last Seen")
-        self.tree_devices.heading("indicator", text="Status")
+        self.tree_devices.heading("last_seen", text="Last Heartbeat")
+        self.tree_devices.heading("signal", text="Signal")
         self.tree_devices.column("name", width=300, anchor=W)
         self.tree_devices.column("ip", width=150, anchor=W)
-        self.tree_devices.column("status", width=120, anchor=CENTER)
-        self.tree_devices.column("indicator", width=110, anchor=CENTER)
+        self.tree_devices.column("last_seen", width=120, anchor=CENTER)
+        self.tree_devices.column("signal", width=110, anchor=CENTER)
         self.tree_devices.pack(fill=X, padx=2, pady=2)
+        # Freshness bands: a device nearing DEVICE_ONLINE_WINDOW (20s) now
+        # visibly ambers/oranges before it silently drops off the list,
+        # instead of every row always reading an identical static "Online".
         self.tree_devices.tag_configure("online", foreground="#3fd66f")
+        self.tree_devices.tag_configure("stale", foreground="#ffbb33")
+        self.tree_devices.tag_configure("fading", foreground="#ff8844")
         self.tree_devices.tag_configure("empty", foreground="#888")
 
         ttk.Label(content, text="🗄️ DATABASE TELEMETRY", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 10))
@@ -1043,24 +1393,43 @@ class ServerHub(ttk.Window):
         self.refresh_stats()
 
     def refresh_stats(self):
-        global SERVER_TEST_MODE, SERVER_TEST_DATE, ACTIVE_DEVICES
+        """Runs every 4s on the Tkinter main thread — but now only ever touches
+        in-memory dicts guarded by locks, never the DB directly. Before this
+        pass, the second half of this method opened a fresh MySQL session and
+        ran 5 queries right here, on the main thread: a slow/laggy round-trip
+        (a momentary network hiccup, MySQL busy with a burst of check-ins)
+        froze the entire operator window for as long as the query took."""
         current_time = time.time()
-        
+
         # Protect dictionary access properly on Tkinter's main loop
         with device_lock:
             active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
-            device_names = {ip: ACTIVE_DEVICES[ip]['name'] for ip in active_ips}
-        
+            device_info = {ip: dict(ACTIVE_DEVICES[ip]) for ip in active_ips}
+
         self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
+        if hasattr(self, 'lbl_devices_header'):
+            self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ips)})")
 
         for row in self.tree_devices.get_children():
             self.tree_devices.delete(row)
 
         if active_ips:
-            sorted_ips = sorted(active_ips, key=lambda ip: device_names[ip].lower())
+            sorted_ips = sorted(active_ips, key=lambda ip: device_info[ip]['name'].lower())
             for ip in sorted_ips:
-                name = device_names[ip]
-                self.tree_devices.insert("", END, values=(name, ip, "🟢 Online", "Active"), tags=("online",))
+                name = device_info[ip]['name']
+                seconds_ago = max(0, int(current_time - device_info[ip]['last_seen']))
+                last_seen_text = "just now" if seconds_ago < 2 else f"{seconds_ago}s ago"
+                # "Last Seen" used to always read a static "🟢 Online" / "Active"
+                # for every row regardless of actual heartbeat age. This shows
+                # real freshness, so a device about to drop off (nearing
+                # DEVICE_ONLINE_WINDOW) is visible before it actually vanishes.
+                if seconds_ago < 8:
+                    signal, tag = "🟢 Live", "online"
+                elif seconds_ago < 15:
+                    signal, tag = "🟡 Slow", "stale"
+                else:
+                    signal, tag = "🟠 Fading", "fading"
+                self.tree_devices.insert("", END, values=(name, ip, last_seen_text, signal), tags=(tag,))
         else:
             self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
 
@@ -1070,60 +1439,71 @@ class ServerHub(ttk.Window):
         if self.SessionSQLite: self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS)
         else: self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
 
-        if not self.SessionMySQL: return
-        
-        mysql_session = self.SessionMySQL()
-        try:
-            total_mysql = mysql_session.query(Attendee).count()
-            kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
-            
-            chk_30 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
-            chk_31 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
-            chk_01 = mysql_session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
-            
-            today_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now().strftime('%Y-%m-%d')
-            if today_str == "2026-08-30": chk_today = chk_30
-            elif today_str == "2026-08-31": chk_today = chk_31
-            elif today_str == "2026-09-01": chk_today = chk_01
-            else: chk_today = 0
+        # Read the background-refreshed cache instead of querying MySQL here.
+        with stats_lock:
+            snap = dict(STATS_CACHE)
 
-            total_checkins = chk_30 + chk_31 + chk_01
+        self.stat_vars["total_att"].configure(text=str(snap["total_attendees"]))
+        self.stat_vars["kiosk_reg"].configure(text=str(snap["total_registrations"]))
+        self.stat_vars["sqlite_total"].configure(text=str(snap["total_attendees"]))
+        self.stat_vars["chk_30"].configure(text=str(snap["chk_30"]))
+        self.stat_vars["chk_31"].configure(text=str(snap["chk_31"]))
+        self.stat_vars["chk_01"].configure(text=str(snap["chk_01"]))
+        self.stat_vars["chk_today"].configure(text=str(snap["today_scans"]))
+        self.stat_vars["chk_total"].configure(text=str(snap["total_scans"]))
 
-            self.stat_vars["total_att"].configure(text=str(total_mysql))
-            self.stat_vars["kiosk_reg"].configure(text=str(kiosk_regs))
-            self.stat_vars["sqlite_total"].configure(text=str(total_mysql))
-            self.stat_vars["chk_30"].configure(text=str(chk_30))
-            self.stat_vars["chk_31"].configure(text=str(chk_31))
-            self.stat_vars["chk_01"].configure(text=str(chk_01))
-            self.stat_vars["chk_today"].configure(text=str(chk_today))
-            self.stat_vars["chk_total"].configure(text=str(total_checkins))
-        except Exception:
-            pass
-        finally:
-            mysql_session.close()
-            
+        # Surface it if the background refresher has been failing quietly,
+        # instead of the numbers just looking frozen with no explanation.
+        if hasattr(self, 'lbl_stats_health'):
+            stale_for = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
+            if snap["last_error"] and stale_for and stale_for > STATS_REFRESH_INTERVAL_SEC * 4:
+                self.lbl_stats_health.configure(text=f"⚠ Stats stale ({int(stale_for)}s): {snap['last_error']}", bootstyle=WARNING)
+            else:
+                self.lbl_stats_health.configure(text="")
+
         self.after(4000, self.refresh_stats)
 
     def start_flask(self):
         self.btn_start_flask.configure(state=DISABLED)
+        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting Waitress Multi-Threaded Engine...")
+
+        # DB writer pool first: the HTTP/HTTPS engines must never be able to
+        # accept a checkin/register request before something exists to drain
+        # the queue it gets enqueued onto.
+        start_db_writers()
+        self._append_log(self.log_flask, f"[SYSTEM] {DB_WRITER_THREADS} DB writer thread(s) started.")
+
+        try:
+            # Start Waitress HTTP Engine (30 Concurrent Threads)
+            self.http_thread = WaitressHttpThread(app, '0.0.0.0', HTTP_PORT)
+            self.http_thread.start()
+
+            # Start HTTPS Engine for iOS Camera Fallback
+            self.https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
+            self.https_thread.start()
+        except Exception as e:
+            # e.g. port already in use, or cheroot missing — fail cleanly
+            # instead of leaving buttons/threads in a half-started state.
+            logging.exception("Failed to start engine")
+            self._append_log(self.log_flask, f"[ERROR] Failed to start engine: {e}")
+            if self.http_thread:
+                self.http_thread.shutdown()
+                self.http_thread = None
+            self.https_thread = None
+            stop_db_writers()
+            self.btn_start_flask.configure(state=NORMAL)
+            Messagebox.show_error(f"Could not start the engine:\n\n{e}", "Engine Start Failed", parent=self)
+            return
+
         self.btn_stop_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=NORMAL)
-        
-        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting Waitress Multi-Threaded Engine...")
-        
-        # Start Waitress HTTP Engine (30 Concurrent Threads)
-        self.http_thread = WaitressHttpThread(app, '0.0.0.0', HTTP_PORT)
-        self.http_thread.start()
-        
-        # Start HTTPS Engine for iOS Camera Fallback
-        self.https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
-        self.https_thread.start()
 
         self.update_qr(self.lbl_flask_qr, self.https_url)
         self.lbl_flask_link.configure(text=self.https_url, foreground="#4D9CE6")
         
         self._append_log(self.log_flask, f"[SYSTEM] Waitress HTTP listening on: {self.http_url}")
         self._append_log(self.log_flask, f"[SYSTEM] iOS Secure HTTPS listening on: {self.https_url}")
+        logging.info(f"Engine started — HTTP {self.http_url} / HTTPS {self.https_url}")
         
     def stop_flask(self):
         if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
@@ -1132,7 +1512,9 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.configure(state=DISABLED)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
-        
+
+        stop_db_writers()
+
         if self.http_thread:
             self.http_thread.shutdown()
             self.http_thread = None
@@ -1197,9 +1579,11 @@ class ServerHub(ttk.Window):
                             self._append_log(self.log_cf, f"[SUCCESS] Tunnel active at: {self.cloudflare_url}")
                             
             except FileNotFoundError:
+                logging.error("'cloudflared' binary not found in PATH")
                 self.gui_queue.put(self.stop_cf)
                 self._append_log(self.log_cf, "[ERROR] 'cloudflared' binary not found. Ensure it is installed and in your system PATH.")
             except Exception as e:
+                logging.exception("Cloudflare tunnel failed")
                 self.gui_queue.put(self.stop_cf)
                 self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {str(e)}")
 
