@@ -123,7 +123,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
-HTTP_PORT = 5080 # Fast, unencrypted Local LAN traffic & Cloudflare tunnel target
+HTTP_PORT = 5000 # Fast, unencrypted Local LAN traffic & Cloudflare tunnel target
 HTTPS_PORT = 5001  # Secure Local LAN traffic (allows iOS Camera Access natively)
 CERT_DIR = os.path.join(BASE_DIR, 'config', 'certs')
 
@@ -1077,16 +1077,19 @@ class ServerHub(ttk.Window):
     def network_ping_daemon(self):
         global NETWORK_LATENCY
         
-        # Add a fake User-Agent so Cloudflare doesn't block the ping as a bot
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        
+        # Use Session to keep the connection alive (prevents Cloudflare rate-limiting)
+        session = requests.Session()
+        session.headers.update(headers)
 
         while True:
             # --- Local Ping ---
             start_local = time.time()
             try:
-                requests.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
+                session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
                 local_ms, local_status = int((time.time() - start_local) * 1000), "ONLINE"
             except Exception:
                 local_ms, local_status = 0, "OFFLINE"
@@ -1095,12 +1098,20 @@ class ServerHub(ttk.Window):
             if self.cloudflare_url and self.cloudflare_url != "Offline":
                 start_cf = time.time()
                 try:
-                    # Added headers and increased timeout to 7 seconds, with verify=False 
-                    # warnings suppressed via urllib3 at the top of the file
-                    requests.get(f"{self.cloudflare_url}/api/status", headers=headers, timeout=7, verify=False)
-                    cloud_ms, cloud_status = int((time.time() - start_cf) * 1000), "ONLINE"
-                except Exception:
+                    resp = session.get(f"{self.cloudflare_url}/api/status", timeout=7, verify=False)
+                    # Cloudflare's warning splash pages return a 403, but the tunnel is still "UP"
+                    if resp.status_code in [200, 403]:
+                        cloud_ms, cloud_status = int((time.time() - start_cf) * 1000), "ONLINE"
+                    else:
+                        cloud_ms, cloud_status = 0, "OFFLINE"
+                except Exception as e:
                     cloud_ms, cloud_status = 0, "OFFLINE"
+                    
+                    # Catch the silent background error and print it to your Cloudflare log box!
+                    # (We use a variable to ensure we don't spam the log box every 3 seconds)
+                    if not hasattr(self, "_last_ping_err") or self._last_ping_err != str(e):
+                        self._append_log(self.log_cf, f"[PING ERROR CAUGHT] {str(e)[:100]}...")
+                        self._last_ping_err = str(e)
             else:
                 cloud_ms, cloud_status = 0, "OFFLINE"
 
@@ -1110,7 +1121,8 @@ class ServerHub(ttk.Window):
                 NETWORK_LATENCY["cloud_ms"] = cloud_ms
                 NETWORK_LATENCY["cloud_status"] = cloud_status
 
-            time.sleep(1.5)
+            # Keep the 3.0s delay so Cloudflare doesn't block the ping
+            time.sleep(3.0)
             
     def process_gui_queue(self):
         while not self.gui_queue.empty():
