@@ -123,7 +123,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
-HTTP_PORT = 5000   # Fast, unencrypted Local LAN traffic & Cloudflare tunnel target
+HTTP_PORT = 5080 # Fast, unencrypted Local LAN traffic & Cloudflare tunnel target
 HTTPS_PORT = 5001  # Secure Local LAN traffic (allows iOS Camera Access natively)
 CERT_DIR = os.path.join(BASE_DIR, 'config', 'certs')
 
@@ -1550,13 +1550,12 @@ class ServerHub(ttk.Window):
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    bufsize=1,  # 👈 Force line-by-line unbuffered streaming
+                    bufsize=1,
                     creationflags=creationflags
                 )
-
+                
                 url_found = False
                 for line in self.cf_process.stdout:
-                    # Clean ANSI terminal escape codes from cloudflared output
                     clean_line = re.sub(r'\x1b\[[0-9;]*m', '', line)
                     self._append_log(self.log_cf, clean_line.strip())
                     
@@ -1567,16 +1566,31 @@ class ServerHub(ttk.Window):
                             self.cloudflare_url = tunnel_url
                             url_found = True
                             
-                            # 🛡️ FIX: Give Cloudflare's global edge 3 seconds to propagate DNS
-                            # Give Cloudflare edge DNS slightly more time to propagate
                             self._append_log(self.log_cf, "[INFO] Waiting 5 seconds for Cloudflare Edge DNS propagation...")
                             time.sleep(5)
                             
-                            # Update UI safely through thread queue
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
                             self.gui_queue.put(lambda: self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS))
                             self._append_log(self.log_cf, f"[SUCCESS] Tunnel active at: {self.cloudflare_url}")
+                            
+            except FileNotFoundError:
+                logging.error("'cloudflared.exe' not found")
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, "[ERROR] 'cloudflared.exe' not found. Ensure the MSI installer finished successfully.")
+            except Exception as e:
+                logging.exception("Cloudflare tunnel failed")
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {str(e)}")
+                            
+            except FileNotFoundError:
+                logging.error("'cloudflared.exe' not found in script directory")
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, "[ERROR] 'cloudflared.exe' not found next to server_hub.py.")
+            except Exception as e:
+                logging.exception("Cloudflare tunnel failed")
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {str(e)}")
                             
             except FileNotFoundError:
                 logging.error("'cloudflared' binary not found in PATH")

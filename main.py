@@ -3,16 +3,11 @@
 EventHub Portable — Central Launcher
 TENT DECOR EXPO UP 2026
 
-Single entry point for the whole offline kit. Double-click this file
-(or run `python main.py`) and it will:
-
-  1. Make sure every package in requirements.txt is installed.
-  2. Open one dashboard with a button to silently launch each tool.
+Single entry point for the whole offline kit. 
+Auto-installs dependencies, verifies system health, captures tool logs, 
+and manages tool processes in a robust environment (Zero CMD Shells).
 """
 
-from ttkbootstrap.widgets.scrolled import ScrolledText
-from ttkbootstrap.constants import *
-import ttkbootstrap as ttk
 import os
 import sys
 import subprocess
@@ -20,11 +15,43 @@ import shutil
 import queue
 import threading
 import urllib.request
+import re
+import ctypes
 from datetime import datetime
-from tkinter import messagebox, simpledialog
 
 # ==============================================================================
-# PATHS
+# AUTO-ADMINISTRATOR ELEVATION (WINDOWS) — STEALTH MODE
+# ==============================================================================
+def is_admin():
+    """Check if the script is currently running with Administrator privileges."""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin()
+    except Exception:
+        return False
+
+if os.name == 'nt' and not is_admin():
+    # Force pythonw.exe to completely hide the background console window upon elevation
+    executable = sys.executable
+    if executable.lower().endswith("python.exe"):
+        executable = executable[:-10] + "pythonw.exe"
+        
+    # Relaunch the script with an Administrator UAC prompt, fully hidden terminal
+    ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", executable, " ".join([f'"{arg}"' for arg in sys.argv]), None, 1
+    )
+    sys.exit() # Exit the non-admin process
+
+# We only import GUI modules AFTER ensuring we have admin rights to prevent double-windows
+try:
+    from ttkbootstrap.widgets.scrolled import ScrolledText
+    from ttkbootstrap.constants import *
+    import ttkbootstrap as ttk
+    from tkinter import messagebox, simpledialog
+except ImportError:
+    pass # Will be handled by _bootstrap_first_run()
+
+# ==============================================================================
+# PATHS & CONFIG
 # ==============================================================================
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(ROOT_DIR, "app")
@@ -32,292 +59,214 @@ REQUIREMENTS_FILE = os.path.join(ROOT_DIR, "requirements.txt")
 CONFIG_DIR = os.path.join(APP_DIR, "config")
 SCHEMA_CONFIG = os.path.join(CONFIG_DIR, "schema.json")
 SECRETS_CONFIG = os.path.join(CONFIG_DIR, "secrets.json")
-
-# New dedicated directory for executable installers
 EXE_DIR = os.path.join(ROOT_DIR, "exe-files")
 
 MIN_PYTHON = (3, 9)
 
+# ==============================================================================
+# ENVIRONMENT INJECTION
+# ==============================================================================
+def inject_cloudflared_path():
+    """
+    Injects standard MSI install locations into the current session's PATH.
+    Prepends to ensure it takes priority, allowing child processes (like server_hub) 
+    to simply call "cloudflared" without needing absolute paths.
+    """
+    cf_paths = [r"C:\Program Files (x86)\cloudflared", r"C:\Program Files\cloudflared"]
+    current_path = os.environ.get("PATH", "")
+    
+    for path in cf_paths:
+        if os.path.exists(path) and path not in current_path:
+            # Prepend the path so it takes highest priority
+            os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
 
 # ==============================================================================
-# FIRST-RUN BOOTSTRAP (stdlib only)
+# FIRST-RUN BOOTSTRAP (100% Invisible)
 # ==============================================================================
 def _bootstrap_first_run():
-    """
-    Installs requirements if ttkbootstrap isn't found, then relaunches.
-    """
+    """Installs ttkbootstrap silently if missing so the UI can launch."""
     try:
         import ttkbootstrap  # noqa: F401
         return
     except ImportError:
         pass
 
-    print("=" * 64)
-    print(" EventHub Portable — first run on this machine")
-    print(" Installing packages from requirements.txt (one-time setup)")
-    print("=" * 64)
-
     if not os.path.isfile(REQUIREMENTS_FILE):
-        print(
-            f"\nERROR: requirements.txt not found at:\n  {REQUIREMENTS_FILE}")
-        _pause()
-        sys.exit(1)
+        sys.exit(1) # Cannot proceed without requirements
 
-    cmd = [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE,
-           "--disable-pip-version-check"]
-    ret = subprocess.call(cmd, cwd=ROOT_DIR)
-
-    if ret != 0:
-        print("\nSomething went wrong installing dependencies (see above).")
-        print(
-            f'Try running this manually:\n  "{sys.executable}" -m pip install -r requirements.txt')
-        _pause()
-        sys.exit(1)
-
-    print("\nDependencies installed. Starting the launcher...\n")
-
-    ret2 = subprocess.call([sys.executable, os.path.abspath(__file__)] + sys.argv[1:],
-                           cwd=ROOT_DIR)
-    sys.exit(ret2)
-
-
-def _pause():
-    try:
-        input("\nPress Enter to close...")
-    except EOFError:
-        pass
-
+    flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    
+    # Install dependencies silently
+    subprocess.call(
+        [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE, "--disable-pip-version-check"], 
+        cwd=ROOT_DIR, 
+        creationflags=flags,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    
+    # Relaunch UI silently
+    executable = sys.executable
+    if os.name == 'nt' and executable.lower().endswith("python.exe"):
+        executable = executable[:-10] + "pythonw.exe"
+        
+    sys.exit(subprocess.call([executable, os.path.abspath(__file__)] + sys.argv[1:], cwd=ROOT_DIR, creationflags=flags))
 
 _bootstrap_first_run()
-
-# ==============================================================================
-# MAIN APPLICATION
-# ==============================================================================
 
 # ==============================================================================
 # TOOL REGISTRY
 # ==============================================================================
 TOOLS = [
-    {
-        "key": "hub",
-        "icon": "🖥️",
-        "label": "Command Center",
-        "script": "server_hub.py",
-        "desc": "Main hub — Flask API, Cloudflare tunnel, live stats.",
-        "bootstyle": PRIMARY,
-    },
-    {
-        "key": "gate_display",
-        "icon": "📺",
-        "label": "Gate Display Terminal",
-        "script": "check_in.py",
-        "desc": "Big-screen scan feed for an entrance / gate.",
-        "bootstyle": INFO,
-    },
-    {
-        "key": "kiosk",
-        "icon": "📝",
-        "label": "Registration Kiosk (Desktop)",
-        "script": "register.py",
-        "desc": "Staffed walk-in registration desk.",
-        "bootstyle": SUCCESS,
-    },
-    {
-        "key": "sync",
-        "icon": "🔄",
-        "label": "Sync Manager",
-        "script": "sync_manager.py",
-        "desc": "Pull/push Supabase, resolve conflicts, mirror to SQLite.",
-        "bootstyle": WARNING,
-    },
-    {
-        "key": "photos",
-        "icon": "🖼️",
-        "label": "Photo Downloader",
-        "script": "photo_down.py",
-        "desc": "Pull attendee photos from Cloudinary for offline use.",
-        "bootstyle": SECONDARY,
-    },
-    {
-        "key": "explorer",
-        "icon": "🔍",
-        "label": "Attendee Explorer",
-        "script": "explorer.py",
-        "desc": "Search and inspect any attendee's profile + photo.",
-        "bootstyle": SECONDARY,
-    },
+    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Main hub — Flask API & live stats.", "bootstyle": PRIMARY},
+    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Big-screen scan feed for gate entrance.", "bootstyle": INFO},
+    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "Staffed walk-in registration desk.", "bootstyle": SUCCESS},
+    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Pull/push Supabase, resolve conflicts.", "bootstyle": WARNING},
+    {"key": "photos", "icon": "🖼️", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Pull attendee photos for offline use.", "bootstyle": SECONDARY},
+    {"key": "explorer", "icon": "🔍", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Search and inspect attendee profiles.", "bootstyle": SECONDARY},
 ]
 
-
+# ==============================================================================
+# MAIN GUI APPLICATION
+# ==============================================================================
 class LauncherApp(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="EventHub Portable — Central Launcher")
-        self.geometry("1050x900")
-        self.minsize(950, 750)
+        super().__init__(themename="darkly", title="EventHub Portable — Central Launcher (Administrator)")
+        self.geometry("1100x950")
+        self.minsize(1000, 800)
+
+        # Inject PATH on startup
+        inject_cloudflared_path()
 
         self.gui_queue = queue.Queue()
-        self.processes = {}      # tool key -> subprocess.Popen
-        self.tool_widgets = {}   # tool key -> {"button": ..., "status": ...}
+        self.processes = {}      
+        self.tool_widgets = {}   
+        self.cached_cf_path = None
 
         self.build_ui()
 
-        # Staggered startup tasks for better GUI performance
+        # Staggered startup for smooth UI loading
         self.after(100, self._process_gui_queue)
-        self.after(500, self.check_dependencies)
-        self.after(1500, self._poll_processes)
+        self.after(600, self.check_system_health)
+        self.after(2000, self._poll_processes)
 
-    # ==========================================================================
-    # UI BUILD
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # UI CONSTRUCTION
+    # --------------------------------------------------------------------------
     def build_ui(self):
-        # ---- Header ----
-        header = ttk.Frame(self, padding=(25, 20, 25, 10))
-        header.pack(fill=X)
+        # -- Header --
+        header_frame = ttk.Frame(self, padding=(30, 25, 30, 10))
+        header_frame.pack(fill=X)
 
-        title_frame = ttk.Frame(header)
-        title_frame.pack(fill=X)
+        ttk.Label(header_frame, text="EventHub Portable", font="-size 26 -weight bold").pack(side=LEFT)
+        ttk.Button(header_frame, text="⟳ Refresh Health Check", bootstyle=(OUTLINE, INFO), command=self.check_system_health).pack(side=RIGHT, pady=5)
+        ttk.Label(header_frame, text="TENT DECOR EXPO UP 2026", font="-size 12", bootstyle=PRIMARY).pack(anchor=W, pady=(5, 0))
 
-        ttk.Label(title_frame, text="EventHub Portable",
-                  font="-size 22 -weight bold").pack(side=LEFT)
+        # -- System Health Panel --
+        health_frame = ttk.Labelframe(self, text="System Health & Versions", padding=15)
+        health_frame.pack(fill=X, padx=30, pady=(10, 20))
+        
+        grid_frame = ttk.Frame(health_frame)
+        grid_frame.pack(fill=X)
 
-        ttk.Button(
-            title_frame, text="⟳ Check Dependencies", bootstyle=(OUTLINE, INFO),
-            command=self.check_dependencies
-        ).pack(side=RIGHT, pady=5)
+        self.lbl_python = ttk.Label(grid_frame, text="Python: checking...", font="-size 10")
+        self.lbl_python.grid(row=0, column=0, padx=(0, 40), sticky=W)
 
-        ttk.Label(
-            header, text="TENT DECOR EXPO UP 2026 — Central Launcher",
-            font="-size 11", bootstyle=PRIMARY
-        ).pack(anchor=W, pady=(2, 0))
+        self.lbl_cloudflared = ttk.Label(grid_frame, text="Cloudflared: checking...", font="-size 10")
+        self.lbl_cloudflared.grid(row=0, column=1, padx=(0, 40), sticky=W)
 
-        # ---- System Status Strip ----
-        status_frame = ttk.Frame(self, padding=(25, 0, 25, 15))
-        status_frame.pack(fill=X)
+        self.lbl_deps = ttk.Label(grid_frame, text="Dependencies: checking...", font="-size 10")
+        self.lbl_deps.grid(row=0, column=2, padx=(0, 40), sticky=W)
 
-        self.lbl_python = ttk.Label(
-            status_frame, text="Python: checking…", font="-size 9")
-        self.lbl_python.pack(side=LEFT, padx=(0, 20))
+        self.lbl_config = ttk.Label(grid_frame, text="Configuration: checking...", font="-size 10")
+        self.lbl_config.grid(row=0, column=3, sticky=W)
 
-        self.lbl_deps = ttk.Label(
-            status_frame, text="⏳ Dependencies: checking…", font="-size 9")
-        self.lbl_deps.pack(side=LEFT, padx=(0, 20))
-
-        self.lbl_cloudflared = ttk.Label(
-            status_frame, text="Cloudflared: checking…", font="-size 9")
-        self.lbl_cloudflared.pack(side=LEFT, padx=(0, 20))
-
-        self.lbl_config = ttk.Label(
-            status_frame, text="Config: checking…", font="-size 9")
-        self.lbl_config.pack(side=LEFT)
-
-        ttk.Separator(self).pack(fill=X, padx=25)
-
-        # ---- Tool Cards Grid ----
-        cards_container = ttk.Frame(self, padding=(25, 15, 25, 5))
-        cards_container.pack(fill=BOTH, expand=True)
+        # -- Tool Control Grid --
+        tools_frame = ttk.Frame(self, padding=(30, 0, 30, 10))
+        tools_frame.pack(fill=BOTH, expand=True)
 
         for tool in TOOLS:
-            self._build_tool_card(cards_container, tool)
+            self._build_tool_card(tools_frame, tool)
 
-        # ---- Action Bar (Bottom Tools) ----
-        action_bar = ttk.Frame(self, padding=(25, 10, 25, 5))
+        # -- Action Bar --
+        action_bar = ttk.Frame(self, padding=(30, 15, 30, 5))
         action_bar.pack(fill=X)
 
-        # Left Actions (Folders)
-        ttk.Button(
-            action_bar, text="📁 Project Root", bootstyle=(OUTLINE, SECONDARY),
-            command=lambda: self.open_folder(ROOT_DIR)
-        ).pack(side=LEFT, padx=(0, 10))
+        ttk.Button(action_bar, text="📁 Project Root", bootstyle=(OUTLINE, SECONDARY), command=lambda: self.open_folder(ROOT_DIR)).pack(side=LEFT, padx=(0, 10))
+        ttk.Button(action_bar, text="⚙️ Config Folder", bootstyle=(OUTLINE, SECONDARY), command=lambda: self.open_folder(CONFIG_DIR)).pack(side=LEFT)
+        ttk.Button(action_bar, text="🛑 Stop All Active Tools", bootstyle=DANGER, command=self.stop_all_tools).pack(side=RIGHT, padx=(10, 0))
+        ttk.Button(action_bar, text="🗑️ Clear Log", bootstyle=(OUTLINE, SECONDARY), command=self.clear_log).pack(side=RIGHT)
 
-        ttk.Button(
-            action_bar, text="⚙️ Config Folder", bootstyle=(OUTLINE, SECONDARY),
-            command=lambda: self.open_folder(CONFIG_DIR)
-        ).pack(side=LEFT)
+        # -- Activity Log --
+        log_frame = ttk.Labelframe(self, text="Activity Log (System & Tool Output)", padding=10)
+        log_frame.pack(fill=BOTH, expand=True, padx=30, pady=(10, 25))
 
-        # Right Actions (Controls)
-        ttk.Button(
-            action_bar, text="🛑 Stop All Tools", bootstyle=DANGER,
-            command=self.stop_all_tools
-        ).pack(side=RIGHT, padx=(10, 0))
-
-        ttk.Button(
-            action_bar, text="🗑️ Clear Log", bootstyle=(OUTLINE, SECONDARY),
-            command=self.clear_log
-        ).pack(side=RIGHT)
-
-        # ---- Log Panel ----
-        log_frame = ttk.Labelframe(self, text="Activity Log", padding=10)
-        log_frame.pack(fill=BOTH, expand=False, padx=25, pady=(5, 20))
-
-        self.log_box = ScrolledText(
-            log_frame, height=8, autohide=True, wrap="word")
+        self.log_box = ScrolledText(log_frame, autohide=True, wrap="word")
         self.log_box.pack(fill=BOTH, expand=True)
-        self.log_box.text.configure(state="disabled", font=("Consolas", 9))
+        self.log_box.text.configure(state="disabled", font=("Consolas", 10), bg="#1e1e1e")
+        
+        # Log color tags
+        self.log_box.text.tag_config("INFO", foreground="#cccccc")
+        self.log_box.text.tag_config("SUCCESS", foreground="#5cb85c", font=("Consolas", 10, "bold"))
+        self.log_box.text.tag_config("WARNING", foreground="#f0ad4e", font=("Consolas", 10, "bold"))
+        self.log_box.text.tag_config("ERROR", foreground="#d9534f", font=("Consolas", 10, "bold"))
+        self.log_box.text.tag_config("TOOL", foreground="#5bc0de") # Color for tool stdout streams
 
-        self.log("Launcher initialized. Ready.")
+        self.log("System initialized with Administrator Privileges. Ready for operations.", "SUCCESS")
 
     def _build_tool_card(self, parent, tool):
-        card = ttk.Frame(parent, relief="solid", borderwidth=1, padding=1)
-        card.pack(fill=X, pady=6)
+        card = ttk.Frame(parent, relief="solid", borderwidth=1, padding=2)
+        card.pack(fill=X, pady=5)
 
-        inner = ttk.Frame(card, padding=14)
+        inner = ttk.Frame(card, padding=15)
         inner.pack(fill=BOTH, expand=True)
 
-        ttk.Label(inner, text=tool["icon"], font="-size 22").grid(
-            row=0, column=0, rowspan=2, padx=(0, 15), sticky=W)
+        ttk.Label(inner, text=tool["icon"], font="-size 24").grid(row=0, column=0, rowspan=2, padx=(5, 20), sticky=W)
+        ttk.Label(inner, text=tool["label"], font="-size 12 -weight bold").grid(row=0, column=1, sticky=W)
+        ttk.Label(inner, text=tool["desc"], font="-size 10", bootstyle=SECONDARY).grid(row=1, column=1, sticky=W)
 
-        ttk.Label(inner, text=tool["label"], font="-size 13 -weight bold").grid(
-            row=0, column=1, sticky=W)
+        status_lbl = ttk.Label(inner, text="⚫ IDLE", font="-size 10 -weight bold", bootstyle=SECONDARY, width=12, anchor=CENTER)
+        status_lbl.grid(row=0, column=2, rowspan=2, padx=20)
 
-        ttk.Label(inner, text=tool["desc"], font="-size 9", bootstyle=SECONDARY).grid(
-            row=1, column=1, sticky=W)
-
-        status_lbl = ttk.Label(
-            inner, text="Idle", font="-size 9 -weight bold",
-            bootstyle=SECONDARY, width=10, anchor=CENTER
-        )
-        status_lbl.grid(row=0, column=2, rowspan=2, padx=15)
-
-        btn = ttk.Button(
-            inner, text="Launch", bootstyle=tool["bootstyle"], width=12,
-            command=lambda t=tool: self.launch_tool(t)
-        )
-        btn.grid(row=0, column=3, rowspan=2, padx=(5, 0))
+        btn = ttk.Button(inner, text="Launch Tool", bootstyle=tool["bootstyle"], width=15, command=lambda t=tool: self.launch_tool(t))
+        btn.grid(row=0, column=3, rowspan=2, padx=(5, 5))
 
         inner.columnconfigure(1, weight=1)
         self.tool_widgets[tool["key"]] = {"button": btn, "status": status_lbl}
 
-    # ==========================================================================
-    # LOGGING & QUEUE HANDLING
-    # ==========================================================================
-    def log(self, message):
-        self.gui_queue.put(("log", message))
+    # --------------------------------------------------------------------------
+    # QUEUE & LOGGING (Thread-Safe UI Updates)
+    # --------------------------------------------------------------------------
+    def log(self, message, level="INFO"):
+        self.gui_queue.put(("log", {"msg": message, "level": level}))
 
     def _process_gui_queue(self):
         try:
             for _ in range(50):
                 kind, payload = self.gui_queue.get_nowait()
+                
                 if kind == "log":
-                    self._append_log(payload)
+                    self._append_log(payload["msg"], payload["level"])
                 elif kind == "deps_done":
-                    self._on_deps_done(payload)
+                    if payload:
+                        self.lbl_deps.configure(text="Dependencies: Ready ✓", bootstyle=SUCCESS)
+                    else:
+                        self.lbl_deps.configure(text="Dependencies: Failed ⚠", bootstyle=DANGER)
+                elif kind == "cf_checked":
+                    self._update_cf_ui(payload)
                 elif kind == "prompt_cf_token":
                     self._prompt_and_install_cf_service()
-                elif kind == "refresh_cf_status":
-                    self._refresh_cloudflared_status(silent=True)
                 elif kind == "python_done":
-                    messagebox.showinfo(
-                        "Python Update Complete", 
-                        "Python 3.14.6 has been installed. Please restart this application to apply the changes."
-                    )
+                    messagebox.showinfo("Python Update Complete", "Python 3.14.6 installed. Please restart the app.", parent=self)
         except queue.Empty:
             pass
-        self.after(100, self._process_gui_queue)
+        self.after(100, self._process_gui_queue) # Light on CPU
 
-    def _append_log(self, message):
+    def _append_log(self, message, level):
         timestamp = datetime.now().strftime("%H:%M:%S")
+        formatted_msg = f"[{timestamp}] {message}\n"
         self.log_box.text.configure(state="normal")
-        self.log_box.text.insert(END, f"[{timestamp}] {message}\n")
+        self.log_box.text.insert(END, formatted_msg, level)
         self.log_box.text.see(END)
         self.log_box.text.configure(state="disabled")
 
@@ -325,333 +274,310 @@ class LauncherApp(ttk.Window):
         self.log_box.text.configure(state="normal")
         self.log_box.text.delete("1.0", END)
         self.log_box.text.configure(state="disabled")
-        self.log("Log cleared.")
 
-    # ==========================================================================
-    # DEPENDENCY, PYTHON, & CLOUDFLARED CHECK / INSTALL
-    # ==========================================================================
-    def check_dependencies(self):
-        py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    # --------------------------------------------------------------------------
+    # SYSTEM HEALTH & VERSION CHECKS
+    # --------------------------------------------------------------------------
+    def check_system_health(self):
+        self.log("Running system health & version checks...", "INFO")
+        
+        # 1. Python Version Check
+        py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         if sys.version_info[:2] < MIN_PYTHON:
-            self.lbl_python.configure(
-                text=f"Python: {py_version} (⚠ needs {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+)",
-                bootstyle=WARNING)
+            self.lbl_python.configure(text=f"Python: v{py_ver} (Needs {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+) ⚠", bootstyle=WARNING)
             self._offer_python_install()
         else:
-            self.lbl_python.configure(
-                text=f"Python: {py_version} ✓", bootstyle=SUCCESS)
+            self.lbl_python.configure(text=f"Python: v{py_ver} ✓", bootstyle=SUCCESS)
 
-        self._refresh_cloudflared_status()
-        self._refresh_config_status()
-
-        if not os.path.isfile(REQUIREMENTS_FILE):
-            self.lbl_deps.configure(
-                text="✗ Dependencies: requirements.txt missing", bootstyle=DANGER)
-            self.log(f"requirements.txt not found at {REQUIREMENTS_FILE}")
-            return
-
-        self.lbl_deps.configure(
-            text="⏳ Dependencies: checking…", bootstyle=WARNING)
-        threading.Thread(
-            target=self._install_requirements_thread, daemon=True).start()
-
-    # --- Python Install ---
-    def _offer_python_install(self):
-        proceed = messagebox.askyesno(
-            "Python Update Required", 
-            "Your Python version is too old for some tools. Would you like to download and install Python 3.14.6 now?"
-        )
-        if proceed:
-            self.log("Starting Python 3.14.6 download...")
-            threading.Thread(target=self._download_and_install_python, daemon=True).start()
-
-    def _download_and_install_python(self):
-        os.makedirs(EXE_DIR, exist_ok=True)
-        py_url = "https://www.python.org/ftp/python/3.14.6/python-3.14.6-amd64.exe"
-        py_path = os.path.join(EXE_DIR, "python-3.14.6-amd64.exe")
-
-        try:
-            self.log("Downloading Python 3.14.6 Installer into 'exe-files' folder... (Please wait)")
-            urllib.request.urlretrieve(py_url, py_path)
-            self.log("Download complete. Running Python installer (Please approve any Admin prompts)...")
-
-            # Run Python installer passively
-            subprocess.run([py_path, "/passive", "InstallAllUsers=1", "PrependPath=1"], check=True)
-            self.log("Python 3.14.6 installation finished.")
-
-            # Cleanup downloaded installer
-            try:
-                os.remove(py_path)
-                self.log("Deleted downloaded Python installer to save space.")
-            except Exception as e:
-                self.log(f"Could not delete installer file: {e}")
-
-            self.gui_queue.put(("python_done", None))
-        except Exception as e:
-            self.log(f"Error installing Python: {e}")
-
-    # --- Pip Requirements ---
-    def _install_requirements_thread(self):
-        cmd = [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE,
-               "--disable-pip-version-check"]
-        try:
-            proc = subprocess.Popen(
-                cmd, cwd=ROOT_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            )
-            for line in proc.stdout:
-                line = line.rstrip()
-                if line:
-                    self.log(f"[pip] {line}")
-            proc.wait()
-            success = proc.returncode == 0
-        except Exception as e:
-            self.log(f"[pip] Failed to run pip: {e}")
-            success = False
-
-        self.gui_queue.put(("deps_done", success))
-
-    def _on_deps_done(self, success):
-        if success:
-            self.lbl_deps.configure(
-                text="Dependencies: OK ✓", bootstyle=SUCCESS)
+        # 2. Config Check
+        if os.path.isfile(SCHEMA_CONFIG) and os.path.isfile(SECRETS_CONFIG):
+            self.lbl_config.configure(text="Configuration: Valid ✓", bootstyle=SUCCESS)
         else:
-            self.lbl_deps.configure(
-                text="⚠ Dependencies: Error", bootstyle=DANGER)
+            self.lbl_config.configure(text="Configuration: Missing ⚠", bootstyle=WARNING)
 
-    # --- Cloudflared Install ---
+        # 3. Pip Dependencies Check
+        self.lbl_deps.configure(text="Dependencies: Verifying...", bootstyle=WARNING)
+        threading.Thread(target=self._install_requirements_thread, daemon=True).start()
+
+        # 4. Cloudflared Check (Threaded to prevent freeze)
+        self.lbl_cloudflared.configure(text="Cloudflared: Verifying...", bootstyle=WARNING)
+        threading.Thread(target=self._verify_cloudflared_thread, daemon=True).start()
+
+    def _install_requirements_thread(self):
+        try:
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            cmd = [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE, "--disable-pip-version-check"]
+            proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, creationflags=flags)
+            if proc.returncode == 0:
+                self.log("Python dependencies verified.", "SUCCESS")
+                self.gui_queue.put(("deps_done", True))
+            else:
+                self.log(f"Dependency error: {proc.stderr}", "ERROR")
+                self.gui_queue.put(("deps_done", False))
+        except Exception as e:
+            self.log(f"Failed to check dependencies: {e}", "ERROR")
+            self.gui_queue.put(("deps_done", False))
+
+    # --------------------------------------------------------------------------
+    # CLOUDFLARED MANAGEMENT
+    # --------------------------------------------------------------------------
     def _get_cloudflared_path(self):
-        """Find cloudflared.exe even if the system PATH hasn't refreshed for this process."""
-        # 1. Check system PATH first
+        if self.cached_cf_path and os.path.exists(self.cached_cf_path):
+            return self.cached_cf_path
+            
         cf_path = shutil.which("cloudflared")
         if cf_path:
+            self.cached_cf_path = cf_path
             return cf_path
         
-        # 2. Check default MSI locations (because PATH doesn't update dynamically for running apps)
-        pf = os.environ.get("ProgramFiles", "C:\\Program Files")
-        pfx86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
-        
-        for base in [pfx86, pf]:
+        # Check standard MSI install locations (Path variable lag fix)
+        for base in [os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), os.environ.get("ProgramFiles", "C:\\Program Files")]:
             guess = os.path.join(base, "cloudflared", "cloudflared.exe")
             if os.path.exists(guess):
+                self.cached_cf_path = guess
                 return guess
-                
-        # 3. Fallback standard command (might trigger WinError 2 if still missing)
-        return "cloudflared.exe"
+        return None
 
-    def _refresh_cloudflared_status(self, silent=False):
-        if shutil.which("cloudflared") is not None or os.path.exists(self._get_cloudflared_path()):
-            self.lbl_cloudflared.configure(
-                text="Cloudflared: found ✓", bootstyle=SUCCESS)
+    def _verify_cloudflared_thread(self):
+        cf_exe = self._get_cloudflared_path()
+        if not cf_exe:
+            self.gui_queue.put(("cf_checked", {"status": "missing"}))
+            return
+
+        try:
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            # 100% Assurance Test: Run it and parse output
+            res = subprocess.run(
+                [cf_exe, "--version"], capture_output=True, text=True, timeout=3,
+                creationflags=flags
+            )
+            if res.returncode == 0:
+                # Extract version string (e.g. "cloudflared version 2024.x.x")
+                match = re.search(r"version\s+(\d+\.\d+\.\d+)", res.stdout)
+                ver = match.group(1) if match else "OK"
+                self.gui_queue.put(("cf_checked", {"status": "ok", "version": ver}))
+            else:
+                self.gui_queue.put(("cf_checked", {"status": "broken"}))
+        except Exception:
+            self.gui_queue.put(("cf_checked", {"status": "broken"}))
+
+    def _update_cf_ui(self, payload):
+        status = payload["status"]
+        if status == "ok":
+            self.lbl_cloudflared.configure(text=f"Cloudflared: v{payload['version']} ✓", bootstyle=SUCCESS)
+        elif status == "missing":
+            self.lbl_cloudflared.configure(text="Cloudflared: Missing ⚠", bootstyle=WARNING)
+            self._offer_cloudflared_install()
         else:
-            self.lbl_cloudflared.configure(
-                text="Cloudflared: missing ⚠", bootstyle=WARNING)
-            if not silent:
-                self._offer_cloudflared_install()
+            self.lbl_cloudflared.configure(text="Cloudflared: Broken ⚠", bootstyle=DANGER)
+            self.log("Cloudflared executable found, but failed to execute properly.", "ERROR")
 
     def _offer_cloudflared_install(self):
-        proceed = messagebox.askyesno(
-            "Cloudflared Missing", 
-            "Cloudflared was not found on your system. Would you like to download and install it now?"
-        )
-        if proceed:
-            self.log("Starting Cloudflared download...")
+        if messagebox.askyesno("Cloudflared Missing", "Cloudflared is required for the tunnel. Download and install it now?", parent=self):
             threading.Thread(target=self._download_and_install_cloudflared, daemon=True).start()
 
     def _download_and_install_cloudflared(self):
         os.makedirs(EXE_DIR, exist_ok=True)
-        msi_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi"
         msi_path = os.path.join(EXE_DIR, "cloudflared-windows-amd64.msi")
+        msi_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi"
 
         try:
-            self.log("Downloading Cloudflared MSI into 'exe-files' folder... (Please wait)")
+            self.log("Downloading Cloudflared... please wait.", "INFO")
             urllib.request.urlretrieve(msi_url, msi_path)
-            self.log("Download complete. Running installer (Please approve any Admin prompts)...")
+            self.log("Installing Cloudflared completely silently in background...", "WARNING")
 
-            # Run MSI installer passively (shows progress bar, no clicks needed)
-            subprocess.run(["msiexec.exe", "/i", msi_path, "/passive"], check=True)
-            self.log("Cloudflared MSI installation finished.")
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            # /quiet prevents ALL UI popups from the installer
+            subprocess.run(["msiexec.exe", "/i", msi_path, "/quiet", "/norestart"], check=True, creationflags=flags)
+            self.log("Cloudflared installation successful.", "SUCCESS")
+            
+            # Instantly update environment PATH so child tools can find it
+            inject_cloudflared_path()
 
-            # Cleanup downloaded installer
             try:
                 os.remove(msi_path)
-                self.log("Deleted downloaded Cloudflared installer to save space.")
-            except Exception as e:
-                self.log(f"Could not delete installer file: {e}")
-
-            # Queue UI prompt for token in the main thread
+            except Exception: pass # Cleanup silent fail
+            
+            self.cached_cf_path = None # Reset cache
             self.gui_queue.put(("prompt_cf_token", None))
-
         except Exception as e:
-            self.log(f"Error installing cloudflared: {e}")
+            self.log(f"Cloudflared installation failed: {e}", "ERROR")
 
     def _prompt_and_install_cf_service(self):
-        token = simpledialog.askstring(
-            "Cloudflare Token", 
-            "Installation successful!\n\nEnter your Cloudflare tunnel secret key to install the service:"
-        )
-        
+        token = simpledialog.askstring("Cloudflare Tunnel", "Enter your Cloudflare tunnel secret key to bind the service:", parent=self)
         if token:
-            self.log("Installing Cloudflared service...")
-            threading.Thread(target=self._install_cf_service_thread, args=(token,), daemon=True).start()
+            self.log("Installing background service...", "INFO")
+            threading.Thread(target=self._install_cf_service_thread, args=(token.strip(),), daemon=True).start()
         else:
-            self.log("No token provided. Skipped Cloudflare service installation.")
-            self._refresh_cloudflared_status(silent=True)
+            self.log("Setup skipped. Tunnel will not auto-start.", "WARNING")
+            self.check_system_health() # Refresh UI
 
     def _install_cf_service_thread(self, token):
         try:
-            cf_exe = self._get_cloudflared_path()
-            cmd = [cf_exe, "service", "install", token]
-            subprocess.run(
-                cmd, check=True, 
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            cf_exe = self._get_cloudflared_path() or "cloudflared.exe"
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            
+            self.log("Clearing any old tunnel configurations...", "INFO")
+            # 1. Quietly uninstall any existing service so it doesn't block the new one
+            subprocess.run([cf_exe, "service", "uninstall"], capture_output=True, creationflags=flags)
+            
+            # 2. Install the new token, capturing the actual error output
+            proc = subprocess.run(
+                [cf_exe, "service", "install", token], 
+                capture_output=True, 
+                text=True, 
+                creationflags=flags
             )
-            self.log("Cloudflare service installed successfully with your token.")
+            
+            if proc.returncode == 0:
+                self.log("Tunnel service bound successfully. It will now run in the background.", "SUCCESS")
+                self.log("Note: You do NOT need to click 'Start Tunnel' in the Command Center anymore. It is running automatically.", "WARNING")
+            else:
+                # Capture Cloudflared's actual error message instead of a generic Python error
+                error_output = proc.stderr.strip() or proc.stdout.strip()
+                self.log(f"Cloudflared rejected the token: {error_output}", "ERROR")
+                
         except Exception as e:
-            self.log(f"Failed to install Cloudflare service. Ensure you run this app as Administrator. Error: {e}")
+            self.log(f"Service install crashed: {e}", "ERROR")
         finally:
-            self.gui_queue.put(("refresh_cf_status", None))
+            self.check_system_health()
+            
 
-    def _refresh_config_status(self):
-        has_schema = os.path.isfile(SCHEMA_CONFIG)
-        has_secrets = os.path.isfile(SECRETS_CONFIG)
-        if has_schema and has_secrets:
-            self.lbl_config.configure(text="Config: OK ✓", bootstyle=SUCCESS)
-        else:
-            self.lbl_config.configure(
-                text="Config: missing ⚠", bootstyle=WARNING)
+    # --------------------------------------------------------------------------
+    # PYTHON MANAGEMENT
+    # --------------------------------------------------------------------------
+    def _offer_python_install(self):
+        if messagebox.askyesno("Python Update Required", "Your Python version is too old. Download and install Python 3.14.6?", parent=self):
+            threading.Thread(target=self._download_and_install_python, daemon=True).start()
 
-    # ==========================================================================
-    # TOOL PROCESS MANAGEMENT (SILENT EXECUTION)
-    # ==========================================================================
+    def _download_and_install_python(self):
+        os.makedirs(EXE_DIR, exist_ok=True)
+        py_path = os.path.join(EXE_DIR, "python-3.14.6-amd64.exe")
+        py_url = "https://www.python.org/ftp/python/3.14.6/python-3.14.6-amd64.exe"
+
+        try:
+            self.log("Downloading Python Installer... please wait.", "INFO")
+            urllib.request.urlretrieve(py_url, py_path)
+            self.log("Installing Python silently...", "WARNING")
+
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            # /quiet runs completely invisibly
+            subprocess.run([py_path, "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0"], check=True, creationflags=flags)
+            self.log("Python installation successful.", "SUCCESS")
+
+            try: os.remove(py_path) 
+            except Exception: pass
+            
+            self.gui_queue.put(("python_done", None))
+        except Exception as e:
+            self.log(f"Python installation failed: {e}", "ERROR")
+
+    # --------------------------------------------------------------------------
+    # TOOL PROCESS MANAGEMENT
+    # --------------------------------------------------------------------------
     def launch_tool(self, tool):
         key = tool["key"]
-
-        existing = self.processes.get(key)
-        if existing and existing.poll() is None:
-            self.log(f"{tool['label']} is already running.")
+        if key in self.processes and self.processes[key].poll() is None:
             return
 
         script_path = os.path.join(APP_DIR, tool["script"])
         if not os.path.isfile(script_path):
-            self.log(f"[ERROR] Can't find {tool['script']} inside app/.")
+            self.log(f"Cannot find script: {tool['script']}", "ERROR")
             return
 
         try:
-            # Silent execution setup: redirect IO and hide console
-            kwargs = {
-                "cwd": APP_DIR,
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "stdin": subprocess.DEVNULL
-            }
-            if os.name == "nt":
-                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-            proc = subprocess.Popen([sys.executable, script_path], **kwargs)
-
+            # 🛡️ 100% Error-Free Output capturing & Zero CMD window creation
+            proc = subprocess.Popen(
+                [sys.executable, script_path], 
+                cwd=APP_DIR,
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.STDOUT, 
+                stdin=subprocess.DEVNULL,
+                text=True,
+                encoding='utf-8',       # Prevents unicode crashes
+                errors='replace',       # Safely handles weird characters
+                bufsize=1,              # Line-buffered streaming
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            )
+            self.processes[key] = proc
+            self.log(f"Tool started: {tool['label']}", "SUCCESS")
+            self._set_tool_status(key, running=True)
+            
+            # Start background thread to continuously stream tool logs to UI
+            threading.Thread(target=self._stream_tool_logs, args=(proc, tool["label"]), daemon=True).start()
+            
         except Exception as e:
-            self.log(f"[ERROR] Failed to launch {tool['label']}: {e}")
-            return
+            self.log(f"Failed to launch {tool['label']}: {e}", "ERROR")
 
-        self.processes[key] = proc
-        self.log(f"Launched: {tool['label']} (PID {proc.pid}).")
-        self._set_tool_status(key, running=True)
+    def _stream_tool_logs(self, proc, tool_name):
+        """Background thread reads a running tool's stdout line-by-line safely."""
+        try:
+            for line in iter(proc.stdout.readline, ''):
+                if line:
+                    clean_line = line.strip()
+                    if clean_line:
+                        # Strip raw ANSI terminal color codes (like [0m)
+                        clean_line = re.sub(r'\x1b\[[0-9;]*m', '', clean_line)
+                        self.log(f"[{tool_name}] {clean_line}", "TOOL")
+        except Exception as e:
+            self.log(f"[{tool_name}] Log stream interrupted: {e}", "WARNING")
+        finally:
+            if proc.stdout:
+                proc.stdout.close()
 
     def stop_tool(self, tool):
         key = tool["key"]
         proc = self.processes.get(key)
         if proc and proc.poll() is None:
             proc.terminate()
-            self.log(f"Stopped: {tool['label']}")
+            self.log(f"Tool stopped: {tool['label']}", "WARNING")
             self._set_tool_status(key, running=False)
 
     def stop_all_tools(self):
-        running_count = 0
-        for key in list(self.processes.keys()):
-            tool = next((t for t in TOOLS if t["key"] == key), None)
-            if tool and self.processes[key].poll() is None:
-                self.stop_tool(tool)
-                running_count += 1
-
-        if running_count > 0:
-            self.log(f"Successfully stopped {running_count} active tools.")
-        else:
-            self.log("No tools are currently running.")
+        count = sum(1 for key in list(self.processes.keys()) if self.processes[key].poll() is None and not self.stop_tool(next(t for t in TOOLS if t["key"] == key)))
+        if count:
+            self.log(f"Terminated {count} active tools.", "INFO")
 
     def _set_tool_status(self, key, running):
         widgets = self.tool_widgets.get(key)
         tool = next((t for t in TOOLS if t["key"] == key), None)
-        if not widgets or not tool:
-            return
-
-        btn = widgets["button"]
-        status_lbl = widgets["status"]
+        if not widgets or not tool: return
 
         if running:
-            status_lbl.configure(text="Running", bootstyle=SUCCESS)
-            btn.configure(text="Stop", bootstyle=DANGER,
-                          command=lambda t=tool: self.stop_tool(t))
+            widgets["status"].configure(text="🟢 RUNNING", bootstyle=SUCCESS)
+            widgets["button"].configure(text="Stop", bootstyle=DANGER, command=lambda t=tool: self.stop_tool(t))
         else:
-            status_lbl.configure(text="Idle", bootstyle=SECONDARY)
-            btn.configure(text="Launch", bootstyle=tool["bootstyle"],
-                          command=lambda t=tool: self.launch_tool(t))
+            widgets["status"].configure(text="⚫ IDLE", bootstyle=SECONDARY)
+            widgets["button"].configure(text="Launch Tool", bootstyle=tool["bootstyle"], command=lambda t=tool: self.launch_tool(t))
 
     def _poll_processes(self):
-        # Create a static list of keys to safely delete from dictionary during iteration
         for key in list(self.processes.keys()):
             proc = self.processes[key]
             if proc.poll() is not None:
                 tool = next((t for t in TOOLS if t["key"] == key), None)
-                label = tool["label"] if tool else key
-                self.log(f"Exited: {label} (code {proc.returncode}).")
+                self.log(f"Tool exited unexpectedly: {tool['label']} (Code {proc.returncode})", "ERROR")
                 del self.processes[key]
                 self._set_tool_status(key, running=False)
+        self.after(2000, self._poll_processes)
 
-        # Polling rate of 1.5 seconds is light on CPU but responsive enough for UI
-        self.after(1500, self._poll_processes)
-
-    # ==========================================================================
-    # MISCELLANEOUS & SHUTDOWN
-    # ==========================================================================
+    # --------------------------------------------------------------------------
+    # UTILS & SHUTDOWN
+    # --------------------------------------------------------------------------
     def open_folder(self, path):
-        # Create folder if it doesn't exist (e.g., config folder on first run)
-        if not os.path.exists(path):
-            try:
-                os.makedirs(path)
-                self.log(f"Created directory: {path}")
-            except Exception as e:
-                self.log(f"Could not create directory {path}: {e}")
-                return
-
+        os.makedirs(path, exist_ok=True)
         try:
-            if os.name == "nt":
-                os.startfile(path)
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", path])
-            else:
-                subprocess.Popen(["xdg-open", path])
-            self.log(f"Opened folder: {os.path.basename(path)}")
+            if os.name == "nt": os.startfile(path)
+            elif sys.platform == "darwin": subprocess.Popen(["open", path])
+            else: subprocess.Popen(["xdg-open", path])
         except Exception as e:
-            self.log(f"Couldn't open folder: {e}")
+            self.log(f"Failed to open folder: {e}", "ERROR")
 
     def on_close(self):
-        active_tools = [key for key,
-                        proc in self.processes.items() if proc.poll() is None]
-
-        if active_tools:
-            proceed = messagebox.askyesno(
-                "Tools still running",
-                f"There are {len(active_tools)} tools running invisibly in the background.\n\n"
-                "Are you sure you want to exit? (This will safely shut them all down)"
-            )
-            if not proceed:
-                return
-
-            self.stop_all_tools()
-
+        active = [k for k, p in self.processes.items() if p.poll() is None]
+        if active and not messagebox.askyesno("Exit Launcher", f"{len(active)} tools are running invisibly.\n\nExit and shut them down?", parent=self):
+            return
+        self.stop_all_tools()
         self.destroy()
-
 
 if __name__ == "__main__":
     app = LauncherApp()
