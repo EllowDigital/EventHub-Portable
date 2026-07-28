@@ -19,8 +19,9 @@ import subprocess
 import shutil
 import queue
 import threading
+import urllib.request
 from datetime import datetime
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 # ==============================================================================
 # PATHS
@@ -31,6 +32,9 @@ REQUIREMENTS_FILE = os.path.join(ROOT_DIR, "requirements.txt")
 CONFIG_DIR = os.path.join(APP_DIR, "config")
 SCHEMA_CONFIG = os.path.join(CONFIG_DIR, "schema.json")
 SECRETS_CONFIG = os.path.join(CONFIG_DIR, "secrets.json")
+
+# New dedicated directory for executable installers
+EXE_DIR = os.path.join(ROOT_DIR, "exe-files")
 
 MIN_PYTHON = (3, 9)
 
@@ -176,7 +180,6 @@ class LauncherApp(ttk.Window):
         ttk.Label(title_frame, text="EventHub Portable",
                   font="-size 22 -weight bold").pack(side=LEFT)
 
-        # FIX: Removed the invalid size="sm" argument here
         ttk.Button(
             title_frame, text="⟳ Check Dependencies", bootstyle=(OUTLINE, INFO),
             command=self.check_dependencies
@@ -285,20 +288,28 @@ class LauncherApp(ttk.Window):
         self.tool_widgets[tool["key"]] = {"button": btn, "status": status_lbl}
 
     # ==========================================================================
-    # LOGGING
+    # LOGGING & QUEUE HANDLING
     # ==========================================================================
     def log(self, message):
         self.gui_queue.put(("log", message))
 
     def _process_gui_queue(self):
         try:
-            # Process up to 50 items per cycle to prevent UI lockup
             for _ in range(50):
                 kind, payload = self.gui_queue.get_nowait()
                 if kind == "log":
                     self._append_log(payload)
                 elif kind == "deps_done":
                     self._on_deps_done(payload)
+                elif kind == "prompt_cf_token":
+                    self._prompt_and_install_cf_service()
+                elif kind == "refresh_cf_status":
+                    self._refresh_cloudflared_status(silent=True)
+                elif kind == "python_done":
+                    messagebox.showinfo(
+                        "Python Update Complete", 
+                        "Python 3.14.6 has been installed. Please restart this application to apply the changes."
+                    )
         except queue.Empty:
             pass
         self.after(100, self._process_gui_queue)
@@ -317,7 +328,7 @@ class LauncherApp(ttk.Window):
         self.log("Log cleared.")
 
     # ==========================================================================
-    # DEPENDENCY CHECK / INSTALL
+    # DEPENDENCY, PYTHON, & CLOUDFLARED CHECK / INSTALL
     # ==========================================================================
     def check_dependencies(self):
         py_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -325,6 +336,7 @@ class LauncherApp(ttk.Window):
             self.lbl_python.configure(
                 text=f"Python: {py_version} (⚠ needs {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+)",
                 bootstyle=WARNING)
+            self._offer_python_install()
         else:
             self.lbl_python.configure(
                 text=f"Python: {py_version} ✓", bootstyle=SUCCESS)
@@ -343,6 +355,42 @@ class LauncherApp(ttk.Window):
         threading.Thread(
             target=self._install_requirements_thread, daemon=True).start()
 
+    # --- Python Install ---
+    def _offer_python_install(self):
+        proceed = messagebox.askyesno(
+            "Python Update Required", 
+            "Your Python version is too old for some tools. Would you like to download and install Python 3.14.6 now?"
+        )
+        if proceed:
+            self.log("Starting Python 3.14.6 download...")
+            threading.Thread(target=self._download_and_install_python, daemon=True).start()
+
+    def _download_and_install_python(self):
+        os.makedirs(EXE_DIR, exist_ok=True)
+        py_url = "https://www.python.org/ftp/python/3.14.6/python-3.14.6-amd64.exe"
+        py_path = os.path.join(EXE_DIR, "python-3.14.6-amd64.exe")
+
+        try:
+            self.log("Downloading Python 3.14.6 Installer into 'exe-files' folder... (Please wait)")
+            urllib.request.urlretrieve(py_url, py_path)
+            self.log("Download complete. Running Python installer (Please approve any Admin prompts)...")
+
+            # Run Python installer passively
+            subprocess.run([py_path, "/passive", "InstallAllUsers=1", "PrependPath=1"], check=True)
+            self.log("Python 3.14.6 installation finished.")
+
+            # Cleanup downloaded installer
+            try:
+                os.remove(py_path)
+                self.log("Deleted downloaded Python installer to save space.")
+            except Exception as e:
+                self.log(f"Could not delete installer file: {e}")
+
+            self.gui_queue.put(("python_done", None))
+        except Exception as e:
+            self.log(f"Error installing Python: {e}")
+
+    # --- Pip Requirements ---
     def _install_requirements_thread(self):
         cmd = [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE,
                "--disable-pip-version-check"]
@@ -371,13 +419,98 @@ class LauncherApp(ttk.Window):
             self.lbl_deps.configure(
                 text="⚠ Dependencies: Error", bootstyle=DANGER)
 
-    def _refresh_cloudflared_status(self):
-        if shutil.which("cloudflared") is not None:
+    # --- Cloudflared Install ---
+    def _get_cloudflared_path(self):
+        """Find cloudflared.exe even if the system PATH hasn't refreshed for this process."""
+        # 1. Check system PATH first
+        cf_path = shutil.which("cloudflared")
+        if cf_path:
+            return cf_path
+        
+        # 2. Check default MSI locations (because PATH doesn't update dynamically for running apps)
+        pf = os.environ.get("ProgramFiles", "C:\\Program Files")
+        pfx86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+        
+        for base in [pfx86, pf]:
+            guess = os.path.join(base, "cloudflared", "cloudflared.exe")
+            if os.path.exists(guess):
+                return guess
+                
+        # 3. Fallback standard command (might trigger WinError 2 if still missing)
+        return "cloudflared.exe"
+
+    def _refresh_cloudflared_status(self, silent=False):
+        if shutil.which("cloudflared") is not None or os.path.exists(self._get_cloudflared_path()):
             self.lbl_cloudflared.configure(
                 text="Cloudflared: found ✓", bootstyle=SUCCESS)
         else:
             self.lbl_cloudflared.configure(
                 text="Cloudflared: missing ⚠", bootstyle=WARNING)
+            if not silent:
+                self._offer_cloudflared_install()
+
+    def _offer_cloudflared_install(self):
+        proceed = messagebox.askyesno(
+            "Cloudflared Missing", 
+            "Cloudflared was not found on your system. Would you like to download and install it now?"
+        )
+        if proceed:
+            self.log("Starting Cloudflared download...")
+            threading.Thread(target=self._download_and_install_cloudflared, daemon=True).start()
+
+    def _download_and_install_cloudflared(self):
+        os.makedirs(EXE_DIR, exist_ok=True)
+        msi_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi"
+        msi_path = os.path.join(EXE_DIR, "cloudflared-windows-amd64.msi")
+
+        try:
+            self.log("Downloading Cloudflared MSI into 'exe-files' folder... (Please wait)")
+            urllib.request.urlretrieve(msi_url, msi_path)
+            self.log("Download complete. Running installer (Please approve any Admin prompts)...")
+
+            # Run MSI installer passively (shows progress bar, no clicks needed)
+            subprocess.run(["msiexec.exe", "/i", msi_path, "/passive"], check=True)
+            self.log("Cloudflared MSI installation finished.")
+
+            # Cleanup downloaded installer
+            try:
+                os.remove(msi_path)
+                self.log("Deleted downloaded Cloudflared installer to save space.")
+            except Exception as e:
+                self.log(f"Could not delete installer file: {e}")
+
+            # Queue UI prompt for token in the main thread
+            self.gui_queue.put(("prompt_cf_token", None))
+
+        except Exception as e:
+            self.log(f"Error installing cloudflared: {e}")
+
+    def _prompt_and_install_cf_service(self):
+        token = simpledialog.askstring(
+            "Cloudflare Token", 
+            "Installation successful!\n\nEnter your Cloudflare tunnel secret key to install the service:"
+        )
+        
+        if token:
+            self.log("Installing Cloudflared service...")
+            threading.Thread(target=self._install_cf_service_thread, args=(token,), daemon=True).start()
+        else:
+            self.log("No token provided. Skipped Cloudflare service installation.")
+            self._refresh_cloudflared_status(silent=True)
+
+    def _install_cf_service_thread(self, token):
+        try:
+            cf_exe = self._get_cloudflared_path()
+            cmd = [cf_exe, "service", "install", token]
+            subprocess.run(
+                cmd, check=True, 
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            )
+            self.log("Cloudflare service installed successfully with your token.")
+        except Exception as e:
+            self.log(f"Failed to install Cloudflare service. Ensure you run this app as Administrator. Error: {e}")
+        finally:
+            self.gui_queue.put(("refresh_cf_status", None))
 
     def _refresh_config_status(self):
         has_schema = os.path.isfile(SCHEMA_CONFIG)
