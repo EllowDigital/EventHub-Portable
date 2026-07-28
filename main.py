@@ -17,6 +17,7 @@ import threading
 import urllib.request
 import re
 import ctypes
+import winreg
 from datetime import datetime
 
 # ==============================================================================
@@ -64,21 +65,47 @@ EXE_DIR = os.path.join(ROOT_DIR, "exe-files")
 MIN_PYTHON = (3, 9)
 
 # ==============================================================================
-# ENVIRONMENT INJECTION
+# ENVIRONMENT INJECTION (PERMANENT)
 # ==============================================================================
 def inject_cloudflared_path():
     """
-    Injects standard MSI install locations into the current session's PATH.
-    Prepends to ensure it takes priority, allowing child processes (like server_hub) 
-    to simply call "cloudflared" without needing absolute paths.
+    Injects standard MSI install locations into the current session's PATH
+    AND permanently adds it to the System Environment Variables so `cloudflared`
+    can be typed directly into any new CMD window without needing .exe.
     """
-    cf_paths = [r"C:\Program Files (x86)\cloudflared", r"C:\Program Files\cloudflared"]
+    cf_paths = [r"C:\Program Files\cloudflared", r"C:\Program Files (x86)\cloudflared"]
     current_path = os.environ.get("PATH", "")
     
+    valid_path = None
     for path in cf_paths:
-        if os.path.exists(path) and path not in current_path:
-            # Prepend the path so it takes highest priority
-            os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
+        if os.path.exists(path):
+            valid_path = path
+            if path not in current_path:
+                # Prepend the path so it takes highest priority in the current session
+                os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
+            break
+
+    # If found, permanently add it to the Windows System PATH
+    if valid_path and os.name == 'nt':
+        try:
+            # Open the System Environment key (Requires Admin, which this script has)
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
+            sys_path, _ = winreg.QueryValueEx(key, "Path")
+            
+            # Check if it's already permanently added
+            if valid_path.lower() not in sys_path.lower():
+                new_path = valid_path + os.pathsep + sys_path
+                winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
+                
+                # Broadcast the environment change to Windows so new CMD windows get it instantly
+                HWND_BROADCAST = 0xFFFF
+                WM_SETTINGCHANGE = 0x001A
+                SMTO_ABORTIFHUNG = 0x0002
+                ctypes.windll.user32.SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", SMTO_ABORTIFHUNG, 5000, None)
+            
+            winreg.CloseKey(key)
+        except Exception:
+            pass # Failsafe in case of registry lock
 
 # ==============================================================================
 # FIRST-RUN BOOTSTRAP (100% Invisible)
@@ -322,20 +349,20 @@ class LauncherApp(ttk.Window):
     # CLOUDFLARED MANAGEMENT
     # --------------------------------------------------------------------------
     def _get_cloudflared_path(self):
-        if self.cached_cf_path and os.path.exists(self.cached_cf_path):
+        if self.cached_cf_path:
             return self.cached_cf_path
             
-        cf_path = shutil.which("cloudflared")
-        if cf_path:
-            self.cached_cf_path = cf_path
-            return cf_path
+        # Since we injected the directory into the PATH permanently, we can just return "cloudflared"
+        if shutil.which("cloudflared"):
+            self.cached_cf_path = "cloudflared"
+            return "cloudflared"
         
-        # Check standard MSI install locations (Path variable lag fix)
-        for base in [os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)"), os.environ.get("ProgramFiles", "C:\\Program Files")]:
+        # Fallback check standard MSI install locations
+        for base in [os.environ.get("ProgramFiles", "C:\\Program Files"), os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")]:
             guess = os.path.join(base, "cloudflared", "cloudflared.exe")
             if os.path.exists(guess):
-                self.cached_cf_path = guess
-                return guess
+                self.cached_cf_path = "cloudflared" # Rely on our PATH injection instead of absolute .exe
+                return "cloudflared"
         return None
 
     def _verify_cloudflared_thread(self):
@@ -346,13 +373,12 @@ class LauncherApp(ttk.Window):
 
         try:
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            # 100% Assurance Test: Run it and parse output
+            # Run using just "cloudflared" to test the environment variable fix
             res = subprocess.run(
                 [cf_exe, "--version"], capture_output=True, text=True, timeout=3,
                 creationflags=flags
             )
             if res.returncode == 0:
-                # Extract version string (e.g. "cloudflared version 2024.x.x")
                 match = re.search(r"version\s+(\d+\.\d+\.\d+)", res.stdout)
                 ver = match.group(1) if match else "OK"
                 self.gui_queue.put(("cf_checked", {"status": "ok", "version": ver}))
@@ -391,7 +417,7 @@ class LauncherApp(ttk.Window):
             subprocess.run(["msiexec.exe", "/i", msi_path, "/quiet", "/norestart"], check=True, creationflags=flags)
             self.log("Cloudflared installation successful.", "SUCCESS")
             
-            # Instantly update environment PATH so child tools can find it
+            # Instantly update environment PATH so child tools and CMD can find it
             inject_cloudflared_path()
 
             try:
@@ -414,7 +440,7 @@ class LauncherApp(ttk.Window):
 
     def _install_cf_service_thread(self, token):
         try:
-            cf_exe = self._get_cloudflared_path() or "cloudflared.exe"
+            cf_exe = self._get_cloudflared_path() or "cloudflared"
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             
             self.log("Clearing any old tunnel configurations...", "INFO")

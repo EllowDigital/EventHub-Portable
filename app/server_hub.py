@@ -1081,7 +1081,6 @@ class ServerHub(ttk.Window):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
         
-        # Use Session to keep the connection alive (prevents Cloudflare rate-limiting)
         session = requests.Session()
         session.headers.update(headers)
 
@@ -1098,19 +1097,20 @@ class ServerHub(ttk.Window):
             if self.cloudflare_url and self.cloudflare_url != "Offline":
                 start_cf = time.time()
                 try:
-                    resp = session.get(f"{self.cloudflare_url}/api/status", timeout=7, verify=False)
-                    # Cloudflare's warning splash pages return a 403, but the tunnel is still "UP"
-                    if resp.status_code in [200, 403]:
-                        cloud_ms, cloud_status = int((time.time() - start_cf) * 1000), "ONLINE"
-                    else:
-                        cloud_ms, cloud_status = 0, "OFFLINE"
+                    # We ping the tunnel
+                    session.get(f"{self.cloudflare_url}/api/status", timeout=7, verify=False)
+                    
+                    # If the above line finishes without crashing, it means Cloudflare responded!
+                    # We don't care if it's a 200, 403, 502, or 503 splash page. 
+                    # If Cloudflare answered, the tunnel URL is alive.
+                    cloud_ms, cloud_status = int((time.time() - start_cf) * 1000), "ONLINE"
+                    
                 except Exception as e:
+                    # It only drops to OFFLINE if the URL literally cannot be found (DNS failure/Timeout)
                     cloud_ms, cloud_status = 0, "OFFLINE"
                     
-                    # Catch the silent background error and print it to your Cloudflare log box!
-                    # (We use a variable to ensure we don't spam the log box every 3 seconds)
                     if not hasattr(self, "_last_ping_err") or self._last_ping_err != str(e):
-                        self._append_log(self.log_cf, f"[PING ERROR CAUGHT] {str(e)[:100]}...")
+                        self._append_log(self.log_cf, f"[PING ERROR] {str(e)[:100]}...")
                         self._last_ping_err = str(e)
             else:
                 cloud_ms, cloud_status = 0, "OFFLINE"
@@ -1121,7 +1121,6 @@ class ServerHub(ttk.Window):
                 NETWORK_LATENCY["cloud_ms"] = cloud_ms
                 NETWORK_LATENCY["cloud_status"] = cloud_status
 
-            # Keep the 3.0s delay so Cloudflare doesn't block the ping
             time.sleep(3.0)
             
     def process_gui_queue(self):
