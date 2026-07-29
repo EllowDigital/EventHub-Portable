@@ -1577,9 +1577,9 @@ class ServerHub(ttk.Window):
                             self.cloudflare_url = tunnel_url
                             url_found = True
                             
-                            # Give Cloudflare DNS a full 15 seconds to propagate globally
-                            self._append_log(self.log_cf, "[INFO] Waiting 15 seconds for Cloudflare Edge DNS propagation...")
-                            time.sleep(15) 
+                            # Give Cloudflare DNS a full 30 seconds to propagate globally
+                            self._append_log(self.log_cf, "[INFO] Waiting 30 seconds for Cloudflare Edge DNS propagation...")
+                            time.sleep(30)
                             
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
