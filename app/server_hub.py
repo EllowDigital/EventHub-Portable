@@ -179,13 +179,38 @@ DEVICE_ONLINE_WINDOW = 20  # seconds since last heartbeat before a device is con
 # 🚀 PERFORMANCE FIX: Global DB Cache prevents connection exhaustion
 DB_SESSIONS_CACHE = None
 _db_cache_lock = threading.Lock()
+_db_cache_last_failure = 0.0
+DB_SESSIONS_RETRY_COOLDOWN = 5  # seconds — see get_cached_sessions() docstring
 
 def get_cached_sessions():
-    global DB_SESSIONS_CACHE
+    """Returns the shared {'mysql': sessionmaker, 'sqlite': sessionmaker} dict,
+    built exactly once (double-checked locking avoids a rare startup race
+    creating 2 engines).
+
+    If get_database_sessions() itself fails (DB unreachable/misconfigured),
+    the failure is cached for DB_SESSIONS_RETRY_COOLDOWN seconds. Without
+    this, a DB outage turns every one of the 4 DB writer threads, the stats
+    refresher, and every direct-read request into its own independent slow
+    connect/timeout attempt — and since they all serialize on _db_cache_lock,
+    that's a real bottleneck exactly when checkin/register traffic needs the
+    fastest possible failure, not the slowest. With the cooldown, only the
+    first caller after a failure pays the full connect/timeout cost; every
+    other caller fails fast (returns None) until the cooldown lapses, and the
+    system keeps retrying on a steady cadence so it self-heals once the DB
+    comes back — no restart required.
+    """
+    global DB_SESSIONS_CACHE, _db_cache_last_failure
     if DB_SESSIONS_CACHE is None:
         with _db_cache_lock:
-            if DB_SESSIONS_CACHE is None:  # double-checked locking: avoid a rare
-                DB_SESSIONS_CACHE = get_database_sessions()  # startup race creating 2 engines
+            if DB_SESSIONS_CACHE is None:
+                if (time.time() - _db_cache_last_failure) < DB_SESSIONS_RETRY_COOLDOWN:
+                    return None
+                try:
+                    DB_SESSIONS_CACHE = get_database_sessions()
+                except Exception:
+                    logging.exception(f"get_database_sessions() failed — will retry in {DB_SESSIONS_RETRY_COOLDOWN}s")
+                    _db_cache_last_failure = time.time()
+                    return None
     return DB_SESSIONS_CACHE
 
 # 📡 TELEMETRY ENGINE GLOBALS
