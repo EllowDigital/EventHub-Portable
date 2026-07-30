@@ -1,315 +1,356 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Kiosk Registration - TDE UP 2026</title>
   <style>
     :root {
-      --bg-dark: #0f1115;
-      --surface: #1a1d24;
+      --bg-dark: #07080c;
+      --surface: #12141c;
+      --surface-hover: #1a1d29;
       --primary: #00d2ff;
+      --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
       --warning: #ffbb33;
       --danger: #ff4444;
-      --text: #ffffff;
-      --text-dim: #aaaaaa;
+      --text-main: #ffffff;
+      --text-muted: #8b93a5;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+      --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
 
     body {
-      font-family:
-        system-ui,
-        -apple-system,
-        sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
       background-color: var(--bg-dark);
-      color: var(--text);
+      color: var(--text-main);
       margin: 0;
-      padding: 15px;
+      padding: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
+      min-height: 100vh;
+      overflow-x: hidden;
     }
 
+    .app-container {
+      width: 100%;
+      max-width: 700px; /* Wider max-width for tablets/laptops */
+      padding: 15px 20px 40px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      animation: fadeIn 0.4s ease-out;
+      box-sizing: border-box;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Glassmorphism Header */
     .header {
       width: 100%;
-      max-width: 650px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 10px;
+      margin-bottom: 20px;
+      background: rgba(18, 20, 28, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-sizing: border-box;
+      position: sticky;
+      top: 10px;
+      z-index: 100;
     }
 
     .btn-back {
-      color: #aaa;
+      color: var(--text-muted);
       text-decoration: none;
       font-size: 14px;
-      font-weight: bold;
-      padding: 8px 14px;
-      background: var(--surface);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: var(--transition);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 6px 12px;
       border-radius: 8px;
-      transition: all 0.2s;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .btn-back:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.1); }
+    .btn-back:active { transform: scale(0.95); }
+
+    .header-title {
+      margin: 0;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
     }
 
-    .btn-back:active {
-      transform: scale(0.95);
+    .version-tag {
+      font-size: 0.65rem;
+      background: rgba(0, 210, 255, 0.15);
+      color: var(--primary);
+      padding: 3px 8px;
+      border-radius: 20px;
+      border: 1px solid rgba(0, 210, 255, 0.3);
     }
 
     .network-pill {
       font-size: 0.75rem;
       padding: 6px 12px;
       border-radius: 20px;
-      font-weight: bold;
+      font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 6px;
-      background: var(--surface);
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.4);
       border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: var(--transition);
     }
 
-    .net-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      display: inline-block;
-    }
+    .net-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .net-excellent { background: var(--success); box-shadow: 0 0 10px var(--success); }
+    .net-fair { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
+    .net-poor { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+    .net-offline { background: #555; }
 
-    .net-excellent {
-      background: var(--success);
-      box-shadow: 0 0 8px var(--success);
-    }
-
-    .net-poor {
-      background: var(--danger);
-      box-shadow: 0 0 8px var(--danger);
-    }
-
-    .net-offline {
-      background: #757575;
-    }
-
-    /* --- ENHANCED BANNERS --- */
-    .test-mode-banner {
-      display: none;
-      background-color: var(--danger);
-      color: #fff;
+    .banner {
       width: 100%;
-      max-width: 650px;
       text-align: center;
-      padding: 8px;
+      padding: 12px;
       font-size: 0.85rem;
-      font-weight: 900;
-      border-radius: 8px;
-      margin-bottom: 15px;
-      box-shadow: 0 4px 15px rgba(255, 68, 68, 0.4);
-      box-sizing: border-box;
-      animation: pulseTest 2s infinite;
-    }
-
-    @keyframes pulseTest {
-      0% {
-        opacity: 1;
-      }
-
-      50% {
-        opacity: 0.85;
-      }
-
-      100% {
-        opacity: 1;
-      }
-    }
-
-    .offline-badge {
-      display: none;
-      background-color: var(--warning);
-      color: #000;
-      width: 100%;
-      max-width: 650px;
-      text-align: center;
-      padding: 8px;
-      font-size: 0.85rem;
-      font-weight: 900;
-      border-radius: 8px;
+      font-weight: 800;
+      border-radius: var(--radius-md);
       margin-bottom: 15px;
       box-sizing: border-box;
+      display: none;
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      letter-spacing: 0.5px;
+    }
+    @keyframes popIn {
+      0% { transform: scale(0.9); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
     }
 
-    .version-tag {
-      font-size: 0.65rem;
-      background: #333;
-      color: var(--primary);
-      padding: 2px 6px;
-      border-radius: 4px;
-      margin-left: 8px;
-      vertical-align: middle;
-    }
+    .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+    .offline-badge { background-color: rgba(255, 187, 51, 0.15); color: var(--warning); border: 1px solid var(--warning); }
 
     .device-identity {
       width: 100%;
-      max-width: 650px;
       text-align: center;
-      font-size: 0.85rem;
-      color: #aaa;
-      margin-bottom: 20px;
+      font-size: 0.95rem;
+      color: var(--text-muted);
+      margin-bottom: 25px;
       cursor: pointer;
-      padding: 8px;
+      padding: 14px;
       background: var(--surface);
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       box-sizing: border-box;
-      transition: background 0.2s;
+      transition: var(--transition);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
+    .device-identity:hover { background: var(--surface-hover); transform: translateY(-2px); border-color: rgba(0, 210, 255, 0.3); }
+    .device-identity span { color: var(--primary); font-weight: 800; }
 
-    .device-identity span {
-      color: var(--primary);
-      font-weight: bold;
-    }
-
+    /* Fluid Form Container */
     .form-container {
       width: 100%;
-      max-width: 650px;
       background: var(--surface);
       padding: 30px;
-      border-radius: 16px;
+      border-radius: var(--radius-lg);
       border: 1px solid rgba(255, 255, 255, 0.05);
       box-sizing: border-box;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
     }
 
     .section-title {
       color: var(--primary);
       font-size: 1.1rem;
-      font-weight: bold;
-      margin-bottom: 15px;
-      margin-top: 30px;
-      border-bottom: 1px solid #333;
-      padding-bottom: 8px;
+      font-weight: 800;
+      margin-bottom: 20px;
+      margin-top: 35px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      padding-bottom: 10px;
       text-transform: uppercase;
       letter-spacing: 1px;
     }
+    .section-title:first-child { margin-top: 0; }
 
-    .section-title:first-child {
-      margin-top: 0;
+    /* Flex-based responsive rows */
+    .input-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+      margin-bottom: 20px;
     }
 
     .input-group {
-      margin-bottom: 18px;
       display: flex;
       flex-direction: column;
+      flex: 1 1 250px; /* Grows to fill, wraps if screen < 250px wide */
+      min-width: 0; /* Prevents overflow */
+      margin-bottom: 0; /* Margin handled by .input-row gap */
+    }
+
+    /* Catch-all for standalone inputs not in a row */
+    .form-container > .input-group {
+      margin-bottom: 20px;
     }
 
     .input-group label {
       font-size: 0.85rem;
-      color: #ccc;
-      margin-bottom: 6px;
-      font-weight: bold;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
     .input-group input,
     .input-group select {
-      background: #12141a;
-      color: #fff;
-      border: 1px solid #444;
-      padding: 12px 14px;
-      border-radius: 8px;
-      font-size: 1rem;
-      transition: all 0.3s;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 16px;
+      border-radius: var(--radius-md);
+      font-size: 1.05rem;
+      transition: var(--transition);
       font-family: inherit;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);
+      width: 100%;
+      box-sizing: border-box;
+      appearance: none; /* Removes native OS styling for selects */
+    }
+
+    /* Add a custom dropdown arrow to selects */
+    .input-group select {
+      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%238b93a5%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
+      background-repeat: no-repeat;
+      background-position: right 16px center;
+      background-size: 18px;
+      padding-right: 40px; /* Make room for arrow */
     }
 
     .input-group input:focus,
     .input-group select:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 10px rgba(0, 210, 255, 0.15);
+      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2), inset 0 2px 10px rgba(0,0,0,0.5);
+    }
+
+    .input-group input:disabled {
+      background: rgba(255, 255, 255, 0.02);
+      color: #555;
+      border-color: rgba(255, 255, 255, 0.05);
+      cursor: not-allowed;
     }
 
     .input-group input.err,
     .input-group select.err {
       border-color: var(--danger);
-      box-shadow: 0 0 10px rgba(255, 68, 68, 0.15);
+      box-shadow: 0 0 0 3px rgba(255, 68, 68, 0.2);
     }
 
     .err-msg {
       color: var(--danger);
       font-size: 0.8rem;
-      margin-top: 5px;
+      margin-top: 6px;
       min-height: 14px;
-      font-weight: bold;
+      font-weight: 800;
     }
 
-    .msg-info {
-      color: var(--primary);
-    }
+    .msg-info { color: var(--primary); }
+    .msg-success { color: var(--success); }
+    .msg-warning { color: var(--warning); }
 
-    .msg-success {
-      color: var(--success);
-    }
-
-    .msg-warning {
-      color: var(--warning);
-    }
-
-    .row {
-      display: flex;
-      gap: 15px;
-    }
-
-    .row>.input-group {
-      flex: 1;
-    }
-
+    /* Upgraded Modern Day Chips */
     .day-chips-container {
       display: flex;
-      gap: 12px;
+      gap: 15px;
       flex-wrap: wrap;
+      margin-bottom: 5px;
     }
 
-    .day-chip {
-      background: #12141a;
-      border: 1px solid #444;
-      padding: 12px 20px;
-      border-radius: 10px;
+    .day-chip-label {
+      flex: 1 1 120px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 0.95rem;
-      transition: all 0.2s;
-      font-weight: bold;
     }
 
-    .day-chip:hover {
+    .day-chip-label input {
+      display: none; /* Hide native checkbox */
+    }
+
+    .chip-content {
+      background: var(--bg-dark);
+      border: 2px solid rgba(255,255,255,0.1);
+      padding: 16px 20px;
+      border-radius: var(--radius-md);
+      font-weight: 800;
+      transition: var(--transition);
+      text-align: center;
+      font-size: 1.05rem;
+      color: var(--text-muted);
+      box-shadow: inset 0 2px 8px rgba(0,0,0,0.3);
+    }
+
+    .day-chip-label:hover .chip-content {
+      border-color: rgba(0, 210, 255, 0.4);
+      color: #fff;
+    }
+
+    /* Style when the hidden checkbox is checked */
+    .day-chip-label input:checked + .chip-content {
+      background: rgba(0, 210, 255, 0.15);
       border-color: var(--primary);
-    }
-
-    .day-chip input {
-      cursor: pointer;
-      width: 18px;
-      height: 18px;
-      accent-color: var(--primary);
+      color: var(--primary);
+      box-shadow: 0 4px 15px var(--primary-glow);
     }
 
     .btn-submit {
       width: 100%;
-      padding: 16px;
+      padding: 18px;
       background: var(--primary);
       color: #000;
       border: none;
-      border-radius: 10px;
-      font-size: 1.1rem;
+      border-radius: var(--radius-md);
+      font-size: 1.15rem;
       font-weight: 800;
       cursor: pointer;
-      margin-top: 20px;
-      transition: all 0.2s;
-      box-shadow: 0 5px 15px rgba(0, 210, 255, 0.2);
+      margin-top: 30px;
+      transition: var(--transition);
+      box-shadow: 0 8px 25px rgba(0, 210, 255, 0.3);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .btn-submit:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 30px rgba(0, 210, 255, 0.5);
     }
 
     .btn-submit:active {
       transform: scale(0.98);
-      box-shadow: 0 2px 8px rgba(0, 210, 255, 0.2);
+      box-shadow: 0 4px 10px rgba(0, 210, 255, 0.3);
+    }
+
+    .btn-submit:disabled {
+      background: #555;
+      color: #222;
+      box-shadow: none;
+      cursor: not-allowed;
+      transform: none;
     }
 
     #toast {
@@ -320,267 +361,284 @@
       background: var(--danger);
       color: #fff;
       padding: 15px 25px;
-      border-radius: 8px;
-      font-weight: bold;
+      border-radius: var(--radius-md);
+      font-weight: 800;
       font-size: 1rem;
       z-index: 2000;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
       transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
-    #toast.show {
-      bottom: 30px;
-    }
+    #toast.show { bottom: 30px; }
 
-    #success-modal {
+    /* Premium Modal */
+    #success-modal, #device-modal {
+      display: none;
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.85);
-      backdrop-filter: blur(8px);
-      display: none;
-      justify-content: center;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       align-items: center;
-      z-index: 1000;
+      justify-content: center;
+      z-index: 9999;
       opacity: 0;
-      transition: opacity 0.3s;
+      transition: opacity 0.3s ease;
+    }
+
+    #success-modal.show, #device-modal.show {
+      opacity: 1;
     }
 
     .modal-content {
       background: var(--surface);
       border: 2px solid var(--success);
       padding: 40px;
-      border-radius: 20px;
+      border-radius: var(--radius-lg);
       text-align: center;
       max-width: 450px;
       width: 90%;
       transform: scale(0.8);
       transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
     }
 
-    #success-modal.show {
-      opacity: 1;
-    }
-
-    #success-modal.show .modal-content {
+    #success-modal.show .modal-content, #device-modal.show .dev-modal-content {
       transform: scale(1);
     }
 
     .modal-id {
-      font-size: 2.2rem;
+      font-size: 2.4rem;
       color: #ffffff;
       font-family: monospace;
       font-weight: 800;
-      margin: 20px 0;
-      background: #0f1115;
+      margin: 25px 0;
+      background: var(--bg-dark);
       padding: 20px;
-      border-radius: 12px;
+      border-radius: var(--radius-md);
       letter-spacing: 3px;
-    }
-
-    #device-modal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.9);
-      z-index: 9999;
-      align-items: center;
-      justify-content: center;
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: inset 0 4px 15px rgba(0,0,0,0.5);
     }
 
     .dev-modal-content {
       background: var(--surface);
-      padding: 30px;
-      border-radius: 12px;
-      border: 1px solid var(--primary);
+      padding: 40px 25px;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(0, 210, 255, 0.3);
       width: 90%;
-      max-width: 350px;
+      max-width: 400px;
       text-align: center;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+      transform: scale(0.8);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
+    .dev-modal-content h3 { margin-top: 0; color: var(--primary); font-size: 1.5rem; font-weight: 800;}
     .dev-modal-content input {
       width: 100%;
-      padding: 12px;
-      background: #0f1115;
+      padding: 18px;
+      background: var(--bg-dark);
       color: #fff;
-      border: 1px solid #444;
-      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: var(--radius-md);
       box-sizing: border-box;
-      margin-bottom: 15px;
-      font-size: 1rem;
+      margin-bottom: 25px;
+      font-size: 1.15rem;
       text-align: center;
+      transition: var(--transition);
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
     }
-
+    .dev-modal-content input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2);}
     .dev-modal-content button {
       width: 100%;
-      padding: 12px;
+      padding: 18px;
       background: var(--primary);
       color: #000;
-      font-weight: bold;
+      font-weight: 800;
+      font-size: 1.15rem;
       border: none;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       cursor: pointer;
+      transition: var(--transition);
+      box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3);
     }
+    .dev-modal-content button:active { transform: translateY(2px); }
 
-    @media (max-width: 500px) {
-      .row {
-        flex-direction: column;
-        gap: 0;
-      }
-    }
   </style>
 </head>
 
 <body>
-  <div class="header">
-    <a href="/" class="btn-back">⬅ Hub</a>
-    <h3 style="margin: 0; display: flex; align-items: center">
-      Kiosk Reg <span class="version-tag">v2</span>
-    </h3>
-    <div id="network-pill" class="network-pill">
-      <span id="net-dot" class="net-dot net-offline"></span>
-      <span id="net-text">Checking...</span>
-    </div>
-  </div>
-
-  <!-- TEST MODE BANNER -->
-  <div id="test-mode-banner" class="test-mode-banner">
-    ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
-  </div>
-
-  <!-- OFFLINE QUEUE BADGE -->
-  <div id="offline-badge" class="offline-badge">
-    ⏳ <span id="offline-count">0</span> Registrations Pending Sync
-  </div>
-
-  <div class="device-identity" onclick="promptDeviceName()">
-    Kiosk Name: <span id="display-device-name">Loading...</span> ✏️
-  </div>
-
-  <div class="form-container">
-    <div class="section-title">👤 Identity</div>
-    <div class="input-group">
-      <label>Full Name *</label>
-      <input type="text" id="f-name" placeholder="Enter full name" />
-      <div class="err-msg" id="e-name"></div>
-    </div>
-    <div class="row">
-      <div class="input-group">
-        <label>Mobile Number *</label>
-        <input type="tel" id="f-mobile" placeholder="10-digit number" maxlength="10" />
-        <div class="err-msg" id="e-mobile"></div>
-      </div>
-      <div class="input-group">
-        <label>Gender *</label>
-        <select id="f-gender">
-          <option value="">— Select —</option>
-          <option value="MALE">Male</option>
-          <option value="FEMALE">Female</option>
-          <option value="OTHER">Other</option>
-        </select>
-        <div class="err-msg" id="e-gender"></div>
-      </div>
-    </div>
-    <div class="input-group">
-      <label>Email (Optional)</label>
-      <input type="email" id="f-email" placeholder="name@example.com" />
-      <div class="err-msg" id="e-email"></div>
-    </div>
-
-    <div class="section-title">💼 Professional Details</div>
-    <div class="row">
-      <div class="input-group">
-        <label>Attendee Type *</label>
-        <select id="f-type">
-          <option value="GENERAL">General</option>
-          <option value="BUSINESS">Business</option>
-          <option value="MEDIA">Media</option>
-          <option value="EXHIBITOR">Exhibitor</option>
-        </select>
-      </div>
-      <div class="input-group">
-        <label>Company / Firm Name</label>
-        <input type="text" id="f-bizname" placeholder="Required for Biz/Media" />
-        <div class="err-msg" id="e-bizname"></div>
-      </div>
-    </div>
-    <div class="row">
-      <div class="input-group">
-        <label>Category</label>
-        <select id="f-cat"></select>
-        <div class="err-msg" id="e-cat"></div>
-      </div>
-      <div class="input-group">
-        <label>Specify Other</label>
-        <input type="text" id="f-othercat" placeholder="If 'Other' selected" disabled />
-        <div class="err-msg" id="e-othercat"></div>
+  <div class="app-container">
+    
+    <div class="header">
+      <a href="/" class="btn-back">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+        Hub
+      </a>
+      <h3 class="header-title">
+        Kiosk Reg <span class="version-tag">v2.1</span>
+      </h3>
+      <div id="network-pill" class="network-pill">
+        <span id="net-dot" class="net-dot net-offline"></span>
+        <span id="net-text">Connecting...</span>
       </div>
     </div>
 
-    <div class="section-title">📍 Location</div>
-    <div class="input-group">
-      <label>Full Address *</label>
-      <input type="text" id="f-address" placeholder="Street / locality / area" />
-      <div class="err-msg" id="e-address"></div>
-    </div>
-    <div class="row">
-      <div class="input-group">
-        <label>Pincode *</label>
-        <input type="tel" id="f-pincode" placeholder="6 digits" maxlength="6" />
-        <div class="err-msg" id="e-pincode"></div>
-      </div>
-      <div class="input-group">
-        <label>City *</label>
-        <input type="text" id="f-city" placeholder="City" />
-        <div class="err-msg" id="e-city"></div>
-      </div>
-      <div class="input-group">
-        <label>State *</label>
-        <input type="text" id="f-state" placeholder="State" />
-        <div class="err-msg" id="e-state"></div>
-      </div>
+    <!-- TEST MODE BANNER -->
+    <div id="test-mode-banner" class="banner test-mode-banner">
+      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
     </div>
 
-    <div class="section-title">📅 Attendance Days *</div>
-    <div class="day-chips-container">
-      <label class="day-chip"><input type="checkbox" id="day-1" value="30 August" /> 30 Aug</label>
-      <label class="day-chip"><input type="checkbox" id="day-2" value="31 August" /> 31 Aug</label>
-      <label class="day-chip"><input type="checkbox" id="day-3" value="1 September" /> 1
-        Sept</label>
+    <!-- OFFLINE QUEUE BADGE -->
+    <div id="offline-badge" class="banner offline-badge">
+      ⏳ <span id="offline-count">0</span> Registrations Pending Sync
     </div>
-    <div class="err-msg" id="e-days"></div>
 
-    <button class="btn-submit" id="submit-btn" onclick="submitForm()">
-      Register Offline Attendee
-    </button>
-  </div>
+    <div class="device-identity" onclick="promptDeviceName()">
+      Kiosk Identity: <span id="display-device-name">Loading...</span> 
+      <svg style="vertical-align: middle; margin-left: 5px; color: #888;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+    </div>
+
+    <div class="form-container">
+      <div class="section-title">👤 Identity</div>
+      <div class="input-group">
+        <label>Full Name *</label>
+        <input type="text" id="f-name" placeholder="Enter full name" />
+        <div class="err-msg" id="e-name"></div>
+      </div>
+      
+      <div class="input-row">
+        <div class="input-group">
+          <label>Mobile Number *</label>
+          <input type="tel" id="f-mobile" placeholder="10-digit number" maxlength="10" />
+          <div class="err-msg" id="e-mobile"></div>
+        </div>
+        <div class="input-group">
+          <label>Gender *</label>
+          <select id="f-gender">
+            <option value="">— Select —</option>
+            <option value="MALE">Male</option>
+            <option value="FEMALE">Female</option>
+            <option value="OTHER">Other</option>
+          </select>
+          <div class="err-msg" id="e-gender"></div>
+        </div>
+      </div>
+
+      <div class="input-group">
+        <label>Email (Optional)</label>
+        <input type="email" id="f-email" placeholder="name@example.com" />
+        <div class="err-msg" id="e-email"></div>
+      </div>
+
+      <div class="section-title">💼 Professional Details</div>
+      <div class="input-row">
+        <div class="input-group">
+          <label>Attendee Type *</label>
+          <select id="f-type">
+            <option value="GENERAL">General</option>
+            <option value="BUSINESS">Business</option>
+            <option value="MEDIA">Media</option>
+            <option value="EXHIBITOR">Exhibitor</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label>Company / Firm Name</label>
+          <input type="text" id="f-bizname" placeholder="Required for Biz/Media" />
+          <div class="err-msg" id="e-bizname"></div>
+        </div>
+      </div>
+
+      <div class="input-row">
+        <div class="input-group">
+          <label>Category</label>
+          <select id="f-cat"></select>
+          <div class="err-msg" id="e-cat"></div>
+        </div>
+        <div class="input-group">
+          <label>Specify Other</label>
+          <input type="text" id="f-othercat" placeholder="If 'Other' selected" disabled />
+          <div class="err-msg" id="e-othercat"></div>
+        </div>
+      </div>
+
+      <div class="section-title">📍 Location</div>
+      <div class="input-group">
+        <label>Full Address *</label>
+        <input type="text" id="f-address" placeholder="Street / locality / area" />
+        <div class="err-msg" id="e-address"></div>
+      </div>
+
+      <div class="input-row">
+        <div class="input-group">
+          <label>Pincode *</label>
+          <input type="tel" id="f-pincode" placeholder="6 digits" maxlength="6" />
+          <div class="err-msg" id="e-pincode"></div>
+        </div>
+        <div class="input-group">
+          <label>City *</label>
+          <input type="text" id="f-city" placeholder="City" />
+          <div class="err-msg" id="e-city"></div>
+        </div>
+        <div class="input-group">
+          <label>State *</label>
+          <input type="text" id="f-state" placeholder="State" />
+          <div class="err-msg" id="e-state"></div>
+        </div>
+      </div>
+
+      <div class="section-title">📅 Attendance Days *</div>
+      <div class="day-chips-container">
+        <label class="day-chip-label">
+          <input type="checkbox" id="day-1" value="30 August" />
+          <div class="chip-content">30 Aug</div>
+        </label>
+        <label class="day-chip-label">
+          <input type="checkbox" id="day-2" value="31 August" />
+          <div class="chip-content">31 Aug</div>
+        </label>
+        <label class="day-chip-label">
+          <input type="checkbox" id="day-3" value="1 September" />
+          <div class="chip-content">1 Sept</div>
+        </label>
+      </div>
+      <div class="err-msg" id="e-days"></div>
+
+      <button class="btn-submit" id="submit-btn" onclick="submitForm()">
+        Register Attendee
+      </button>
+    </div>
+  </div> <!-- End Container -->
 
   <div id="toast">Error Message</div>
 
+  <!-- Success / Duplicate Modal -->
   <div id="success-modal">
     <div class="modal-content" id="modal-box">
-      <h2 id="modal-title" style="margin-top: 0">Registration Saved!</h2>
-      <p id="modal-desc">
+      <h2 id="modal-title" style="margin-top: 0; font-weight: 800; font-size: 2rem;">Registration Saved!</h2>
+      <p id="modal-desc" style="color: var(--text-muted); font-size: 1.05rem; line-height: 1.5;">
         Please provide the attendee with their official ID pass code:
       </p>
       <div class="modal-id" id="modal-id-text">TDE26-G-XXXXXX</div>
-      <p style="color: #aaa; font-size: 0.95rem; font-weight: bold" id="modal-countdown">
+      <p style="color: #666; font-size: 0.95rem; font-weight: 800; margin-bottom: 25px;" id="modal-countdown">
         Returning to form in 8s...
       </p>
-      <button class="btn-submit" style="background: #2a2a2a; color: #fff" onclick="dismissModal()">
+      <button class="btn-submit" style="margin-top: 0; background: rgba(255,255,255,0.1); color: #fff; box-shadow: none;" onclick="dismissModal()">
         Next Registration
       </button>
     </div>
   </div>
 
+  <!-- Device Naming Modal -->
   <div id="device-modal">
     <div class="dev-modal-content">
-      <h3 style="margin-top: 0; color: var(--primary)">Identify Kiosk</h3>
-      <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 20px">
-        Name this device so the Hub can track it.
+      <h3>Identify Kiosk</h3>
+      <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 25px; line-height: 1.4;">
+        Name this device so the Hub can track registration operations (e.g. Reg Desk A, VIP Tablet).
       </p>
-      <input type="text" id="device-name-input" placeholder="e.g. Reg Desk A, Laptop 1" />
-      <button onclick="saveDeviceName()">Save Device Name</button>
+      <input type="text" id="device-name-input" placeholder="e.g. Reg Desk A" />
+      <button onclick="saveDeviceName()">Confirm Identity</button>
     </div>
   </div>
 
@@ -626,10 +684,7 @@
             osc2.type = "square";
             osc2.frequency.setValueAtTime(400, audioCtx.currentTime);
             gain2.gain.setValueAtTime(0.5, audioCtx.currentTime);
-            gain2.gain.exponentialRampToValueAtTime(
-              0.01,
-              audioCtx.currentTime + 0.15,
-            );
+            gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
             osc2.start();
             osc2.stop(audioCtx.currentTime + 0.15);
           }, 200);
@@ -647,34 +702,39 @@
     }
 
     // --- DEVICE REGISTRY ---
-    function getDeviceName() {
-      return localStorage.getItem("hub_device_name") || "Unnamed Kiosk";
-    }
+    function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Kiosk"; }
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
-      if (!name)
+      if (!name) {
         document.getElementById("device-modal").style.display = "flex";
-      else document.getElementById("display-device-name").textContent = name;
+        setTimeout(() => document.getElementById("device-modal").classList.add("show"), 10);
+      } else {
+        document.getElementById("display-device-name").textContent = name;
+      }
     }
     function saveDeviceName() {
       let val = document.getElementById("device-name-input").value.trim();
       if (val) {
         localStorage.setItem("hub_device_name", val);
         document.getElementById("display-device-name").textContent = val;
-        document.getElementById("device-modal").style.display = "none";
-      } else showToast("Please enter a valid Kiosk name.");
+        
+        const modal = document.getElementById("device-modal");
+        modal.classList.remove("show");
+        setTimeout(() => modal.style.display = "none", 300);
+      } else {
+        showToast("Please enter a valid Kiosk name.");
+      }
     }
     function promptDeviceName() {
-      document.getElementById("device-name-input").value =
-        localStorage.getItem("hub_device_name") || "";
-      document.getElementById("device-modal").style.display = "flex";
+      document.getElementById("device-name-input").value = localStorage.getItem("hub_device_name") || "";
+      const modal = document.getElementById("device-modal");
+      modal.style.display = "flex";
+      setTimeout(() => modal.classList.add("show"), 10);
     }
 
     // --- OFFLINE QUEUE LOGIC ---
     let isSyncing = false;
-    function getOfflineQueue() {
-      return JSON.parse(localStorage.getItem("offline_regs") || "[]");
-    }
+    function getOfflineQueue() { return JSON.parse(localStorage.getItem("offline_regs") || "[]"); }
     function saveOfflineQueue(queue) {
       localStorage.setItem("offline_regs", JSON.stringify(queue));
       updateOfflineBadge();
@@ -716,19 +776,17 @@
       isSyncing = false;
 
       if (remainingQueue.length < queue.length) {
-        showToast(
-          `Synced ${queue.length - remainingQueue.length} offline registrations!`,
-        );
+        showToast(`Synced ${queue.length - remainingQueue.length} offline registrations!`);
         playAudioTone("SUCCESS");
       }
     }
 
-    // --- NETWORK PING ---
+    // --- UPGRADED NETWORK PING ---
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
-        text = document.getElementById("net-text");
-      const testBanner = document.getElementById("test-mode-banner"),
-        testDate = document.getElementById("test-mode-date");
+            text = document.getElementById("net-text"),
+            testBanner = document.getElementById("test-mode-banner"),
+            testDate = document.getElementById("test-mode-date");
 
       if (!navigator.onLine) {
         dot.className = "net-dot net-offline";
@@ -739,21 +797,19 @@
       const start = performance.now();
       try {
         const c = new AbortController();
-        const id = setTimeout(() => c.abort(), 2000);
+        const id = setTimeout(() => c.abort(), 5000); // 5 sec timeout, matching the robust scanner fix
         const response = await fetch(
           `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
-          { cache: "no-store", signal: c.signal },
+          { cache: "no-store", signal: c.signal }
         );
         clearTimeout(id);
 
         const dur = performance.now() - start;
-        if (dur < 150) {
-          dot.className = "net-dot net-excellent";
-          text.textContent = "Excellent";
-        } else {
-          dot.className = "net-dot net-poor";
-          text.textContent = "Poor";
-        }
+        
+        // Realistic thresholds
+        if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
+        else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; } 
+        else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
 
         if (response.ok) {
           try {
@@ -764,41 +820,26 @@
             } else {
               testBanner.style.display = "none";
             }
-
-            // IF SERVER IS REACHABLE, PUSH OFFLINE QUEUE
             processOfflineQueue();
           } catch (err) { }
         }
       } catch (e) {
         dot.className = "net-dot net-poor";
-        text.textContent = "Unstable";
+        text.textContent = "Connecting...";
       }
     }
 
     // --- CATEGORIES ---
     const CAT_OPTS = [
-      ["— Select Category —", ""],
-      ["Tent", "TENT"],
-      ["Caterers", "CATERING"],
-      ["Decorator", "DECORATOR"],
-      ["Flower Decoration", "FLOWER"],
-      ["DJ", "DJ"],
-      ["Light & Sound", "LIGHT"],
-      ["Photography", "PHOTOGRAPHY"],
-      ["Videography", "VIDEOGRAPHY"],
-      ["Event Planner", "EVENT_PLANNER"],
-      ["Stage Setup", "STAGE"],
-      ["Band", "BAND"],
-      ["Makeup Artist", "MAKEUP"],
-      ["Lawn, Resort & Banquet", "BANQUET"],
-      ["Transport", "TRANSPORT"],
-      ["Other (Specify Below)", "OTHER"],
-      ["Media / Press", "MEDIA_PRESS"],
+      ["— Select Category —", ""], ["Tent", "TENT"], ["Caterers", "CATERING"],
+      ["Decorator", "DECORATOR"], ["Flower Decoration", "FLOWER"], ["DJ", "DJ"],
+      ["Light & Sound", "LIGHT"], ["Photography", "PHOTOGRAPHY"], ["Videography", "VIDEOGRAPHY"],
+      ["Event Planner", "EVENT_PLANNER"], ["Stage Setup", "STAGE"], ["Band", "BAND"],
+      ["Makeup Artist", "MAKEUP"], ["Lawn, Resort & Banquet", "BANQUET"], ["Transport", "TRANSPORT"],
+      ["Other (Specify Below)", "OTHER"], ["Media / Press", "MEDIA_PRESS"],
     ];
     const catSel = document.getElementById("f-cat");
-    CAT_OPTS.forEach(([label, val]) =>
-      catSel.appendChild(new Option(label, val)),
-    );
+    CAT_OPTS.forEach(([label, val]) => catSel.appendChild(new Option(label, val)));
 
     // --- REACTIVITY & LIVE CHECKS ---
     document.getElementById("f-type").addEventListener("change", (e) => {
@@ -818,8 +859,10 @@
 
     catSel.addEventListener("change", (e) => {
       const otherInput = document.getElementById("f-othercat");
-      if (e.target.value === "OTHER") otherInput.disabled = false;
-      else {
+      if (e.target.value === "OTHER") {
+        otherInput.disabled = false;
+        otherInput.focus();
+      } else {
         otherInput.value = "";
         otherInput.disabled = true;
       }
@@ -832,28 +875,21 @@
       const val = e.target.value;
       const errDiv = document.getElementById("e-mobile");
       if (val.length === 10) {
-        errDiv.textContent = "⏳ Checking number...";
+        errDiv.textContent = "⏳ Checking network...";
         errDiv.className = "err-msg msg-info";
         try {
           const res = await fetch(`/api/check_mobile?mobile=${val}`);
           if (res.ok) {
             const data = await res.json();
-            if (
-              data.status === "already_registered" ||
-              data.status === "exists"
-            ) {
+            if (data.status === "already_registered" || data.status === "exists") {
               errDiv.textContent = `⚠ Already Registered! ID: ${data.attendee_id || "Found"}`;
               errDiv.className = "err-msg msg-warning";
             } else {
-              errDiv.textContent = "✓ Ready";
+              errDiv.textContent = "✓ Ready for Registration";
               errDiv.className = "err-msg msg-success";
             }
-          } else {
-            errDiv.textContent = "";
-          }
-        } catch (err) {
-          errDiv.textContent = "";
-        } // Fail silently if offline
+          } else { errDiv.textContent = ""; }
+        } catch (err) { errDiv.textContent = ""; }
       } else {
         errDiv.textContent = "";
         errDiv.className = "err-msg";
@@ -870,9 +906,7 @@
         errDiv.textContent = "⏳ Finding location...";
         errDiv.className = "err-msg msg-info";
         try {
-          const res = await fetch(
-            `https://api.postalpincode.in/pincode/${val}`,
-          );
+          const res = await fetch(`https://api.postalpincode.in/pincode/${val}`);
           const data = await res.json();
           if (data && data[0].Status === "Success") {
             const po = data[0].PostOffice[0];
@@ -901,31 +935,18 @@
       el.textContent = "⚠ " + msg;
       el.className = "err-msg";
     }
+    
     function clearFieldErr(key) {
       document.getElementById("f-" + key).classList.remove("err");
       const el = document.getElementById("e-" + key);
-      if (
-        !el.classList.contains("msg-success") &&
-        !el.classList.contains("msg-warning")
-      ) {
+      if (!el.classList.contains("msg-success") && !el.classList.contains("msg-warning")) {
         el.textContent = "";
         el.className = "err-msg";
       }
     }
+    
     function clearAllErrors() {
-      [
-        "name",
-        "mobile",
-        "email",
-        "gender",
-        "bizname",
-        "cat",
-        "othercat",
-        "address",
-        "city",
-        "state",
-        "pincode",
-      ].forEach(clearFieldErr);
+      ["name","mobile","email","gender","bizname","cat","othercat","address","city","state","pincode"].forEach(clearFieldErr);
       document.getElementById("e-days").textContent = "";
     }
 
@@ -933,66 +954,34 @@
       clearAllErrors();
       let ok = true;
       const name = document.getElementById("f-name").value.trim();
-      if (name.length < 2) {
-        setFieldErr("name", "Required (min 2 chars)");
-        ok = false;
-      }
+      if (name.length < 2) { setFieldErr("name", "Required (min 2 chars)"); ok = false; }
+      
       const mobile = document.getElementById("f-mobile").value.trim();
-      if (!/^[6-9]\d{9}$/.test(mobile)) {
-        setFieldErr("mobile", "Valid 10-digit number required");
-        ok = false;
-      }
+      if (!/^[6-9]\d{9}$/.test(mobile)) { setFieldErr("mobile", "Valid 10-digit number required"); ok = false; }
+      
       const email = document.getElementById("f-email").value.trim();
-      if (email && !/^[\w.\-+]+@[\w.\-]+\.\w{2,}$/.test(email)) {
-        setFieldErr("email", "Invalid email");
-        ok = false;
-      }
-      if (!document.getElementById("f-gender").value) {
-        setFieldErr("gender", "Required");
-        ok = false;
-      }
+      if (email && !/^[\w.\-+]+@[\w.\-]+\.\w{2,}$/.test(email)) { setFieldErr("email", "Invalid email"); ok = false; }
+      
+      if (!document.getElementById("f-gender").value) { setFieldErr("gender", "Required"); ok = false; }
+      
       const type = document.getElementById("f-type").value;
       const bizname = document.getElementById("f-bizname").value.trim();
-      if (["BUSINESS", "EXHIBITOR", "MEDIA"].includes(type) && !bizname) {
-        setFieldErr("bizname", "Required for this type");
-        ok = false;
-      }
+      if (["BUSINESS", "EXHIBITOR", "MEDIA"].includes(type) && !bizname) { setFieldErr("bizname", "Required for this type"); ok = false; }
+      
       const cat = catSel.value;
       const othercat = document.getElementById("f-othercat").value.trim();
       if (["BUSINESS", "EXHIBITOR"].includes(type)) {
-        if (!cat) {
-          setFieldErr("cat", "Required");
-          ok = false;
-        } else if (cat === "OTHER" && !othercat) {
-          setFieldErr("othercat", "Specify category");
-          ok = false;
-        }
+        if (!cat) { setFieldErr("cat", "Required"); ok = false; } 
+        else if (cat === "OTHER" && !othercat) { setFieldErr("othercat", "Specify category"); ok = false; }
       }
-      if (document.getElementById("f-address").value.trim().length < 5) {
-        setFieldErr("address", "Required");
-        ok = false;
-      }
-      if (document.getElementById("f-city").value.trim().length < 2) {
-        setFieldErr("city", "Required");
-        ok = false;
-      }
-      if (document.getElementById("f-state").value.trim().length < 2) {
-        setFieldErr("state", "Required");
-        ok = false;
-      }
-      if (
-        !/^\d{6}$/.test(document.getElementById("f-pincode").value.trim())
-      ) {
-        setFieldErr("pincode", "6-digit pincode");
-        ok = false;
-      }
-      if (
-        !document.getElementById("day-1").checked &&
-        !document.getElementById("day-2").checked &&
-        !document.getElementById("day-3").checked
-      ) {
-        document.getElementById("e-days").textContent =
-          "⚠ Select at least one day";
+      
+      if (document.getElementById("f-address").value.trim().length < 5) { setFieldErr("address", "Required"); ok = false; }
+      if (document.getElementById("f-city").value.trim().length < 2) { setFieldErr("city", "Required"); ok = false; }
+      if (document.getElementById("f-state").value.trim().length < 2) { setFieldErr("state", "Required"); ok = false; }
+      if (!/^\d{6}$/.test(document.getElementById("f-pincode").value.trim())) { setFieldErr("pincode", "6-digit pincode"); ok = false; }
+      
+      if (!document.getElementById("day-1").checked && !document.getElementById("day-2").checked && !document.getElementById("day-3").checked) {
+        document.getElementById("e-days").textContent = "⚠ Select at least one attendance day";
         ok = false;
       }
       return ok;
@@ -1000,10 +989,8 @@
 
     let cdTimer = null;
     function showModal(id, type = "SUCCESS") {
-      const title = document.getElementById("modal-title"),
-        desc = document.getElementById("modal-desc");
-      const box = document.getElementById("modal-box"),
-        idText = document.getElementById("modal-id-text");
+      const title = document.getElementById("modal-title"), desc = document.getElementById("modal-desc");
+      const box = document.getElementById("modal-box"), idText = document.getElementById("modal-id-text");
       const modal = document.getElementById("success-modal");
 
       idText.textContent = id;
@@ -1012,24 +999,21 @@
         title.textContent = "Already Registered!";
         title.style.color = "var(--warning)";
         box.style.borderColor = "var(--warning)";
-        desc.textContent =
-          "This mobile number is already in the system. Existing ID:";
+        desc.textContent = "This mobile number is already in the system. Existing ID:";
         idText.style.color = "var(--warning)";
         playAudioTone("WARNING");
       } else if (type === "OFFLINE") {
         title.textContent = "Saved Offline!";
         title.style.color = "var(--warning)";
         box.style.borderColor = "var(--warning)";
-        desc.textContent =
-          "Network disconnected. Data will sync automatically. Temporary pass:";
+        desc.textContent = "Network disconnected. Data will sync automatically. Temporary pass:";
         idText.style.color = "var(--warning)";
         playAudioTone("OFFLINE");
       } else {
         title.textContent = "Registration Saved!";
         title.style.color = "var(--success)";
         box.style.borderColor = "var(--success)";
-        desc.textContent =
-          "Please provide the attendee with their official ID pass code:";
+        desc.textContent = "Please provide the attendee with their official ID pass code:";
         idText.style.color = "var(--success)";
         playAudioTone("SUCCESS");
       }
@@ -1052,19 +1036,9 @@
       clearInterval(cdTimer);
       const modal = document.getElementById("success-modal");
       modal.classList.remove("show");
-      setTimeout(() => (modal.style.display = "none"), 300);
+      setTimeout(() => modal.style.display = "none", 300);
 
-      [
-        "name",
-        "mobile",
-        "email",
-        "bizname",
-        "othercat",
-        "address",
-        "city",
-        "state",
-        "pincode",
-      ].forEach((k) => (document.getElementById("f-" + k).value = ""));
+      ["name", "mobile", "email", "bizname", "othercat", "address", "city", "state", "pincode"].forEach((k) => (document.getElementById("f-" + k).value = ""));
       document.getElementById("f-gender").value = "";
       document.getElementById("f-type").value = "GENERAL";
       catSel.value = "";
@@ -1081,7 +1055,7 @@
 
       const btn = document.getElementById("submit-btn");
       btn.disabled = false;
-      btn.textContent = "Register Offline Attendee";
+      btn.textContent = "Register Attendee";
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
 
@@ -1095,9 +1069,9 @@
       btn.textContent = "⏳ Registering...";
 
       const selectedDays = [];
-      for (let i = 1; i <= 3; i++)
-        if (document.getElementById(`day-${i}`).checked)
-          selectedDays.push(document.getElementById(`day-${i}`).value);
+      for (let i = 1; i <= 3; i++) {
+        if (document.getElementById(`day-${i}`).checked) selectedDays.push(document.getElementById(`day-${i}`).value);
+      }
 
       const payload = {
         full_name: document.getElementById("f-name").value.trim(),
@@ -1105,11 +1079,9 @@
         email: document.getElementById("f-email").value.trim() || null,
         gender: document.getElementById("f-gender").value,
         attendee_type: document.getElementById("f-type").value,
-        business_name:
-          document.getElementById("f-bizname").value.trim() || null,
+        business_name: document.getElementById("f-bizname").value.trim() || null,
         business_category: catSel.value || null,
-        other_category:
-          document.getElementById("f-othercat").value.trim() || null,
+        other_category: document.getElementById("f-othercat").value.trim() || null,
         address: document.getElementById("f-address").value.trim(),
         city: document.getElementById("f-city").value.trim(),
         state: document.getElementById("f-state").value.trim(),
@@ -1125,27 +1097,27 @@
       })
         .then((res) => res.json())
         .then((data) => {
-          if (data.status === "success")
-            showModal(data.attendee_id, "SUCCESS");
-          else if (data.status === "already_registered")
-            showModal(data.attendee_id, "DUPLICATE");
+          if (data.status === "success") showModal(data.attendee_id, "SUCCESS");
+          else if (data.status === "already_registered") showModal(data.attendee_id, "DUPLICATE");
           else {
             showToast("Server Error: " + data.message);
             btn.disabled = false;
-            btn.textContent = "Register Offline Attendee";
+            btn.textContent = "Register Attendee";
             playAudioTone("ERROR");
           }
         })
         .catch(() => {
-          // INTERCEPT NETWORK CRASH: SAVE OFFLINE
           let queue = getOfflineQueue();
           queue.push(payload);
           saveOfflineQueue(queue);
-
-          // Show modal indicating offline status, using their mobile number as a temporary pass
           showModal(payload.mobile, "OFFLINE");
         });
     }
+
+    // Instantly reconnect if the tablet screen turns off and turns back on
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") syncServerStatus(); 
+    });
 
     window.addEventListener("load", () => {
       initDeviceName();
@@ -1155,5 +1127,4 @@
     });
   </script>
 </body>
-
 </html>
