@@ -1,6 +1,5 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -8,300 +7,290 @@
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <style>
     :root {
-      --bg-dark: #0f1115;
+      --bg-dark: #090a0f;
+      --surface: #151821;
+      --surface-hover: #1e222e;
       --primary: #00d2ff;
+      --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
       --warning: #ffbb33;
       --danger: #ff4444;
-      --surface: #1a1d24;
+      --text-main: #ffffff;
+      --text-muted: #8b93a5;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+      --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
 
     body {
-      font-family:
-        system-ui,
-        -apple-system,
-        sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
       background-color: var(--bg-dark);
-      color: #ffffff;
+      color: var(--text-main);
       margin: 0;
-      padding: 15px;
+      padding: 0;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 540px;
+      padding: 20px;
       display: flex;
       flex-direction: column;
       align-items: center;
+      animation: fadeIn 0.5s ease-out;
+      box-sizing: border-box;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
 
     .header {
       width: 100%;
-      max-width: 500px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 15px;
+      margin-bottom: 20px;
+      background: var(--surface);
+      padding: 12px 16px;
+      border-radius: var(--radius-md);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-sizing: border-box;
     }
 
     .btn-back {
-      color: #aaa;
+      color: var(--text-muted);
       text-decoration: none;
       font-size: 14px;
-      font-weight: bold;
-      padding: 8px 14px;
-      background: var(--surface);
-      border-radius: 8px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      transition: var(--transition);
+    }
+    .btn-back:hover { color: var(--text-main); }
+    .btn-back:active { transform: scale(0.95); }
+
+    .header-title {
+      margin: 0;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
     }
 
-    .btn-back:active {
-      transform: scale(0.95);
+    .version-tag {
+      font-size: 0.65rem;
+      background: rgba(0, 210, 255, 0.1);
+      color: var(--primary);
+      padding: 3px 8px;
+      border-radius: 20px;
+      border: 1px solid var(--primary-glow);
     }
 
     .network-pill {
       font-size: 0.75rem;
       padding: 6px 12px;
       border-radius: 20px;
-      font-weight: bold;
+      font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 6px;
-      background: var(--surface);
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
-    .net-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      display: inline-block;
-    }
+    .net-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .net-excellent { background: var(--success); box-shadow: 0 0 10px var(--success); }
+    .net-fair { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
+    .net-poor { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+    .net-offline { background: #555; }
 
-    .net-excellent {
-      background: var(--success);
-      box-shadow: 0 0 8px var(--success);
-    }
-
-    .net-fair {
-      background: var(--warning);
-      box-shadow: 0 0 8px var(--warning);
-    }
-
-    .net-poor {
-      background: var(--danger);
-      box-shadow: 0 0 8px var(--danger);
-    }
-
-    .net-offline {
-      background: #757575;
-    }
-
-    .version-tag {
-      font-size: 0.65rem;
-      background: #333;
-      color: var(--primary);
-      padding: 2px 6px;
-      border-radius: 4px;
-      margin-left: 8px;
-      vertical-align: middle;
-    }
-
-    .test-mode-banner {
-      display: none;
-      background-color: var(--danger);
-      color: #fff;
+    .banner {
       width: 100%;
-      max-width: 500px;
       text-align: center;
-      padding: 8px;
+      padding: 10px;
       font-size: 0.85rem;
-      font-weight: 900;
-      border-radius: 8px;
+      font-weight: 800;
+      border-radius: var(--radius-md);
       margin-bottom: 15px;
       box-sizing: border-box;
-      animation: pulseTest 2s infinite;
-    }
-
-    @keyframes pulseTest {
-      0% {
-        opacity: 1;
-      }
-
-      50% {
-        opacity: 0.85;
-      }
-
-      100% {
-        opacity: 1;
-      }
-    }
-
-    /* --- NEW OFFLINE QUEUE BADGE --- */
-    .offline-badge {
       display: none;
-      background-color: var(--warning);
-      color: #000;
-      width: 100%;
-      max-width: 500px;
-      text-align: center;
-      padding: 8px;
-      font-size: 0.85rem;
-      font-weight: 900;
-      border-radius: 8px;
-      margin-bottom: 15px;
-      box-sizing: border-box;
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
+
+    @keyframes popIn {
+      0% { transform: scale(0.9); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+
+    .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+    .offline-badge { background-color: rgba(255, 187, 51, 0.15); color: var(--warning); border: 1px solid var(--warning); }
 
     .device-identity {
       width: 100%;
-      max-width: 500px;
       text-align: center;
       font-size: 0.85rem;
-      color: #aaa;
-      margin-bottom: 15px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
       cursor: pointer;
-      padding: 8px;
+      padding: 12px;
       background: var(--surface);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       border: 1px solid rgba(255, 255, 255, 0.05);
       box-sizing: border-box;
+      transition: var(--transition);
     }
-
-    .device-identity span {
-      color: var(--primary);
-      font-weight: bold;
-    }
+    .device-identity:hover { background: var(--surface-hover); transform: translateY(-2px); }
+    .device-identity span { color: var(--primary); font-weight: 700; }
 
     .tabs {
       display: flex;
       width: 100%;
-      max-width: 500px;
       background: var(--surface);
-      border-radius: 12px;
+      border-radius: var(--radius-lg);
       margin-bottom: 20px;
-      overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 5px;
+      box-sizing: border-box;
+      border: 1px solid rgba(255, 255, 255, 0.05);
     }
-
     .tab-btn {
       flex: 1;
-      padding: 14px;
+      padding: 12px;
       background: transparent;
-      color: #888;
+      color: var(--text-muted);
       border: none;
-      font-size: 1rem;
-      font-weight: bold;
+      border-radius: 14px;
+      font-size: 0.95rem;
+      font-weight: 700;
       cursor: pointer;
-      transition: all 0.3s;
+      transition: var(--transition);
     }
+    .tab-btn.active { background: var(--primary); color: var(--bg-dark); box-shadow: 0 4px 15px var(--primary-glow); }
 
-    .tab-btn.active {
-      background: var(--primary);
-      color: #000;
-      box-shadow: 0 0 15px rgba(0, 210, 255, 0.3);
-    }
+    .scanner-wrapper { width: 100%; position: relative; }
 
-    .scanner-wrapper {
+    .camera-selector {
       width: 100%;
-      max-width: 500px;
-      position: relative;
+      padding: 12px 16px;
+      background: var(--surface);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-md);
+      margin-bottom: 15px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      outline: none;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%2300d2ff%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 16px;
     }
+    .camera-selector:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
 
     .scanner-box {
       position: relative;
       width: 100%;
-      border-radius: 16px;
+      border-radius: var(--radius-lg);
       overflow: hidden;
-      border: 2px solid #333;
-      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+      border: 2px solid rgba(255, 255, 255, 0.05);
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
       background: #000;
       min-height: 250px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
     }
 
-    #reader {
-      width: 100%;
-      border: none !important;
-    }
+    #reader { width: 100%; border: none !important; }
+    #reader video { object-fit: cover; border-radius: var(--radius-lg); }
 
     #reader__dashboard_section_csr button,
     #reader__dashboard_section_swap_link,
-    #html5-qrcode-anchor-scan-type-change {
-      display: none !important;
+    #html5-qrcode-anchor-scan-type-change { display: none !important; }
+
+    /* PERMISSION OVERLAY */
+    .permission-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(5px);
+      z-index: 20;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 20px;
+      box-sizing: border-box;
     }
+    .permission-overlay h4 { color: var(--danger); margin: 10px 0; font-size: 1.2rem; }
+    .permission-overlay p { font-size: 0.85rem; color: #ccc; margin-bottom: 20px; line-height: 1.4; }
+    .btn-permission {
+      background: var(--primary);
+      color: #000;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-weight: 800;
+      font-size: 1rem;
+      cursor: pointer;
+      box-shadow: 0 4px 15px var(--primary-glow);
+      transition: var(--transition);
+    }
+    .btn-permission:hover { transform: scale(1.05); }
 
     .scan-overlay {
       position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      inset: 0;
       z-index: 10;
       pointer-events: none;
       display: none;
-      background: linear-gradient(to bottom,
-          rgba(0, 210, 255, 0) 0%,
-          rgba(0, 210, 255, 0.05) 50%,
-          rgba(0, 210, 255, 0) 100%);
+      box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.8);
+      border-radius: var(--radius-lg);
     }
 
     .scan-laser {
       width: 100%;
-      height: 2px;
+      height: 3px;
       background-color: var(--primary);
-      box-shadow:
-        0 0 15px var(--primary),
-        0 0 30px var(--primary);
+      box-shadow: 0 0 15px var(--primary), 0 0 30px var(--primary), 0 0 45px var(--primary);
       position: absolute;
-      animation: scan 2s infinite linear;
+      animation: scanSweep 2.5s infinite ease-in-out;
+      border-radius: 50%;
     }
 
-    @keyframes scan {
-      0% {
-        top: 0%;
-        opacity: 0;
-      }
-
-      10% {
-        opacity: 1;
-      }
-
-      90% {
-        opacity: 1;
-      }
-
-      100% {
-        top: 100%;
-        opacity: 0;
-      }
-    }
-
-    .camera-toggle-btn {
-      width: 100%;
-      padding: 14px;
-      background: var(--warning);
-      color: #000;
-      border: none;
-      border-radius: 12px;
-      font-size: 1rem;
-      font-weight: 800;
-      cursor: pointer;
-      margin-top: 15px;
-      box-shadow: 0 4px 15px rgba(255, 187, 51, 0.2);
-    }
-
-    .camera-toggle-btn.paused {
-      background: var(--success);
-      box-shadow: 0 4px 15px rgba(0, 230, 118, 0.2);
+    @keyframes scanSweep {
+      0% { top: 5%; opacity: 0; }
+      15% { opacity: 1; }
+      85% { opacity: 1; }
+      100% { top: 95%; opacity: 0; }
     }
 
     .zoom-toolbar {
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 15px;
       margin-top: 15px;
       width: 100%;
       background: var(--surface);
-      padding: 15px;
-      border-radius: 12px;
+      padding: 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(255, 255, 255, 0.05);
       box-sizing: border-box;
+      animation: popIn 0.3s ease-out;
     }
-
     .zoom-header {
       display: flex;
       justify-content: space-between;
@@ -309,123 +298,143 @@
       width: 100%;
       font-size: 0.85rem;
       color: var(--primary);
-      font-weight: bold;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
+    .zoom-controls-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+    
+    .zoom-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(0, 210, 255, 0.1);
+      color: var(--primary);
+      font-size: 1.5rem;
+      font-weight: 300;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      transition: var(--transition);
+      flex-shrink: 0;
+    }
+    .zoom-btn:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary-glow); }
+    .zoom-btn:active { transform: scale(0.9); }
 
+    .zoom-slider-wrapper { flex-grow: 1; display: flex; align-items: center; }
     .zoom-slider {
       -webkit-appearance: none;
       width: 100%;
-      height: 6px;
-      background: #333;
-      border-radius: 5px;
+      height: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 10px;
       outline: none;
+      transition: var(--transition);
     }
-
     .zoom-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 20px;
-      height: 20px;
+      width: 24px;
+      height: 24px;
       border-radius: 50%;
       background: var(--primary);
       cursor: pointer;
-      box-shadow: 0 0 10px rgba(0, 210, 255, 0.5);
+      box-shadow: 0 0 12px var(--primary-glow);
+      transition: var(--transition);
     }
+    .zoom-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
 
     .auto-zoom-badge {
-      background: var(--primary);
-      color: #000;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-size: 0.75rem;
+      background: rgba(0, 210, 255, 0.15);
+      color: var(--primary);
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.7rem;
       opacity: 0;
       transition: opacity 0.3s;
+      border: 1px solid var(--primary-glow);
     }
+
+    .camera-toggle-btn {
+      width: 100%;
+      padding: 16px;
+      background: rgba(255, 187, 51, 0.15);
+      color: var(--warning);
+      border: 1px solid var(--warning);
+      border-radius: var(--radius-md);
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 15px;
+      transition: var(--transition);
+    }
+    .camera-toggle-btn:hover { background: var(--warning); color: #000; box-shadow: 0 4px 20px rgba(255, 187, 51, 0.3); }
+    .camera-toggle-btn.paused { background: rgba(0, 230, 118, 0.15); color: var(--success); border-color: var(--success); }
+    .camera-toggle-btn.paused:hover { background: var(--success); color: #000; box-shadow: 0 4px 20px rgba(0, 230, 118, 0.3); }
 
     .manual-wrapper {
       width: 100%;
-      max-width: 500px;
       display: none;
       background: var(--surface);
-      padding: 25px;
-      border-radius: 16px;
+      padding: 30px 20px;
+      border-radius: var(--radius-lg);
       border: 1px solid rgba(255, 255, 255, 0.05);
       box-sizing: border-box;
+      animation: fadeIn 0.3s ease-out;
     }
-
-    .input-group {
-      margin-bottom: 20px;
-      display: flex;
-      flex-direction: column;
-    }
-
+    .input-group { display: flex; flex-direction: column; margin-bottom: 20px; }
     .input-group label {
       font-size: 0.85rem;
-      color: var(--primary);
+      color: var(--text-muted);
       margin-bottom: 8px;
-      font-weight: bold;
+      font-weight: 700;
       text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-
     .input-group input {
-      background: #0f1115;
-      color: #fff;
-      border: 1px solid #444;
-      padding: 14px;
-      border-radius: 10px;
+      background: var(--bg-dark);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 16px;
+      border-radius: var(--radius-md);
       font-size: 1.1rem;
       font-family: monospace;
       text-align: center;
+      transition: var(--transition);
     }
-
-    .input-group input:focus {
-      outline: none;
-      border-color: var(--primary);
-    }
-
+    .input-group input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.15); }
+    
     .btn-submit {
       width: 100%;
-      padding: 14px;
-      background: #2a2a2a;
-      color: #fff;
-      border: 1px solid #555;
-      border-radius: 10px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-md);
       font-size: 1rem;
-      font-weight: bold;
+      font-weight: 700;
       cursor: pointer;
+      transition: var(--transition);
+      margin-top: 10px;
     }
-
-    .btn-submit:active {
-      background: var(--primary);
-      color: #000;
-    }
+    .btn-submit:hover { background: var(--primary); color: #000; border-color: var(--primary); box-shadow: 0 4px 15px var(--primary-glow); }
+    .btn-submit:active { transform: translateY(2px); }
 
     .divider {
       text-align: center;
-      margin: 25px 0;
-      color: #666;
+      margin: 30px 0;
+      color: var(--text-muted);
       position: relative;
-      font-weight: bold;
-      font-size: 0.9rem;
+      font-weight: 700;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
-
-    .divider::before,
-    .divider::after {
-      content: "";
-      position: absolute;
-      top: 50%;
-      width: 40%;
-      height: 1px;
-      background: #333;
-    }
-
-    .divider::before {
-      left: 0;
-    }
-
-    .divider::after {
-      right: 0;
-    }
+    .divider::before, .divider::after { content: ""; position: absolute; top: 50%; width: 35%; height: 1px; background: rgba(255, 255, 255, 0.1); }
+    .divider::before { left: 0; }
+    .divider::after { right: 0; }
 
     #result-card {
       position: fixed;
@@ -435,182 +444,183 @@
       width: 90%;
       max-width: 450px;
       padding: 20px;
-      border-radius: 12px;
+      border-radius: var(--radius-md);
       text-align: center;
       font-weight: 800;
       font-size: 1.1rem;
       z-index: 1000;
-      transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      transition: bottom 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
       box-sizing: border-box;
+      backdrop-filter: blur(10px);
     }
+    #result-card.show { bottom: 40px; }
 
-    #result-card.show {
-      bottom: 30px;
-    }
-
-    .res-success {
-      background-color: var(--success);
-      color: #000;
-      border: 2px solid #00c853;
-    }
-
-    .res-duplicate {
-      background-color: var(--warning);
-      color: #000;
-      border: 2px solid #ff9100;
-    }
-
-    .res-error {
-      background-color: var(--danger);
-      color: #fff;
-      border: 2px solid #d50000;
-    }
-
-    .res-offline {
-      background-color: #ff9100;
-      color: #000;
-      border: 2px solid #e65100;
-    }
-
-    /* Specific offline styling */
+    .res-success { background-color: rgba(0, 230, 118, 0.9); color: #000; border: 1px solid #00c853; }
+    .res-duplicate { background-color: rgba(255, 187, 51, 0.9); color: #000; border: 1px solid #ff9100; }
+    .res-error { background-color: rgba(255, 68, 68, 0.9); color: #fff; border: 1px solid #d50000; }
+    .res-offline { background-color: rgba(255, 145, 0, 0.9); color: #000; border: 1px solid #e65100; }
 
     #device-modal {
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.8);
-      backdrop-filter: blur(5px);
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(8px);
       z-index: 9999;
       align-items: center;
       justify-content: center;
     }
-
     .dev-modal-content {
       background: var(--surface);
-      padding: 30px;
-      border-radius: 16px;
-      border: 1px solid var(--primary);
+      padding: 35px 25px;
+      border-radius: var(--radius-lg);
+      border: 1px solid rgba(0, 210, 255, 0.2);
       width: 90%;
-      max-width: 350px;
+      max-width: 400px;
       text-align: center;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+      animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
-
+    .dev-modal-content h3 { margin-top: 0; color: var(--primary); font-size: 1.4rem; }
     .dev-modal-content input {
       width: 100%;
-      padding: 14px;
-      background: #0f1115;
+      padding: 16px;
+      background: var(--bg-dark);
       color: #fff;
-      border: 1px solid #444;
-      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: var(--radius-md);
       box-sizing: border-box;
-      margin-bottom: 20px;
-      font-size: 1rem;
+      margin-bottom: 25px;
+      font-size: 1.1rem;
       text-align: center;
+      transition: var(--transition);
     }
-
+    .dev-modal-content input:focus { border-color: var(--primary); outline: none; }
     .dev-modal-content button {
       width: 100%;
-      padding: 14px;
+      padding: 16px;
       background: var(--primary);
       color: #000;
-      font-weight: bold;
-      font-size: 1rem;
+      font-weight: 800;
+      font-size: 1.1rem;
       border: none;
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       cursor: pointer;
+      transition: var(--transition);
     }
+    .dev-modal-content button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px var(--primary-glow); }
   </style>
 </head>
 
 <body>
-  <div class="header">
-    <a href="/" class="btn-back">⬅ Back</a>
-    <h3 style="margin: 0; display: flex; align-items: center">
-      QR Check-in <span class="version-tag">v2</span>
-    </h3>
-    <div id="network-pill" class="network-pill">
-      <span id="net-dot" class="net-dot net-offline"></span>
-      <span id="net-text">Checking...</span>
-    </div>
-  </div>
-
-  <div id="test-mode-banner" class="test-mode-banner">
-    ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
-  </div>
-
-  <!-- NEW: OFFLINE QUEUE BADGE -->
-  <div id="offline-badge" class="offline-badge">
-    ⏳ <span id="offline-count">0</span> Scans Pending Sync
-  </div>
-
-  <div class="device-identity" onclick="promptDeviceName()">
-    Scanner Name: <span id="display-device-name">Loading...</span> ✏️
-  </div>
-
-  <div class="tabs">
-    <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">
-      📷 Auto Scan
-    </button>
-    <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">
-      ⌨️ Manual
-    </button>
-  </div>
-
-  <div class="scanner-wrapper" id="qr-view">
-    <div class="scanner-box">
-      <div id="reader"></div>
-      <div class="scan-overlay" id="scan-overlay">
-        <div class="scan-laser"></div>
+  <div class="app-container">
+    <div class="header">
+      <a href="/" class="btn-back">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+        Back
+      </a>
+      <h3 class="header-title">
+        Live Check-in <span class="version-tag">v2.2</span>
+      </h3>
+      <div id="network-pill" class="network-pill">
+        <span id="net-dot" class="net-dot net-offline"></span>
+        <span id="net-text">Checking...</span>
       </div>
     </div>
-    <div class="zoom-toolbar" id="zoom-controls" style="display: none">
-      <div class="zoom-header">
-        <span>Manual Zoom</span>
-        <span id="auto-zoom-badge" class="auto-zoom-badge">Auto-Focusing...</span>
-        <span id="zoom-val-display">1.0x</span>
-      </div>
-      <input type="range" id="zoom-slider" class="zoom-slider" min="1" max="3" step="0.1" value="1" />
-    </div>
-    <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
-      ⏸ Pause Scanner
-    </button>
-  </div>
 
-  <div class="manual-wrapper" id="manual-view">
-    <div class="input-group">
-      <label>Find by Attendee ID</label>
-      <input type="text" id="manual-id" placeholder="TDE26-G-XXXXXX" oninput="formatID(this)" maxlength="14" />
-      <button class="btn-submit" style="margin-top: 10px" onclick="submitManual('id')">
-        Check In by ID
+    <div id="test-mode-banner" class="banner test-mode-banner">
+      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+    </div>
+
+    <div id="offline-badge" class="banner offline-badge">
+      ⏳ <span id="offline-count">0</span> Scans Pending Sync
+    </div>
+
+    <div class="device-identity" onclick="promptDeviceName()">
+      Scanner Identity: <span id="display-device-name">Loading...</span> 
+      <svg style="vertical-align: middle; margin-left: 5px;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+    </div>
+
+    <div class="tabs">
+      <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">📷 Auto Scan</button>
+      <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">⌨️ Manual Entry</button>
+    </div>
+
+    <div class="scanner-wrapper" id="qr-view">
+      
+      <select id="camera-select" class="camera-selector" style="display: none;" onchange="onCameraChange()">
+        <option value="">Detecting Cameras...</option>
+      </select>
+
+      <div class="scanner-box">
+        <div id="reader"></div>
+        
+        <!-- NEW: Permission Fallback Overlay -->
+        <div class="permission-overlay" id="permission-overlay">
+          <div style="font-size: 2.5rem; margin-bottom: 10px;">📸</div>
+          <h4>Camera Access Blocked</h4>
+          <p>We need your permission to use the camera for scanning QR codes. Please click below to grant access.</p>
+          <button class="btn-permission" onclick="requestCameraPermissionNatively()">Grant Permission</button>
+        </div>
+
+        <div class="scan-overlay" id="scan-overlay">
+          <div class="scan-laser"></div>
+        </div>
+      </div>
+
+      <div class="zoom-toolbar" id="zoom-controls" style="display: none">
+        <div class="zoom-header">
+          <span>Camera Zoom</span>
+          <span id="auto-zoom-badge" class="auto-zoom-badge">Auto-Focusing</span>
+          <span id="zoom-val-display">1.0x</span>
+        </div>
+        <div class="zoom-controls-row">
+          <button class="zoom-btn" onclick="adjustZoom(-0.2)">−</button>
+          <div class="zoom-slider-wrapper">
+            <input type="range" id="zoom-slider" class="zoom-slider" min="1" max="3" step="0.1" value="1" />
+          </div>
+          <button class="zoom-btn" onclick="adjustZoom(0.2)">+</button>
+        </div>
+      </div>
+
+      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
+        ⏸ Pause Scanner
       </button>
     </div>
-    <div class="divider">OR</div>
-    <div class="input-group">
-      <label>Find by Phone Number</label>
-      <input type="tel" id="manual-phone" placeholder="10-digit number" maxlength="10"
-        oninput="this.value = this.value.replace(/[^0-9]/g, '')" />
-      <button class="btn-submit" style="margin-top: 10px" onclick="submitManual('phone')">
-        Check In by Phone
-      </button>
+
+    <div class="manual-wrapper" id="manual-view">
+      <div class="input-group">
+        <label>Find by Attendee ID</label>
+        <input type="text" id="manual-id" placeholder="TDE26-G-XXXXXX" oninput="formatID(this)" maxlength="14" />
+        <button class="btn-submit" onclick="submitManual('id')">Check In via ID</button>
+      </div>
+      <div class="divider">OR</div>
+      <div class="input-group">
+        <label>Find by Phone Number</label>
+        <input type="tel" id="manual-phone" placeholder="10-digit number" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')" />
+        <button class="btn-submit" onclick="submitManual('phone')">Check In via Phone</button>
+      </div>
     </div>
+
   </div>
 
   <div id="result-card"></div>
 
   <div id="device-modal">
     <div class="dev-modal-content">
-      <h3 style="margin-top: 0; color: var(--primary)">Identify Scanner</h3>
-      <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 20px">
-        Name this device so the Hub can track it.
+      <h3>Identify Scanner</h3>
+      <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 25px; line-height: 1.4;">
+        Assign a unique name to this device so the central hub can track gate activity.
       </p>
       <input type="text" id="device-name-input" placeholder="e.g. Gate 1, VIP Scanner" />
-      <button onclick="saveDeviceName()">Save Device Name</button>
+      <button onclick="saveDeviceName()">Save Device Identity</button>
     </div>
   </div>
 
   <script>
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
     function playAudioTone(type) {
       try {
         if (audioCtx.state === "suspended") audioCtx.resume();
@@ -642,23 +652,8 @@
           gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
           osc.start(now);
           osc.stop(now + 0.15);
-          setTimeout(() => {
-            const osc2 = audioCtx.createOscillator();
-            const gain2 = audioCtx.createGain();
-            osc2.connect(gain2);
-            gain2.connect(audioCtx.destination);
-            osc2.type = "square";
-            osc2.frequency.setValueAtTime(400, audioCtx.currentTime);
-            gain2.gain.setValueAtTime(0.5, audioCtx.currentTime);
-            gain2.gain.exponentialRampToValueAtTime(
-              0.01,
-              audioCtx.currentTime + 0.15,
-            );
-            osc2.start();
-            osc2.stop(audioCtx.currentTime + 0.15);
-          }, 200);
         }
-      } catch (e) { }
+      } catch (e) { console.error("Audio block", e); }
     }
 
     let html5QrCode = null;
@@ -668,40 +663,89 @@
     let minZoom = 1;
     let maxZoom = 3;
     let autoZoomInterval = null;
-    let isSyncing = false; // Prevents overlapping sync runs
+    let isSyncing = false;
+    let camerasList = [];
 
     const scanConfig = {
       fps: 30,
-      qrbox: { width: 220, height: 220 },
-      formatsToSupport: [0],
-      aspectRatio: 1.0,
-      videoConstraints: {
-        facingMode: "environment",
-        focusMode: ["continuous", "macro"],
-        advanced: [{ zoom: 1.0 }],
-      },
+      qrbox: { width: 250, height: 250 },
+      formatsToSupport: [0], // QR_CODE
+      aspectRatio: 1.0
     };
+
+    // NEW: Native Permission Request for strict browsers
+    async function requestCameraPermissionNatively() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        // We got permission! Stop the native stream so HTML5QrCode can take over cleanly.
+        stream.getTracks().forEach(track => track.stop());
+        
+        document.getElementById("permission-overlay").style.display = "none";
+        await fetchCameras();
+        await startHardware();
+      } catch (err) {
+        showToast("Permission denied by system. Check settings.", "ERROR");
+        console.error("Native Permission Error:", err);
+      }
+    }
+
+    async function fetchCameras() {
+      try {
+        const devices = await Html5Qrcode.getCameras();
+        if (devices && devices.length) {
+          camerasList = devices;
+          const select = document.getElementById("camera-select");
+          select.innerHTML = "";
+          devices.forEach((device, index) => {
+            const option = document.createElement("option");
+            option.value = device.id;
+            option.text = device.label || `Camera ${index + 1}`;
+            select.appendChild(option);
+          });
+          select.style.display = "block";
+        }
+      } catch (err) {
+        console.warn("Could not fetch camera list: ", err);
+        // If we can't fetch cameras, it's usually a permission issue
+        document.getElementById("permission-overlay").style.display = "flex";
+      }
+    }
+
+    async function onCameraChange() {
+      if (isCameraActive) {
+        await stopHardware();
+        await startHardware();
+      }
+    }
 
     async function startHardware() {
       if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
       if (!isCameraActive) {
         const btn = document.getElementById("camera-toggle-btn");
+        const select = document.getElementById("camera-select");
+        const cameraId = select.value;
+
         btn.innerHTML = "⏳ Starting Camera...";
         btn.classList.remove("paused");
+        document.getElementById("permission-overlay").style.display = "none";
+        
+        let videoConstraints = cameraId 
+          ? { deviceId: { exact: cameraId }, advanced: [{ zoom: 1.0 }] } 
+          : { facingMode: "environment", advanced: [{ zoom: 1.0 }] };
+
         try {
-          await html5QrCode.start(
-            scanConfig.videoConstraints,
-            scanConfig,
-            onScanSuccess,
-          );
+          await html5QrCode.start(videoConstraints, scanConfig, onScanSuccess);
+          
           isCameraActive = true;
           btn.innerHTML = "⏸ Pause Scanner";
           document.getElementById("scan-overlay").style.display = "block";
-          setTimeout(initAdvancedCameraControls, 1000);
+          
+          setTimeout(initAdvancedCameraControls, 1200);
           startAutoZoomSweep();
         } catch (err) {
-          showToast("Camera permission denied.", "ERROR");
-          btn.innerHTML = "▶ Camera Failed";
+          console.error("Camera Start Failed:", err);
+          document.getElementById("permission-overlay").style.display = "flex";
+          btn.innerHTML = "▶ Resume Scanner";
           btn.classList.add("paused");
         }
       }
@@ -721,23 +765,38 @@
             slider.step = (maxZoom - minZoom) / 20;
             slider.value = minZoom;
             document.getElementById("zoom-controls").style.display = "flex";
-            slider.addEventListener("input", (e) => {
+            
+            slider.replaceWith(slider.cloneNode(true));
+            const newSlider = document.getElementById("zoom-slider");
+            newSlider.addEventListener("input", (e) => {
               applyZoom(parseFloat(e.target.value));
               resetAutoZoomTimer();
             });
+          } else {
+             document.getElementById("zoom-controls").style.display = "none";
           }
         }
-      } catch (e) { }
+      } catch (e) {
+        console.warn("Zoom not supported on this device.");
+      }
     }
 
     async function applyZoom(val) {
       if (!currentTrack) return;
       try {
         await currentTrack.applyConstraints({ advanced: [{ zoom: val }] });
-        document.getElementById("zoom-val-display").innerText =
-          val.toFixed(1) + "x";
+        document.getElementById("zoom-val-display").innerText = val.toFixed(1) + "x";
         document.getElementById("zoom-slider").value = val;
       } catch (e) { }
+    }
+
+    function adjustZoom(delta) {
+      let slider = document.getElementById("zoom-slider");
+      let currentVal = parseFloat(slider.value);
+      let newVal = Math.max(minZoom, Math.min(maxZoom, currentVal + delta));
+      slider.value = newVal;
+      applyZoom(newVal);
+      resetAutoZoomTimer();
     }
 
     function startAutoZoomSweep() {
@@ -748,9 +807,7 @@
         badge.style.opacity = 1;
         applyZoom(toggle ? minZoom : minZoom + (maxZoom - minZoom) * 0.2);
         toggle = !toggle;
-        setTimeout(() => {
-          badge.style.opacity = 0;
-        }, 800);
+        setTimeout(() => { badge.style.opacity = 0; }, 800);
       }, 5000);
     }
 
@@ -763,18 +820,19 @@
       if (html5QrCode && isCameraActive) {
         try {
           clearInterval(autoZoomInterval);
-          if (html5QrCode.getState() === 2) await html5QrCode.stop();
+          if (html5QrCode.getState() === 2) {
+             await html5QrCode.stop();
+          }
           isCameraActive = false;
-          document.getElementById("camera-toggle-btn").innerHTML =
-            "▶ Resume Scanner";
-          document
-            .getElementById("camera-toggle-btn")
-            .classList.add("paused");
+          const btn = document.getElementById("camera-toggle-btn");
+          btn.innerHTML = "▶ Resume Scanner";
+          btn.classList.add("paused");
           document.getElementById("scan-overlay").style.display = "none";
           document.getElementById("zoom-controls").style.display = "none";
-        } catch (e) { }
+        } catch (e) { console.error(e); }
       }
     }
+
     async function toggleCamera() {
       if (isCameraActive) await stopHardware();
       else await startHardware();
@@ -808,28 +866,28 @@
     }
 
     function submitManual(type) {
-      let val =
-        type === "id"
+      let val = type === "id"
           ? document.getElementById("manual-id").value.trim()
           : document.getElementById("manual-phone").value.trim();
+          
       if (type === "id" && !/^TDE26-[BGME]-[A-Z0-9]{6}$/i.test(val))
         return showToast("Invalid Format.", "ERROR");
       if (type === "phone" && val.length !== 10)
         return showToast("Phone must be exactly 10 digits", "ERROR");
+        
       processCheckin(val, type);
       document.getElementById("manual-id").value = "";
       document.getElementById("manual-phone").value = "";
     }
 
-    function getDeviceName() {
-      return localStorage.getItem("hub_device_name") || "Unnamed Scanner";
-    }
+    function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Scanner"; }
+    
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
-      if (!name)
-        document.getElementById("device-modal").style.display = "flex";
+      if (!name) document.getElementById("device-modal").style.display = "flex";
       else document.getElementById("display-device-name").textContent = name;
     }
+    
     function saveDeviceName() {
       let val = document.getElementById("device-name-input").value.trim();
       if (val) {
@@ -838,15 +896,14 @@
         document.getElementById("device-modal").style.display = "none";
       }
     }
+    
     function promptDeviceName() {
       document.getElementById("device-name-input").value = getDeviceName();
       document.getElementById("device-modal").style.display = "flex";
     }
 
-    // --- OFFLINE QUEUE LOGIC ---
-    function getOfflineQueue() {
-      return JSON.parse(localStorage.getItem("offline_scans") || "[]");
-    }
+    function getOfflineQueue() { return JSON.parse(localStorage.getItem("offline_scans") || "[]"); }
+    
     function saveOfflineQueue(queue) {
       localStorage.setItem("offline_scans", JSON.stringify(queue));
       updateOfflineBadge();
@@ -878,12 +935,8 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(queue[i]),
           });
-          // If it returns an explicit error (like 400 Already Checked In, or 404 Not Found),
-          // we remove it from the queue because it was processed and rejected properly.
-          // If it throws a 500 server crash, we keep it to try again later.
           if (!res.ok && res.status >= 500) remainingQueue.push(queue[i]);
         } catch (e) {
-          // Network completely failed mid-sync
           remainingQueue.push(queue[i]);
         }
       }
@@ -892,18 +945,15 @@
       isSyncing = false;
 
       if (remainingQueue.length < queue.length) {
-        showToast(
-          `Synced ${queue.length - remainingQueue.length} offline records!`,
-          "SUCCESS",
-        );
+        showToast(`Synced ${queue.length - remainingQueue.length} offline records!`, "SUCCESS");
       }
     }
 
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
-        text = document.getElementById("net-text");
-      const testBanner = document.getElementById("test-mode-banner"),
-        testDate = document.getElementById("test-mode-date");
+            text = document.getElementById("net-text"),
+            testBanner = document.getElementById("test-mode-banner"),
+            testDate = document.getElementById("test-mode-date");
 
       if (!navigator.onLine) {
         dot.className = "net-dot net-offline";
@@ -918,21 +968,14 @@
         const id = setTimeout(() => c.abort(), 2000);
         const response = await fetch(
           `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
-          { cache: "no-store", signal: c.signal },
+          { cache: "no-store", signal: c.signal }
         );
         clearTimeout(id);
 
         const dur = performance.now() - start;
-        if (dur < 150) {
-          dot.className = "net-dot net-excellent";
-          text.textContent = "Excellent";
-        } else if (dur < 500) {
-          dot.className = "net-dot net-fair";
-          text.textContent = "Fair";
-        } else {
-          dot.className = "net-dot net-poor";
-          text.textContent = "Poor";
-        }
+        if (dur < 150) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
+        else if (dur < 500) { dot.className = "net-dot net-fair"; text.textContent = "Fair"; } 
+        else { dot.className = "net-dot net-poor"; text.textContent = "Poor"; }
 
         if (response.ok) {
           try {
@@ -940,9 +983,9 @@
             if (data.test_mode) {
               testBanner.style.display = "block";
               testDate.textContent = data.test_date || "Unknown";
-            } else testBanner.style.display = "none";
-
-            // IF SERVER IS REACHABLE, TRY TO SYNC PENDING OFFLINE SCANS
+            } else {
+              testBanner.style.display = "none";
+            }
             processOfflineQueue();
           } catch (err) { }
         }
@@ -969,21 +1012,14 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       })
-        .then((r) =>
-          r.json().then((data) => ({ status: r.status, body: data })),
-        )
+        .then((r) => r.json().then((data) => ({ status: r.status, body: data })))
         .then((res) => {
           let sType = "ERROR";
           if (res.status === 200) sType = "SUCCESS";
-          else if (
-            res.body.message &&
-            res.body.message.includes("Already checked in")
-          )
-            sType = "DUPLICATE";
+          else if (res.body.message && res.body.message.includes("Already checked in")) sType = "DUPLICATE";
           showToast(res.body.message, sType);
         })
         .catch(() => {
-          // INTERCEPT NETWORK FAILURE HERE
           let queue = getOfflineQueue();
           queue.push(payload);
           saveOfflineQueue(queue);
@@ -1015,20 +1051,22 @@
       let id = decoded.trim();
       try {
         const p = JSON.parse(id);
-        if (typeof p === "object" && p !== null)
-          id = p.attendeeId || p.id || id;
+        if (typeof p === "object" && p !== null) id = p.attendeeId || p.id || id;
       } catch (e) { }
       processCheckin(id, "id");
     }
 
-    window.addEventListener("load", () => {
+    window.addEventListener("load", async () => {
       initDeviceName();
       updateOfflineBadge();
+      
+      // Request camera explicitly first to ensure Safari/Chrome don't block it on load
+      await fetchCameras();
       startHardware();
+      
       setInterval(syncServerStatus, 3000);
       syncServerStatus();
     });
   </script>
 </body>
-
 </html>
