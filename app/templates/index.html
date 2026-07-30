@@ -1,162 +1,146 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>TDE UP 2026 — Operations Hub</title>
   <style>
     :root {
-      --bg-dark: #0f1115;
-      --card-bg: rgba(30, 32, 38, 0.7);
+      --bg-dark: #07080c;
+      --surface: #12141c;
+      --surface-hover: #1a1d29;
       --primary: #00d2ff;
+      --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
       --warning: #ffbb33;
       --danger: #ff4444;
       --text-light: #ffffff;
-      --text-dim: #9ba1a6;
-      --border-dim: rgba(255, 255, 255, 0.1);
+      --text-dim: #8b93a5;
+      --border-dim: rgba(255, 255, 255, 0.08);
+      --radius-lg: 20px;
+      --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
 
     body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: radial-gradient(circle at top right, #1a202c, var(--bg-dark));
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: radial-gradient(circle at top center, #161b26, var(--bg-dark));
       color: var(--text-light);
       margin: 0;
-      padding: 20px;
+      padding: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .app-container {
+      width: 100%;
+      max-width: 900px; /* Expands elegantly on PC/Laptop */
+      padding: 15px 20px 40px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      animation: fadeIn 0.5s ease-out;
       box-sizing: border-box;
     }
 
-    /* Top Status Bar */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(15px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Glassmorphism Top Bar */
     .top-bar {
       width: 100%;
-      max-width: 550px;
       display: flex;
       justify-content: flex-end;
-      margin-bottom: 20px;
+      margin-bottom: 25px;
+      position: sticky;
+      top: 15px;
+      z-index: 100;
     }
 
     .network-pill {
-      font-size: 0.75rem;
-      padding: 8px 14px;
-      border-radius: 20px;
-      font-weight: 700;
+      font-size: 0.8rem;
+      padding: 10px 16px;
+      border-radius: 30px;
+      font-weight: 800;
       display: flex;
       align-items: center;
-      gap: 8px;
-      background: rgba(0, 0, 0, 0.4);
+      gap: 10px;
+      background: rgba(18, 20, 28, 0.85);
       border: 1px solid var(--border-dim);
-      backdrop-filter: blur(10px);
-      transition: all 0.3s ease;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      transition: var(--transition);
+      letter-spacing: 0.5px;
     }
 
-    .net-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-    }
-
-    .net-excellent {
-      background: var(--success);
-      box-shadow: 0 0 10px var(--success);
-      animation: pulse 2s infinite;
-    }
-
-    .net-fair {
-      background: var(--warning);
-      box-shadow: 0 0 10px var(--warning);
-    }
-
-    .net-poor {
-      background: var(--danger);
-      box-shadow: 0 0 10px var(--danger);
-    }
-
-    .net-offline {
-      background: #555;
-    }
+    .net-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .net-excellent { background: var(--success); box-shadow: 0 0 12px var(--success); animation: pulse 2s infinite; }
+    .net-fair { background: var(--warning); box-shadow: 0 0 12px var(--warning); }
+    .net-poor { background: var(--danger); box-shadow: 0 0 12px var(--danger); }
+    .net-offline { background: #555; }
 
     @keyframes pulse {
-      0% {
-        transform: scale(0.95);
-        opacity: 0.8;
-      }
-
-      50% {
-        transform: scale(1.1);
-        opacity: 1;
-      }
-
-      100% {
-        transform: scale(0.95);
-        opacity: 0.8;
-      }
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
     }
 
-    /* --- NEW BANNERS --- */
-    .test-mode-banner {
-      display: none;
-      background-color: var(--danger);
-      color: #fff;
+    /* --- BANNERS --- */
+    .banner {
       width: 100%;
-      max-width: 550px;
       text-align: center;
-      padding: 10px;
-      font-size: 0.85rem;
-      font-weight: 900;
-      border-radius: 8px;
-      margin-bottom: 15px;
-      box-shadow: 0 4px 15px rgba(255, 68, 68, 0.4);
+      padding: 14px;
+      font-size: 0.9rem;
+      font-weight: 800;
+      border-radius: 12px;
+      margin-bottom: 20px;
       box-sizing: border-box;
-      animation: pulseTest 2s infinite;
+      display: none;
+      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      letter-spacing: 0.5px;
     }
 
-    @keyframes pulseTest {
-      0% {
-        opacity: 1;
-      }
+    @keyframes popIn {
+      0% { transform: scale(0.9); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
 
-      50% {
-        opacity: 0.85;
-      }
-
-      100% {
-        opacity: 1;
-      }
+    .test-mode-banner {
+      background-color: rgba(255, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid var(--danger);
+      box-shadow: 0 4px 20px rgba(255, 68, 68, 0.3);
     }
 
     .unsynced-warning {
-      display: none;
-      background-color: var(--warning);
-      color: #000;
-      width: 100%;
-      max-width: 550px;
-      text-align: center;
-      padding: 12px;
-      font-size: 0.9rem;
-      font-weight: 900;
-      border-radius: 8px;
-      margin-bottom: 25px;
-      box-shadow: 0 4px 15px rgba(255, 187, 51, 0.4);
-      box-sizing: border-box;
-      border: 2px solid #e65100;
+      background-color: rgba(255, 187, 51, 0.15);
+      color: var(--warning);
+      border: 1px solid var(--warning);
+      box-shadow: 0 4px 20px rgba(255, 187, 51, 0.3);
+    }
+    .unsynced-warning span.subtext {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #ddd;
+      margin-top: 6px;
+      display: inline-block;
     }
 
     /* Header Branding */
     .header {
       text-align: center;
-      margin-bottom: 30px;
+      margin-bottom: 40px;
       width: 100%;
-      max-width: 550px;
     }
 
     .header h1 {
       margin: 0;
-      font-size: 2.5rem;
+      font-size: 2.8rem;
       color: var(--text-light);
       letter-spacing: 2px;
       text-transform: uppercase;
@@ -164,58 +148,71 @@
       align-items: center;
       justify-content: center;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 12px;
+      font-weight: 900;
     }
 
     .header h1 span.highlight {
       color: var(--primary);
-      text-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
+      text-shadow: 0 0 25px rgba(0, 210, 255, 0.5);
     }
 
     .version-tag {
-      font-size: 0.8rem;
-      background: #333;
+      font-size: 0.85rem;
+      background: rgba(0, 210, 255, 0.15);
       color: var(--primary);
-      padding: 4px 10px;
-      border-radius: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
       letter-spacing: 1px;
-      font-family: monospace;
+      border: 1px solid rgba(0, 210, 255, 0.3);
     }
 
     .header p {
-      margin: 10px 0 0 0;
+      margin: 12px 0 0 0;
       color: var(--text-dim);
-      font-size: 1rem;
-      font-weight: 600;
+      font-size: 1.05rem;
+      font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 3px;
+      letter-spacing: 4px;
     }
 
-    /* Dashboard Grid */
+    /* Modern Fluid Grid for Dashboard Menus */
     .menu-container {
-      display: flex;
-      flex-direction: column;
+      display: grid;
+      grid-template-columns: 1fr; /* Default Mobile Stacking */
       gap: 20px;
       width: 100%;
-      max-width: 550px;
-      flex: 1;
+    }
+
+    /* Tablet & Desktop Grid Expansion */
+    @media (min-width: 768px) {
+      .menu-container {
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      }
+      /* Make the 3rd odd item span full width to look centered and balanced */
+      .menu-card:nth-child(3) {
+        grid-column: 1 / -1; 
+      }
     }
 
     .menu-card {
       display: flex;
       align-items: center;
-      padding: 25px;
-      background: var(--card-bg);
+      padding: 25px 20px;
+      background: rgba(18, 20, 28, 0.65);
       border: 1px solid var(--border-dim);
-      border-radius: 16px;
+      border-radius: var(--radius-lg);
       text-decoration: none;
       color: var(--text-light);
-      transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+      transition: var(--transition);
       backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
       position: relative;
       overflow: hidden;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.3), 0 5px 15px rgba(0,0,0,0.4);
     }
 
+    /* Glass shine effect on hover */
     .menu-card::before {
       content: "";
       position: absolute;
@@ -224,110 +221,68 @@
       width: 50%;
       height: 100%;
       background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.05), transparent);
-      transform: skewX(-20deg);
-      transition: all 0.5s;
+      transform: skewX(-25deg);
+      transition: all 0.6s ease;
     }
-
-    .menu-card:hover::before {
-      left: 150%;
-    }
+    .menu-card:hover::before { left: 150%; }
 
     .menu-card:hover {
       transform: translateY(-5px);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
     }
 
-    .menu-card:active {
-      transform: translateY(2px) scale(0.98);
-    }
+    .menu-card:active { transform: translateY(2px) scale(0.98); }
 
-    .card-cyan:hover {
-      border-color: var(--primary);
-      background: rgba(0, 210, 255, 0.05);
-    }
-
-    .card-green:hover {
-      border-color: var(--success);
-      background: rgba(0, 230, 118, 0.05);
-    }
-
-    .card-dark:hover {
-      border-color: #888;
-      background: rgba(255, 255, 255, 0.05);
-    }
+    /* Thematic Card Colors */
+    .card-cyan:hover { border-color: var(--primary); background: rgba(0, 210, 255, 0.08); }
+    .card-green:hover { border-color: var(--success); background: rgba(0, 230, 118, 0.08); }
+    .card-dark:hover { border-color: #888; background: rgba(255, 255, 255, 0.05); }
 
     .icon-box {
-      width: 65px;
-      height: 65px;
-      border-radius: 16px;
+      width: 70px;
+      height: 70px;
+      border-radius: 18px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 32px;
+      font-size: 34px;
       margin-right: 20px;
       flex-shrink: 0;
       transition: transform 0.3s;
+      border: 1px solid rgba(255,255,255,0.05);
     }
+    .menu-card:hover .icon-box { transform: scale(1.1) rotate(-5deg); }
 
-    .menu-card:hover .icon-box {
-      transform: scale(1.1);
-    }
+    .card-cyan .icon-box { background: rgba(0, 210, 255, 0.15); box-shadow: 0 0 20px rgba(0, 210, 255, 0.3); border-color: rgba(0, 210, 255, 0.3); }
+    .card-green .icon-box { background: rgba(0, 230, 118, 0.15); box-shadow: 0 0 20px rgba(0, 230, 118, 0.3); border-color: rgba(0, 230, 118, 0.3); }
+    .card-dark .icon-box { background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 20px rgba(255, 255, 255, 0.1); }
 
-    .card-cyan .icon-box {
-      background: rgba(0, 210, 255, 0.15);
-      color: var(--primary);
-      box-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
-    }
-
-    .card-green .icon-box {
-      background: rgba(0, 230, 118, 0.15);
-      color: var(--success);
-      box-shadow: 0 0 15px rgba(0, 230, 118, 0.2);
-    }
-
-    .card-dark .icon-box {
-      background: rgba(255, 255, 255, 0.08);
-      color: #fff;
-      box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
-    }
-
-    .card-content {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .card-title {
-      font-size: 1.25rem;
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
-
-    .card-desc {
-      font-size: 0.9rem;
-      color: var(--text-dim);
-      line-height: 1.4;
-    }
+    .card-content { display: flex; flex-direction: column; }
+    .card-title { font-size: 1.3rem; font-weight: 800; margin-bottom: 8px; letter-spacing: 0.5px; }
+    .card-desc { font-size: 0.95rem; color: var(--text-dim); line-height: 1.5; font-weight: 500; }
 
     /* Support & Contact Section */
     .support-box {
       width: 100%;
-      max-width: 550px;
       background: rgba(255, 187, 51, 0.05);
       border: 1px dashed rgba(255, 187, 51, 0.4);
-      border-radius: 16px;
-      padding: 25px;
+      border-radius: var(--radius-lg);
+      padding: 30px;
       text-align: center;
       margin-top: 40px;
       box-sizing: border-box;
       backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
     }
 
     .support-box p {
       margin: 0 0 15px 0;
-      color: #ccc;
-      font-size: 0.95rem;
+      color: #ddd;
+      font-size: 1rem;
+      font-weight: 600;
     }
 
+    /* Mobile Call Button */
     .btn-call {
       display: inline-flex;
       align-items: center;
@@ -336,103 +291,128 @@
       background: var(--warning);
       color: #000;
       text-decoration: none;
-      padding: 14px 28px;
+      padding: 16px 32px;
       border-radius: 30px;
-      font-weight: 800;
-      font-size: 1rem;
-      transition: all 0.2s;
-      box-shadow: 0 5px 15px rgba(255, 187, 51, 0.3);
+      font-weight: 900;
+      font-size: 1.05rem;
+      transition: var(--transition);
+      box-shadow: 0 5px 20px rgba(255, 187, 51, 0.3);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .btn-call:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(255, 187, 51, 0.5); }
+    .btn-call:active { transform: translateY(1px) scale(0.98); box-shadow: 0 2px 10px rgba(255, 187, 51, 0.3); }
+
+    /* Desktop Contact Text (Hidden by default on mobile) */
+    .desktop-contact {
+      display: none;
+      font-size: 1.4rem;
+      font-weight: 900;
+      color: var(--warning);
+      margin-top: 10px;
+      letter-spacing: 1px;
+      text-shadow: 0 0 15px rgba(255, 187, 51, 0.4);
     }
 
-    .btn-call:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 20px rgba(255, 187, 51, 0.4);
-    }
-
-    .btn-call:active {
-      transform: translateY(1px);
-      box-shadow: 0 2px 10px rgba(255, 187, 51, 0.3);
+    /* Device Visibility Logic */
+    @media (min-width: 768px) {
+      .btn-call { display: none !important; }
+      .desktop-contact { display: block; }
     }
 
     .footer {
       margin-top: 40px;
       text-align: center;
       color: #666;
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       padding-bottom: 20px;
-      line-height: 1.5;
+      line-height: 1.6;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
   </style>
 </head>
 
 <body>
-  <div class="top-bar">
-    <div id="network-pill" class="network-pill">
-      <span id="net-dot" class="net-dot net-offline"></span>
-      <span id="net-text">Connecting...</span>
+  <div class="app-container">
+    
+    <div class="top-bar">
+      <div id="network-pill" class="network-pill">
+        <span id="net-dot" class="net-dot net-offline"></span>
+        <span id="net-text">Connecting...</span>
+      </div>
     </div>
-  </div>
 
-  <!-- TEST MODE BANNER -->
-  <div id="test-mode-banner" class="test-mode-banner">
-    ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
-  </div>
+    <!-- BANNERS -->
+    <div id="test-mode-banner" class="banner test-mode-banner">
+      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+    </div>
 
-  <!-- UNSYNCED DATA WARNING -->
-  <div id="unsynced-warning" class="unsynced-warning">
-    ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records trapped on this device!
-    <br><span style="font-size: 0.8rem; font-weight: normal; margin-top: 5px; display: inline-block;">Open the Scanner
-      or Registration tab while online to sync them.</span>
-  </div>
+    <div id="unsynced-warning" class="banner unsynced-warning">
+      ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records trapped on this device!
+      <br><span class="subtext">Open the Scanner or Registration tab while online to push them to the Hub.</span>
+    </div>
 
-  <div class="header">
-    <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">v2</span></h1>
-    <p>Operations Portal</p>
-  </div>
+    <!-- HEADER -->
+    <div class="header">
+      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">v2.4</span></h1>
+      <p>Operations Portal</p>
+    </div>
 
-  <div class="menu-container">
-    <a href="/scanner" class="menu-card card-cyan" onclick="playClick()">
-      <div class="icon-box">📷</div>
-      <div class="card-content">
-        <div class="card-title">Live Check-in Scanner</div>
-        <div class="card-desc">
-          Scan attendee QR badges or manually search IDs. Supports background Offline Queuing.
+    <!-- FLUID MENU GRID -->
+    <div class="menu-container">
+      <a href="/scanner" class="menu-card card-cyan" onclick="playClick()">
+        <div class="icon-box">📷</div>
+        <div class="card-content">
+          <div class="card-title">Live Scanner</div>
+          <div class="card-desc">
+            Instantly scan attendee QR badges or manually verify IDs. Safely queues data if offline.
+          </div>
         </div>
-      </div>
-    </a>
+      </a>
 
-    <a href="/register" class="menu-card card-green" onclick="playClick()">
-      <div class="icon-box">📝</div>
-      <div class="card-content">
-        <div class="card-title">Kiosk Registration</div>
-        <div class="card-desc">
-          Register new walk-in attendees and auto-generate ID passes instantly.
+      <a href="/register" class="menu-card card-green" onclick="playClick()">
+        <div class="icon-box">📝</div>
+        <div class="card-content">
+          <div class="card-title">Kiosk Registration</div>
+          <div class="card-desc">
+            Register new walk-in attendees quickly. Auto-generates verified ID pass codes.
+          </div>
         </div>
-      </div>
-    </a>
+      </a>
 
-    <a href="/stats" class="menu-card card-dark" onclick="playClick()">
-      <div class="icon-box">📊</div>
-      <div class="card-content">
-        <div class="card-title">Network Statistics</div>
-        <div class="card-desc">
-          View live device connections, sync status, and event metrics in real-time.
+      <a href="/stats" class="menu-card card-dark" onclick="playClick()">
+        <div class="icon-box">📊</div>
+        <div class="card-content">
+          <div class="card-title">Network Statistics</div>
+          <div class="card-desc">
+            Monitor live device connections, global sync status, and active event metrics.
+          </div>
         </div>
-      </div>
-    </a>
-  </div>
+      </a>
+    </div>
 
-  <div class="support-box">
-    <p>Experiencing hardware or network issues?</p>
-    <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
-  </div>
+    <!-- RESPONSIVE SUPPORT BOX -->
+    <div class="support-box">
+      <p>Experiencing hardware or network issues?</p>
+      
+      <!-- Shows ONLY on Mobile/Tablets -->
+      <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
+      
+      <!-- Shows ONLY on Laptops/PCs -->
+      <div class="desktop-contact">📞 Support: +91 8960 446 756</div>
+    </div>
 
-  <div class="footer">
-    Engineered for Event Resilience<br />
-    Powered by EllowDigital
-  </div>
+    <div class="footer">
+      Engineered for Event Resilience<br />
+      Powered by EllowDigital
+    </div>
+
+  </div> <!-- End App Container -->
 
   <script>
+    // Audio engine for menu clicks
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     function playClick() {
       try {
@@ -461,13 +441,13 @@
       }
     }
 
+    // Upgraded Ping Logic to match Scanner/Reg (5-sec timeout)
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot");
       const text = document.getElementById("net-text");
       const testBanner = document.getElementById("test-mode-banner");
       const testDate = document.getElementById("test-mode-date");
 
-      // Always check local storage for stranded data on loop
       checkPendingSyncs();
 
       if (!navigator.onLine) {
@@ -480,7 +460,7 @@
       const startTime = performance.now();
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000);
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 sec tolerant timeout
 
         const response = await fetch(`/api/status?device_name=${encodeURIComponent(getDeviceName())}`, {
           method: "GET",
@@ -490,11 +470,12 @@
         clearTimeout(timeoutId);
 
         const duration = performance.now() - startTime;
-        if (duration < 150) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
-        else if (duration < 500) { dot.className = "net-dot net-fair"; text.textContent = "Fair"; }
-        else { dot.className = "net-dot net-poor"; text.textContent = "Poor"; }
+        
+        // Realistic thresholds for mobile/tunnel
+        if (duration < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
+        else if (duration < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; }
+        else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
 
-        // Parse JSON to check if Test Mode is active
         if (response.ok) {
           try {
             const data = await response.json();
@@ -508,17 +489,22 @@
         }
       } catch (e) {
         dot.className = "net-dot net-poor";
-        text.textContent = "Unstable";
+        text.textContent = "Connecting...";
       }
     }
 
+    // Instantly reconnect if browser window/tab is made active again
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") syncServerStatus(); 
+    });
+
     window.addEventListener("load", () => {
       syncServerStatus();
-      setInterval(syncServerStatus, 4000);
+      setInterval(syncServerStatus, 4000); // Pulse check every 4 seconds
     });
+    
     window.addEventListener("online", syncServerStatus);
     window.addEventListener("offline", syncServerStatus);
   </script>
 </body>
-
 </html>
