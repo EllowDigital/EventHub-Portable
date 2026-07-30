@@ -1,11 +1,10 @@
 import os
 import json
-import enum
 import math
 from datetime import datetime, timezone
 import pymysql
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 import threading
@@ -15,7 +14,7 @@ import csv
 import queue
 import urllib3
 import random
-import matplotlib.pyplot as plt
+from matplotlib.pyplot import subplots
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from collections import deque
 
@@ -23,8 +22,7 @@ from collections import deque
 pymysql.install_as_MySQLdb()
 
 from sqlalchemy import (
-    create_engine, Column, String, Text, DateTime, 
-    Boolean, Float, Integer, JSON
+    create_engine, Column, String, JSON, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -71,8 +69,9 @@ def generate_registration_payload(device_name):
     att_types = ["GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"]
     selected_type = random.choice(att_types)
     biz_name = f"Simulated Corp {random.randint(100, 9999)}" if selected_type != "GENERAL" else None
-    valid_days = ["30 August", "31 August", "1 September"]
-    selected_days = random.sample(valid_days, k=random.randint(1, 3))
+    
+    # GUARANTEE all-access passes so check-ins NEVER fail with a 403 on Test Mode dates
+    all_days = ["30 August", "31 August", "1 September"]
     
     return {
         "full_name": f"Enterprise Tester {random.randint(1000, 99999)}",
@@ -87,18 +86,22 @@ def generate_registration_payload(device_name):
         "city": "Lucknow",
         "state": "Uttar Pradesh",
         "pincode": "226001",
-        "attendance_days": selected_days,
+        "attendance_days": all_days, 
         "device_name": device_name
     }
 
 def generate_checkin_payload(user_tuple, device_name):
     search_type = random.choice(["id", "phone"]) 
     identifier = user_tuple[0] if search_type == "id" else user_tuple[1]
+    
+    # SPOOF scan times directly to the valid event dates so the server NEVER rejects the date
+    valid_times = ["2026-08-30T10:00:00.000Z", "2026-08-31T10:00:00.000Z", "2026-09-01T10:00:00.000Z"]
+    
     return {
         "attendee_id": identifier,
         "search_type": search_type,
         "device_name": device_name,
-        "offline_scan_time": datetime.now(timezone.utc).isoformat()
+        "offline_scan_time": random.choice(valid_times)
     }
 
 def calculate_percentile(data, percentile):
@@ -114,11 +117,11 @@ def calculate_apdex(data, t_ms=500):
     return (satisfied + (tolerating / 2)) / len(data)
 
 # ==============================================================================
-# ENTERPRISE EVENT STRESS TESTER v4
+# ENTERPRISE EVENT STRESS TESTER v8 (Final Architecture)
 # ==============================================================================
 class EnterpriseStressTestApp(tb.Window):
     def __init__(self):
-        super().__init__(themename="superhero", title="TDE UP 2026 - Enterprise Load Injector", size=(1550, 950))
+        super().__init__(themename="superhero", title="TDE UP 2026 - Enterprise Load Injector", size=(1600, 950))
         
         self.is_running = False
         self.stats_queue = queue.Queue()
@@ -131,7 +134,9 @@ class EnterpriseStressTestApp(tb.Window):
         
         self.meter_max = 50 
         self.start_time = 0
+        
         self.registered_users = [] 
+        self.user_queue = queue.Queue() 
         
         self.metrics = {
             "total": 0, "200_ok": 0, "400_dup": 0, "403_denied": 0, 
@@ -146,26 +151,45 @@ class EnterpriseStressTestApp(tb.Window):
         threading.Thread(target=self.load_users_from_db, daemon=True).start()
 
     def load_users_from_db(self):
+        self.log("Connecting to Database to prepare check-in pool...")
         try:
             sessions = get_database_sessions()
             Session = sessions.get("mysql")
             if Session:
                 with Session() as db:
-                    attendees = db.query(Attendee.attendee_id, Attendee.mobile).limit(10000).all()
-                    self.registered_users = [(a.attendee_id, a.mobile) for a in attendees]
+                    self.log("Resetting check-in histories for Enterprise Test users...")
+                    try:
+                        db.execute(text("UPDATE attendees SET checkin_history = '{}' WHERE full_name LIKE 'Enterprise Tester%'"))
+                        db.execute(text("UPDATE offline_kiosk_attendees SET checkin_history = '{}' WHERE full_name LIKE 'Enterprise Tester%'"))
+                        db.commit()
+                    except Exception as e: 
+                        db.rollback()
+
+                    att_rows = []
+                    kiosk_rows = []
+                    try:
+                        att_rows = db.execute(text("SELECT attendee_id, mobile FROM attendees WHERE full_name LIKE 'Enterprise Tester%' LIMIT 5000")).fetchall()
+                        kiosk_rows = db.execute(text("SELECT attendee_id, mobile FROM offline_kiosk_attendees WHERE full_name LIKE 'Enterprise Tester%' LIMIT 5000")).fetchall()
+                    except Exception: pass
+                        
+                    self.registered_users = [(row[0], row[1]) for row in (att_rows + kiosk_rows)]
+                    
+                    if not self.registered_users:
+                        try:
+                            fallback = db.execute(text("SELECT attendee_id, mobile FROM attendees LIMIT 2000")).fetchall()
+                            self.registered_users = [(row[0], row[1]) for row in fallback]
+                        except Exception: pass
                 
                 if self.registered_users:
-                    self.btn_start.config(state="normal")
+                    self.log(f"SUCCESS: Prepared {len(self.registered_users)} clean database users for check-in testing.")
                 else:
-                    self.generate_dummy_users()
+                    self.log("WARNING: Database empty. Test will dynamically force REGISTRATIONS first to build the user pool.")
             else:
-                self.generate_dummy_users()
+                self.log("WARNING: Database unavailable. Test will dynamically force REGISTRATIONS first.")
         except Exception as e:
-            self.generate_dummy_users()
-
-    def generate_dummy_users(self):
-        self.registered_users = [(f"TDE26-G-{random.randint(10000, 99999)}", f"9{random.randint(100000000, 999999999)}") for _ in range(5000)]
-        self.btn_start.config(state="normal")
+            self.log(f"DB Load Error: {str(e)}. Test will rely on live-created users.")
+        finally:
+            self.btn_start.config(state="normal")
 
     def setup_ui(self):
         self.style.configure("ModernCard.TFrame", background="#1a2736", borderwidth=0)
@@ -194,8 +218,13 @@ class EnterpriseStressTestApp(tb.Window):
         profile_lf.pack(fill="x", pady=(0, 15))
         
         tb.Label(profile_lf, text="Action Distribution:").pack(anchor="w")
-        self.action_var = tk.StringVar(value="Mixed Load (80% Checkin / 20% Reg)")
-        tb.Combobox(profile_lf, textvariable=self.action_var, values=["Strict Check-ins (Scanner Simulation)", "Strict Registrations (Kiosk Simulation)", "Mixed Load (80% Checkin / 20% Reg)"]).pack(fill="x", pady=(0, 10))
+        self.action_var = tk.StringVar(value="Mixed Load (50% Check-in / 50% Reg)")
+        
+        tb.Combobox(profile_lf, textvariable=self.action_var, values=[
+            "Strict Check-ins (Scanner Simulation)", 
+            "Strict Registrations (Kiosk Simulation)", 
+            "Mixed Load (50% Check-in / 50% Reg)"
+        ]).pack(fill="x", pady=(0, 10))
 
         tb.Label(profile_lf, text="Concurrency Attack Strategy:").pack(anchor="w")
         self.sync_var = tk.StringVar(value="Synchronized Millisecond Stampede")
@@ -246,10 +275,21 @@ class EnterpriseStressTestApp(tb.Window):
         grid_tab = tb.Frame(notebook, padding=10)
         notebook.add(grid_tab, text=" 🗃️ Live Data Grid ")
         self.build_data_grid(grid_tab)
+        
+        log_tab = tb.Frame(notebook, padding=10)
+        notebook.add(log_tab, text=" 📜 Terminal / CLI Logs ")
+        self.log_txt = tb.Text(log_tab, wrap="word", state="disabled", font=("Consolas", 10))
+        self.log_txt.pack(fill="both", expand=True)
 
     def build_dashboard_tab(self, parent):
+        # Progress Bar for active tests
+        prog_frame = tb.Frame(parent)
+        prog_frame.pack(fill="x", pady=(0, 10))
+        self.progress_bar = tb.Progressbar(prog_frame, bootstyle=SUCCESS, maximum=100, mode='determinate')
+        self.progress_bar.pack(fill="x")
+
         meter_frame = tb.Frame(parent)
-        meter_frame.pack(fill="x", pady=(0, 10))
+        meter_frame.pack(fill="x", pady=(5, 10))
         
         self.meter_chk = tb.Meter(meter_frame, metersize=180, padding=10, amounttotal=self.meter_max, amountused=0, metertype="semi", subtext="Check-ins / Sec", interactive=False, bootstyle=INFO, textfont="-size 20 -weight bold")
         self.meter_chk.pack(side="left", expand=True)
@@ -262,7 +302,7 @@ class EnterpriseStressTestApp(tb.Window):
         stats_frame.pack(fill="x", pady=(10, 20))
         
         self.stat_widgets = {}
-        cards = [("Total Reqs", "primary"), ("Avg RT (ms)", "info"), ("HTTP 200", "success"), ("HTTP 503", "danger")]
+        cards = [("Total Reqs", "primary"), ("Avg RT (ms)", "info"), ("HTTP 200", "success"), ("HTTP 503", "danger"), ("User Pool", "secondary")]
         for name, color in cards:
             f = tb.Frame(stats_frame, style="ModernCard.TFrame", padding=15)
             f.pack(side="left", fill="x", expand=True, padx=5)
@@ -272,7 +312,7 @@ class EnterpriseStressTestApp(tb.Window):
             self.stat_widgets[name] = lbl
 
         # Dual Subplot Chart
-        self.fig, (self.ax_tps, self.ax_rt) = plt.subplots(2, 1, figsize=(8, 4.5), dpi=100)
+        self.fig, (self.ax_tps, self.ax_rt) = subplots(2, 1, figsize=(8, 4.5), dpi=100)
         self.fig.patch.set_facecolor('#2b3e50') 
         self.fig.subplots_adjust(hspace=0.4, top=0.9, bottom=0.1)
         
@@ -350,8 +390,14 @@ class EnterpriseStressTestApp(tb.Window):
         self.tree.pack(side=LEFT, fill=BOTH, expand=True)
         
         self.tree.tag_configure("success", foreground="#00e676")
-        self.tree.tag_configure("error", foreground="#ff4444")
-        self.tree.tag_configure("warning", foreground="#ffbb33")
+        self.tree.tag_configure("warning", foreground="#ffbb33") 
+        self.tree.tag_configure("error", foreground="#ff4444")   
+
+    def log(self, msg):
+        self.log_txt.configure(state="normal")
+        self.log_txt.insert("end", f"[{time.strftime('%H:%M:%S')}] {msg}\n")
+        self.log_txt.see("end")
+        self.log_txt.configure(state="disabled")
 
     def reset_stats(self):
         self.metrics = {k: 0 for k in self.metrics}
@@ -365,6 +411,7 @@ class EnterpriseStressTestApp(tb.Window):
         for key in self.stat_widgets: self.stat_widgets[key].config(text="0")
         self.meter_chk.configure(amountused=0)
         self.meter_reg.configure(amountused=0)
+        self.progress_bar.configure(value=0)
         for item in self.tree.get_children(): self.tree.delete(item)
 
     def start_test(self):
@@ -379,6 +426,7 @@ class EnterpriseStressTestApp(tb.Window):
         targets = [(name, url) for name, url in raw_targets if url]
         
         if not targets:
+            self.log("ERROR: No valid routing targets provided.")
             self.btn_start.config(state="normal")
             return
             
@@ -396,8 +444,17 @@ class EnterpriseStressTestApp(tb.Window):
         else:
             self.sync_barrier = None
 
+        # Drain and rebuild the Check-In Queue
+        self.user_queue = queue.Queue()
+        if self.registered_users:
+            random.shuffle(self.registered_users)
+            for u in self.registered_users:
+                self.user_queue.put(u)
+
         self.start_time = time.time()
         thread_id_counter = 0
+
+        self.log(f"Test Initialized. Spawning {total_threads} virtual worker threads...")
 
         for env_name, base_url in targets:
             for _ in range(dev_count):
@@ -414,7 +471,12 @@ class EnterpriseStressTestApp(tb.Window):
     def duration_monitor(self):
         duration = self.duration_var.get()
         while self.is_running:
-            if time.time() - self.start_time >= duration:
+            elapsed = time.time() - self.start_time
+            progress = min(100, (elapsed / duration) * 100)
+            self.progress_bar.configure(value=progress)
+            
+            if elapsed >= duration:
+                self.log("Time limit reached. Halting traffic...")
                 self.stop_test()
                 break
             time.sleep(0.5)
@@ -424,7 +486,9 @@ class EnterpriseStressTestApp(tb.Window):
             self.is_running = False
             self.btn_start.config(state="normal")
             self.btn_stop.config(state="disabled")
+            self.progress_bar.configure(value=100)
             if self.sync_barrier: self.sync_barrier.abort()
+            self.log("Test halted successfully.")
 
     def api_worker(self, env_name, base_url, thread_id, mode, start_delay):
         if start_delay > 0:
@@ -443,19 +507,53 @@ class EnterpriseStressTestApp(tb.Window):
                     time.sleep(0.1)
 
             start_req = time.time()
-            is_checkin = ("Checkin" in mode)
-            if "Mixed" in mode:
-                is_checkin = random.random() < 0.8
+            
+            # STRICT ROUTING LOGIC (Exactly matches the UI Selection)
+            if "Mixed Load" in mode:
+                is_checkin = random.random() < 0.50
+            elif "Strict Check-in" in mode:
+                is_checkin = True
+            else:
+                is_checkin = False
+                
+            user = None
+            if is_checkin:
+                try:
+                    # Sequential identities so we avoid 400 Duplicates until the queue exhausts
+                    user = self.user_queue.get_nowait()
+                except queue.Empty:
+                    if self.registered_users:
+                        # Queue empty, fall back to random picking (this tests DB read-limits via 400 Duplicate responses)
+                        user = random.choice(self.registered_users)
+                    else:
+                        # Database is completely empty.
+                        if "Strict Check-in" in mode:
+                            self.log("FATAL: Database is totally empty! Cannot run Strict Check-ins. Run Registrations first.")
+                            self.is_running = False
+                            break
+                        else:
+                            is_checkin = False # Force Registration to create a user first in Mixed Mode
                 
             try:
                 if is_checkin:
                     url = f"{base_url}/api/checkin"
-                    payload = generate_checkin_payload(random.choice(self.registered_users), device_name)
+                    payload = generate_checkin_payload(user, device_name)
                     resp = session.post(url, json=payload, timeout=timeout_limit, verify=False)
                 else:
                     url = f"{base_url}/api/register"
                     payload = generate_registration_payload(device_name)
                     resp = session.post(url, json=payload, timeout=timeout_limit, verify=False)
+                    
+                    if resp.status_code == 200:
+                        try:
+                            body = resp.json()
+                            aid = body.get('attendee_id')
+                            if aid:
+                                new_u = (aid, payload['mobile'])
+                                self.registered_users.append(new_u)
+                                # Make available for future check-ins
+                                self.user_queue.put(new_u)
+                        except: pass
 
                 rt = (time.time() - start_req) * 1000
                 req_type = "checkin" if is_checkin else "register"
@@ -479,7 +577,6 @@ class EnterpriseStressTestApp(tb.Window):
                 self.metrics["total"] += 1
                 self.results_history.append((now, env_name, req_type, code, rt))
                 
-                # Insert into Treeview (Limit to 100 to prevent GUI lag)
                 if len(self.tree.get_children()) > 100:
                     self.tree.delete(self.tree.get_children()[-1])
                 
@@ -508,7 +605,6 @@ class EnterpriseStressTestApp(tb.Window):
                 break
 
         if updates > 0 or self.is_running:
-            # Update Speedometers
             while self.recent_checkins and self.recent_checkins[0] < now - 1.0:
                 self.recent_checkins.popleft()
             while self.recent_regs and self.recent_regs[0] < now - 1.0:
@@ -517,13 +613,13 @@ class EnterpriseStressTestApp(tb.Window):
             self.meter_chk.configure(amountused=min(len(self.recent_checkins), self.meter_max))
             self.meter_reg.configure(amountused=min(len(self.recent_regs), self.meter_max))
 
-            # Update Dashboard
             elapsed = max(now - self.start_time, 1) 
             current_tps = self.metrics["total"] / elapsed
             self.throughput_history.append(current_tps)
             
             self.stat_widgets["Total Reqs"].config(text=str(self.metrics["total"]))
             self.stat_widgets["HTTP 200"].config(text=str(self.metrics["200_ok"]))
+            self.stat_widgets["User Pool"].config(text=str(len(self.registered_users)))
             
             if self.metrics["503_queue"] > 0:
                 self.stat_widgets["HTTP 503"].config(text=str(self.metrics["503_queue"]), bootstyle="danger")
@@ -531,7 +627,6 @@ class EnterpriseStressTestApp(tb.Window):
             all_rts = self.rts_checkin + self.rts_register
             if all_rts: self.stat_widgets["Avg RT (ms)"].config(text=f"{sum(all_rts)/len(all_rts):.0f}")
 
-            # Update Analytics with Dynamic Colors
             def update_col(metric_dict, data):
                 metric_dict["Total Processed:"].config(text=str(len(data)))
                 
@@ -560,7 +655,6 @@ class EnterpriseStressTestApp(tb.Window):
             self.lbl_e404.config(text=f"HTTP 404 (Ghost User Not Found): {self.metrics['404_ghost']}")
             self.lbl_e500.config(text=f"HTTP 500+ (Server Fatality): {self.metrics['500_err']}")
 
-            # Update Split Charts
             self.line_tps.set_xdata(range(len(self.throughput_history)))
             self.line_tps.set_ydata(list(self.throughput_history))
             self.ax_tps.relim()
