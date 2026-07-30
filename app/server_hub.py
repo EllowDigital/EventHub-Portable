@@ -98,17 +98,93 @@ except ImportError:
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 
-# Windows DPI Awareness & Anti-Sleep Mode
-if platform.system() == "Windows":
+# ==============================================================================
+# 🖥️ WINDOWS DPI AWARENESS, TASKBAR IDENTITY & ANTI-SLEEP MODE
+# Must run before any Tk window is created — Windows locks in a process's DPI
+# awareness the first time it draws anything, so calling this after
+# ttk.Window() would silently do nothing.
+#
+# Three DPI APIs exist, newest/best to oldest/weakest, and older Windows
+# builds raise on the newer ones — so this tries each in turn and keeps the
+# first that actually succeeds, instead of a single SetProcessDpiAwareness(1)
+# ("System DPI Aware") call. System-DPI-aware still renders blurry the moment
+# a window is dragged from one monitor to another with a different scale
+# factor (e.g. a laptop panel vs. a projector at the venue); Per-Monitor-v2
+# tracks that live.
+# ==============================================================================
+_DPI_SCALE = 1.0  # relative to 100% Windows scaling; read by ServerHub.__init__
+                   # to tell Tk's own font/geometry scaling to match reality
+                   # instead of Tk's hardcoded 96-DPI assumption.
+
+
+def _configure_windows_platform():
+    global _DPI_SCALE
+    if platform.system() != "Windows":
+        return
     try:
-        from ctypes import windll
-        # 1. Make text crisp on high-res displays
-        windll.shcore.SetProcessDpiAwareness(1)
-        # 2. Prevent Windows from going to sleep while server is running
+        from ctypes import windll, c_void_p
+
+        dpi_awareness_set = False
+        # 1) Best: Per-Monitor v2 (Windows 10 1703+)
+        try:
+            PER_MONITOR_AWARE_V2 = c_void_p(-4)
+            if windll.user32.SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2):
+                dpi_awareness_set = True
+        except Exception:
+            pass
+        # 2) Fallback: Per-Monitor v1 (Windows 8.1+)
+        if not dpi_awareness_set:
+            try:
+                windll.shcore.SetProcessDpiAwareness(2)
+                dpi_awareness_set = True
+            except Exception:
+                pass
+        # 3) Fallback: System DPI Aware (Vista+) — what the previous version
+        #    used unconditionally; kept as the last-resort floor.
+        if not dpi_awareness_set:
+            try:
+                windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+
+        # Read back the ACTUAL system DPI so ServerHub.__init__ can scale Tk's
+        # fonts/padding to match it. DPI-awareness alone (above) only stops
+        # Windows from blurrily bitmap-stretching the window — Tk itself
+        # still assumes 96 DPI for every font size in points until told
+        # otherwise, which is what left things looking slightly-off-sized on
+        # a 125%/150%/200% display even while "aware".
+        try:
+            windll.user32.GetDC.restype = c_void_p
+            windll.user32.GetDC.argtypes = [c_void_p]
+            hdc = windll.user32.GetDC(None)
+            if hdc:
+                LOGPIXELSX = 88
+                dpi = windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX)
+                windll.user32.ReleaseDC(None, hdc)
+                if dpi:
+                    _DPI_SCALE = dpi / 96.0
+        except Exception:
+            pass
+
+        # Cosmetic only, never worth failing startup over: groups the app
+        # under its own taskbar icon/entry instead of a generic Python one.
+        try:
+            windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
+        except Exception:
+            pass
+
+        # Prevent Windows from sleeping/locking while the hub is the
+        # foreground operator tool for a multi-hour live event.
         # 0x80000000 (ES_CONTINUOUS) | 0x00000001 (ES_SYSTEM_REQUIRED)
-        windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        try:
+            windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        except Exception:
+            pass
     except Exception as e:
         print(f"Windows specific configuration failed: {e}")
+
+
+_configure_windows_platform()
 
 # Import models dynamically based on context
 try:
@@ -1160,23 +1236,58 @@ class NetworkTelemetryWindow(ttk.Toplevel):
 # ==============================================================================
 class ServerHub(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.2 (Hardened)")
-        self.geometry("1600x950")
-        self.minsize(1000, 700)
-        
+        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.3 (Hardened + Responsive UI)")
+
+        # Match Tk's own font/widget scaling to the REAL system DPI detected
+        # in _configure_windows_platform() above (Windows only — _DPI_SCALE
+        # stays 1.0 everywhere else, making this a no-op on Linux/Mac).
+        # Tk's scaling = DPI / 72; _DPI_SCALE is already DPI / 96, so
+        # multiplying by 96/72 recovers that. Best-effort polish only, so any
+        # failure here is silently skipped rather than blocking startup.
+        if _DPI_SCALE and abs(_DPI_SCALE - 1.0) > 0.01:
+            try:
+                self.tk.call('tk', 'scaling', _DPI_SCALE * (96 / 72))
+            except Exception:
+                pass
+
+        # --- RESPONSIVE STARTUP SIZE ---
+        # Fits the actual screen instead of a fixed 1600x950 that can be
+        # bigger than a smaller operator laptop (or a venue's secondary
+        # display) and end up clipped or partly off-screen. Caps at the
+        # original 1600x950 as a maximum on large monitors, shrinks toward
+        # ~90% of the screen on small ones, and is always centered. minsize
+        # shrinks to match on small screens too — the window can still be
+        # resized freely by hand afterward either way.
+        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        win_w = max(900, min(1600, int(screen_w * 0.92)))
+        win_h = max(600, min(950, int(screen_h * 0.90)))
+        pos_x = max(0, (screen_w - win_w) // 2)
+        pos_y = max(0, (screen_h - win_h) // 2 - 15)
+        self.geometry(f"{win_w}x{win_h}+{pos_x}+{pos_y}")
+        self.minsize(min(1000, win_w), min(650, win_h))
+
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
         self.cloudflare_url = "Offline"
-        
+
+        # DB connectivity is now checked on a background thread instead of
+        # blocking right here — a slow/unreachable database at launch (wrong
+        # host, MySQL still booting, venue network not up yet) used to freeze
+        # the window from ever appearing until that connection attempt timed
+        # out. The window now always renders instantly; the MYSQL/SQLITE
+        # status pills read "CHECKING" (see refresh_stats) until this
+        # finishes in the background, then flip to their real state.
         self.SessionMySQL = None
         self.SessionSQLite = None
-        self.connect_db()
+        self._db_checked = False
+        threading.Thread(target=self.connect_db, daemon=True, name="DBConnectInit").start()
 
         self.http_thread = None
         self.https_thread = None
-        self.cf_process = None 
-        
+        self.cf_process = None
+        self._cf_connecting = False  # drives the animated "CONNECTING…" dots — see _animate_cf_connecting()
+
         self.gui_queue = queue.Queue()
         
         global gui_log_callback
@@ -1199,12 +1310,19 @@ class ServerHub(ttk.Window):
         threading.Thread(target=stats_refresher_loop, daemon=True, name="StatsRefresher").start()
 
     def connect_db(self):
+        """Runs on a background thread — see the comment in __init__. Safe to
+        call from a non-main thread: get_cached_sessions() has its own lock,
+        and the attributes it sets here are simple reference assignments
+        that refresh_stats() (main thread) only ever reads, never mutates —
+        the same pattern already used for self.cloudflare_url elsewhere."""
         try:
             sessions = get_cached_sessions() or {}
             self.SessionMySQL = sessions.get('mysql')
             self.SessionSQLite = sessions.get('sqlite')
         except Exception:
             logging.exception("Database connection failed")
+        finally:
+            self._db_checked = True
 
     def network_ping_daemon(self):
         global NETWORK_LATENCY
@@ -1396,11 +1514,22 @@ class ServerHub(ttk.Window):
         )
         # One matched-background value style per metric color actually used
         # across the DATABASE TELEMETRY / EVENT CHECK-IN METRICS cards.
+        # Font size trimmed from the original 28 -> 24 as part of the more
+        # compact card size (see _create_stat_card) — still comfortably
+        # readable at arm's length, just less screen real estate per card.
+        CARD_VALUE_FONT = "-size 24 -weight bold"
         for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"):
             self.style.configure(
                 f"CardValue.{key}.TLabel", background=self.CARD_BG,
-                foreground=colors.get(key), font="-size 28 -weight bold",
+                foreground=colors.get(key), font=CARD_VALUE_FONT,
             )
+        # Brief "this number just changed" highlight — see ServerHub._set_stat().
+        # Same background/font as the CardValue.* styles above so the flash
+        # only ever changes color, never triggers a layout jump.
+        self.style.configure(
+            "CardFlash.TLabel", background=self.CARD_BG,
+            foreground="#FFFFFF", font=CARD_VALUE_FONT,
+        )
 
         # --- Generic soft-bordered dark panel (devices table, log boxes) ---
         self.style.configure(
@@ -1650,11 +1779,11 @@ class ServerHub(ttk.Window):
         self._append_log(self.log_network, f"Local Network IP Address Detected: {self.local_ip}")
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        # height=118 + pack_propagate(False): every card in a row is the same
-        # height regardless of content, instead of the row squishing/growing
-        # based on whichever card happens to be tallest.
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(18, 16), height=118)
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
+        # height=100 (was 118) + pack_propagate(False): every card in a row
+        # is the same, more compact height regardless of content, instead of
+        # the row squishing/growing based on whichever card happens tallest.
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(14, 11), height=100)
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=5, pady=2)
         frame.pack_propagate(False)
 
         # style="CardValue.<color>.TLabel" (not bootstyle=) — these styles
@@ -1665,8 +1794,32 @@ class ServerHub(ttk.Window):
         # window color, which doesn't match this card's "dark" background.
         ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor=CENTER)
         val_lbl = ttk.Label(frame, text=initial_value, style=f"CardValue.{style}.TLabel")
-        val_lbl.pack(anchor=CENTER, expand=True, pady=(8, 0))
-        self.stat_vars[var_name] = val_lbl
+        val_lbl.pack(anchor=CENTER, expand=True, pady=(6, 0))
+        # Keeps the label AND the name of its own resting style together —
+        # _set_stat()'s flash animation needs to know exactly which style to
+        # relax back to once the highlight fades, since each card uses a
+        # different accent color (PRIMARY/SUCCESS/WARNING/...).
+        self.stat_vars[var_name] = {"label": val_lbl, "style": f"CardValue.{style}.TLabel"}
+
+    def _set_stat(self, var_name, new_value):
+        """Updates one metric card's number, and — only when the value
+        actually changed — gives it a brief highlight flash. A quick,
+        at-a-glance "something just moved" cue during a live event instead
+        of numbers silently ticking over unnoticed in a wall of static text.
+        No-ops harmlessly if the card doesn't exist yet or is unchanged."""
+        entry = self.stat_vars.get(var_name)
+        if not entry:
+            return
+        label, base_style = entry["label"], entry["style"]
+        new_text = str(new_value)
+        if label.cget("text") == new_text:
+            return
+        label.configure(text=new_text, style="CardFlash.TLabel")
+
+        def _revert():
+            if label.winfo_exists():
+                label.configure(style=base_style)
+        self.after(350, _revert)
 
     def _create_log_box(self, parent, title):
         frame = ttk.Frame(parent, style="Soft.TFrame")
@@ -1733,7 +1886,7 @@ class ServerHub(ttk.Window):
             active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
             device_info = {ip: dict(ACTIVE_DEVICES[ip]) for ip in active_ips}
 
-        self.stat_vars["online_scanners"].configure(text=str(len(active_ips)))
+        self._set_stat("online_scanners", len(active_ips))
         if hasattr(self, 'lbl_devices_header'):
             self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ips)})")
 
@@ -1760,24 +1913,31 @@ class ServerHub(ttk.Window):
         else:
             self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
 
-        if self.SessionMySQL: self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
-        else: self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
+        if not self._db_checked:
+            # connect_db() is still running on its background thread (see
+            # __init__) — show the same transient "CHECKING" state build_ui()
+            # sets initially instead of a misleading OFFLINE/FAULT flash.
+            self.lbl_stat_mysql.configure(text="● MYSQL: CHECKING", bootstyle=INFO)
+            self.lbl_stat_sqlite.configure(text="● SQLITE: CHECKING", bootstyle=INFO)
+        else:
+            if self.SessionMySQL: self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
+            else: self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
 
-        if self.SessionSQLite: self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS)
-        else: self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
+            if self.SessionSQLite: self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS)
+            else: self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
 
         # Read the background-refreshed cache instead of querying MySQL here.
         with stats_lock:
             snap = dict(STATS_CACHE)
 
-        self.stat_vars["total_att"].configure(text=str(snap["total_attendees"]))
-        self.stat_vars["kiosk_reg"].configure(text=str(snap["total_registrations"]))
-        self.stat_vars["sqlite_total"].configure(text=str(snap["total_attendees"]))
-        self.stat_vars["chk_30"].configure(text=str(snap["chk_30"]))
-        self.stat_vars["chk_31"].configure(text=str(snap["chk_31"]))
-        self.stat_vars["chk_01"].configure(text=str(snap["chk_01"]))
-        self.stat_vars["chk_today"].configure(text=str(snap["today_scans"]))
-        self.stat_vars["chk_total"].configure(text=str(snap["total_scans"]))
+        self._set_stat("total_att", snap["total_attendees"])
+        self._set_stat("kiosk_reg", snap["total_registrations"])
+        self._set_stat("sqlite_total", snap["total_attendees"])
+        self._set_stat("chk_30", snap["chk_30"])
+        self._set_stat("chk_31", snap["chk_31"])
+        self._set_stat("chk_01", snap["chk_01"])
+        self._set_stat("chk_today", snap["today_scans"])
+        self._set_stat("chk_total", snap["total_scans"])
 
         # Surface it if the background refresher has been failing quietly,
         # instead of the numbers just looking frozen with no explanation.
@@ -1852,6 +2012,26 @@ class ServerHub(ttk.Window):
             
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
 
+    def _animate_cf_connecting(self, tick=0):
+        """Animated "● Cloudflare: CONNECTING…" dots while the tunnel
+        negotiates. The DNS-propagation wait alone is a real ~30s pause (see
+        _run_cf below) — a static label for that whole stretch reads as a
+        frozen window rather than a slow-but-working one. Self-terminates
+        the moment the state moves on to LIVE/OFFLINE (self._cf_connecting
+        is checked fresh on every tick) or the window closes."""
+        if not self.winfo_exists() or not self._cf_connecting:
+            return
+        dots = "." * (tick % 4)
+        self.lbl_stat_cf.configure(text=f"● Cloudflare: CONNECTING{dots}", bootstyle=WARNING)
+        self.after(450, lambda: self._animate_cf_connecting(tick + 1))
+
+    def _mark_cf_live(self):
+        """Runs on the main thread via gui_queue once _run_cf finds a tunnel
+        URL — stops the animated CONNECTING state and shows the final LIVE
+        status, both in one place."""
+        self._cf_connecting = False
+        self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS)
+
     def start_cf(self):
         # Ensure local engine is running first
         if not self.http_thread:
@@ -1860,7 +2040,8 @@ class ServerHub(ttk.Window):
 
         self.btn_start_cf.configure(state=DISABLED)
         self.btn_stop_cf.configure(state=NORMAL)
-        self.lbl_stat_cf.configure(text="● Cloudflare: CONNECTING", bootstyle=WARNING)
+        self._cf_connecting = True
+        self._animate_cf_connecting()
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel to port {HTTP_PORT}...")
 
         def _run_cf():
@@ -1899,7 +2080,7 @@ class ServerHub(ttk.Window):
                             
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
-                            self.gui_queue.put(lambda: self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS))
+                            self.gui_queue.put(self._mark_cf_live)
                             self._append_log(self.log_cf, f"[SUCCESS] Tunnel active at: {self.cloudflare_url}")
                             
             except FileNotFoundError:
