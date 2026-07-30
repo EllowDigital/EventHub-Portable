@@ -141,6 +141,9 @@ DB_JOB_TIMEOUT = 8               # Seconds a request waits for its DB job before
 STATS_REFRESH_INTERVAL_SEC = 3   # How often the background thread recomputes dashboard stats.
 SLOW_REQUEST_THRESHOLD_MS = 500  # Requests slower than this log a WARNING — visibility into
                                   # "is the network/DB actually slow right now?" during the event.
+MAX_LOG_LINES = 2000             # Per log box scrollback cap. Without this, a multi-day live event
+                                  # left running would grow each Text widget's content unbounded —
+                                  # trimmed from the top once a box passes this many lines.
 
 # ==============================================================================
 # 📝 LOGGING — a real, rotating log file. Before this, server_hub.py was the
@@ -341,24 +344,75 @@ def log_request(response):
 
     return response
 
+def _status_log_tag(status_code):
+    """Maps an HTTP status code to a log color tag — green for 2xx, amber for
+    4xx, red for 5xx+ — shared by every colorized log line. The actual colors
+    live in _create_log_box()'s tag_configure calls."""
+    if status_code >= 500:
+        return "log_error"
+    if status_code >= 400:
+        return "log_warning"
+    return "log_success"
+
+# Auto-detected color tags for plain-string _append_log() calls — the ~20
+# existing self._append_log(widget, f"[SYSTEM] ...") call sites throughout
+# this file light up correctly with zero changes needed at each call site.
+# Checked in order, first match wins; more specific prefixes are listed
+# before broader ones they could otherwise be shadowed by.
+_LOG_PREFIX_TAGS = (
+    ("[PING ERROR]", "log_error"),
+    ("[ERROR]", "log_error"),
+    ("[WARNING]", "log_warning"),
+    ("[SUCCESS]", "log_success"),
+    ("[CLIPBOARD]", "log_info"),
+    ("[INFO]", "log_info"),
+)
+
+def _guess_log_tag(message):
+    for prefix, tag in _LOG_PREFIX_TAGS:
+        if message.startswith(prefix):
+            return tag
+    return "log_default"
+
 def log_event_clean(action_type, device_name, details, status_code):
     """Formats clean, human-readable operations logs for the GUI, and durably
     persists the same event to logs/server_hub.log — previously this only
     ever reached the on-screen panel, so closing the window or a crash lost
-    the entire check-in/registration history for the event."""
+    the entire check-in/registration history for the event.
+
+    Builds a list of (text, tag) segments rather than one plain string, so
+    the GUI can color the action-type marker (REGISTER/CHECKIN) independently
+    from the trailing status code — e.g. a failed CHECKIN still shows its
+    "CHECKIN" marker in the usual color while "Status: 404" renders in amber,
+    instead of one color winning for the whole line."""
     time_str = datetime.now().strftime('%H:%M:%S')
-    
+    status_tag = _status_log_tag(status_code)
+
     if action_type == "REGISTER":
         icon = "✅" if status_code == 200 else "❌"
-        msg = f"[{time_str}] {icon} [{device_name}] Reg: {details} — Status: {status_code}"
+        segments = [
+            (f"[{time_str}] ", "log_dim"),
+            (f"{icon} REGISTER  ", "log_register"),
+            (f"[{device_name}] {details} — ", "log_default"),
+            (f"Status: {status_code}", status_tag),
+        ]
     elif action_type == "CHECKIN":
         icon = "🎫" if status_code == 200 else "⛔"
-        msg = f"[{time_str}] {icon} [{device_name}] Chk: {details} — Status: {status_code}"
+        segments = [
+            (f"[{time_str}] ", "log_dim"),
+            (f"{icon} CHECKIN  ", "log_checkin"),
+            (f"[{device_name}] {details} — ", "log_default"),
+            (f"Status: {status_code}", status_tag),
+        ]
     else:
-        msg = f"[{time_str}] 🌐 [{device_name}] {action_type} — Status: {status_code}"
-        
+        segments = [
+            (f"[{time_str}] ", "log_dim"),
+            (f"🌐 [{device_name}] {action_type} — ", "log_default"),
+            (f"Status: {status_code}", status_tag),
+        ]
+
     if gui_log_callback:
-        gui_log_callback(msg)
+        gui_log_callback(segments)
 
     plain_msg = f"[{device_name}] {action_type}: {details} (status {status_code})"
     if status_code >= 500:
@@ -530,8 +584,14 @@ def _handle_checkin_job(payload):
         broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
         return 400, {"status": "error", "message": msg}
 
-    sessions = get_cached_sessions()
-    session = sessions.get('mysql')()
+    sessions = get_cached_sessions() or {}
+    mysql_factory = sessions.get('mysql')
+    if not mysql_factory:
+        msg = "Database temporarily unavailable"
+        log_event_clean("CHECKIN", device_name, msg, 503)
+        broadcast_scan(None, "ERROR", msg, device_name, iso_timestamp)
+        return 503, {"status": "error", "message": "Server is busy right now — please try again in a moment."}
+    session = mysql_factory()
 
     try:
         attendee = None
@@ -608,12 +668,18 @@ def _handle_checkin_job(payload):
         return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
 
     except Exception as e:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:
+            logging.exception("Checkin DB error — rollback also failed")
         logging.exception("Checkin DB error")
         log_event_clean("CHECKIN", device_name, f"DB Error: {str(e)}", 500)
         return 500, {"status": "error", "message": "An internal server error occurred while processing the request."}
     finally:
-        session.close()
+        try:
+            session.close()
+        except Exception:
+            logging.exception("Error closing DB session after checkin")
 
 def _handle_register_job(payload):
     """The exact registration logic that used to run inline inside the Flask
@@ -623,8 +689,12 @@ def _handle_register_job(payload):
     iso_timestamp = payload["iso_timestamp"]
     mobile_number = payload["mobile_number"]
 
-    sessions = get_cached_sessions()
-    session = sessions.get('mysql')()
+    sessions = get_cached_sessions() or {}
+    mysql_factory = sessions.get('mysql')
+    if not mysql_factory:
+        log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Database unavailable)", 503)
+        return 503, {"status": "error", "message": "Server is busy right now — please try again in a moment."}
+    session = mysql_factory()
 
     try:
         existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
@@ -709,12 +779,18 @@ def _handle_register_job(payload):
         return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
 
     except Exception as e:
-        session.rollback()
+        try:
+            session.rollback()
+        except Exception:
+            logging.exception("Registration DB error — rollback also failed")
         logging.exception("Registration DB error")
         log_event_clean("REGISTER", device_label, f"DB Error: {str(e)}", 500)
         return 500, {"status": "error", "message": "An internal server error occurred while processing the request."}
     finally:
-        session.close()
+        try:
+            session.close()
+        except Exception:
+            logging.exception("Error closing DB session after registration")
 
 def db_writer_loop(worker_id):
     logging.info(f"DB writer thread #{worker_id} started")
@@ -852,9 +928,12 @@ def check_mobile():
     if not mobile_number:
         return jsonify({"status": "error", "message": "Mobile number required"}), 400
         
-    sessions = get_cached_sessions()
-    session = sessions.get('mysql')()
-    
+    sessions = get_cached_sessions() or {}
+    mysql_factory = sessions.get('mysql')
+    if not mysql_factory:
+        return jsonify({"status": "error", "message": "Database temporarily unavailable — please try again shortly."}), 503
+    session = mysql_factory()
+
     try:
         # 1. Check the main Attendee table first
         existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
@@ -875,10 +954,14 @@ def check_mobile():
         # 3. If not found in either table, return not_found
         return jsonify({"status": "not_found"}), 200
 
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception:
+        logging.exception("check_mobile DB error")
+        return jsonify({"status": "error", "message": "An internal server error occurred while processing the request."}), 500
     finally:
-        session.close()
+        try:
+            session.close()
+        except Exception:
+            logging.exception("Error closing DB session in check_mobile")
 
 @app.route('/api/network-data', methods=['GET'])
 def get_network_data():
@@ -973,6 +1056,30 @@ def get_local_ip():
     except Exception: 
         try: return socket.gethostbyname(socket.gethostname())
         except: return "127.0.0.1"
+
+
+# ==============================================================================
+# 🎨 UI COLOR HELPERS
+# Small, dependency-free hex color math backing the custom styles configured
+# in ServerHub._configure_custom_styles(). Deliberately NOT reaching into any
+# ttkbootstrap-internal color-mixing helpers — those differ between
+# ttkbootstrap versions/releases, whereas plain hex-tuple math works
+# identically on any version installed on the operator's machine.
+# ==============================================================================
+def _hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip('#')
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+def _rgb_to_hex(rgb):
+    return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
+
+def _mix_hex(color_a, color_b, weight):
+    """Blends color_a toward color_b by `weight` (0 = pure color_a,
+    1 = pure color_b). Used to derive a border color that's a subtle step
+    lighter than a given panel background, instead of a color hand-picked in
+    isolation that could look wrong if the theme is ever switched."""
+    a, b = _hex_to_rgb(color_a), _hex_to_rgb(color_b)
+    return _rgb_to_hex(a[i] + (b[i] - a[i]) * weight for i in range(3))
 
 
 # ==============================================================================
@@ -1093,7 +1200,7 @@ class ServerHub(ttk.Window):
 
     def connect_db(self):
         try:
-            sessions = get_cached_sessions()
+            sessions = get_cached_sessions() or {}
             self.SessionMySQL = sessions.get('mysql')
             self.SessionSQLite = sessions.get('sqlite')
         except Exception:
@@ -1157,16 +1264,54 @@ class ServerHub(ttk.Window):
                 break
         self.after(30, self.process_gui_queue)
 
-    def _append_log(self, scrolled_text_widget, message):
+    def _append_log(self, scrolled_text_widget, message, tag=None):
+        """Thread-safe log append — the only code path allowed to touch a log
+        widget's contents. `message` is either:
+          - a plain string, colored by `tag` if given, else auto-detected
+            from a leading "[PREFIX]" (see _guess_log_tag) — this is what
+            every existing self._append_log(widget, f"[SYSTEM] ...") call
+            throughout the file already does, unchanged; or
+          - a list of (text, tag) segments built by log_event_clean(), for
+            lines that need more than one color at once (e.g. a colored
+            "CHECKIN" marker followed by a status-code-colored "Status: 404"
+            later in the same line).
+
+        Whichever shape it is, the actual Text widget mutation only ever runs
+        inside the append() closure queued onto self.gui_queue — so this
+        method is always safe to call from a Flask worker, DB writer, or
+        network-ping background thread, never just directly on the caller's
+        own thread.
+        """
+        if isinstance(message, (list, tuple)):
+            segments = list(message)
+        else:
+            segments = [(message, tag or _guess_log_tag(message))]
+
         def append():
-            scrolled_text_widget.text.configure(state=NORMAL)
-            scrolled_text_widget.text.insert(END, message + "\n")
-            scrolled_text_widget.text.see(END)
-            scrolled_text_widget.text.configure(state=DISABLED)
+            text_widget = scrolled_text_widget.text
+            text_widget.configure(state=NORMAL)
+            for seg_text, seg_tag in segments:
+                if seg_tag:
+                    text_widget.insert(END, seg_text, seg_tag)
+                else:
+                    text_widget.insert(END, seg_text)
+            text_widget.insert(END, "\n")
+            text_widget.see(END)
+
+            # Cap scrollback so a multi-day live event left running can't
+            # quietly grow a log box to hundreds of thousands of lines and
+            # bloat memory — trim the oldest lines once comfortably past cap.
+            line_count = int(text_widget.index('end-1c').split('.')[0])
+            if line_count > MAX_LOG_LINES:
+                text_widget.delete('1.0', f'{line_count - MAX_LOG_LINES}.0')
+
+            text_widget.configure(state=DISABLED)
         self.gui_queue.put(append)
 
     def log_flask_event(self, message):
-        # Routes logs directly into the Flask Traffic Log box cleanly
+        # Routes logs directly into the Flask Traffic Log box. `message` is
+        # either a plain string or a list of (text, tag) segments — see
+        # log_event_clean() and _append_log() above.
         self._append_log(self.log_flask, message)
 
     def copy_to_clipboard(self, text):
@@ -1200,7 +1345,100 @@ class ServerHub(ttk.Window):
         finally:
             self.destroy()
 
+    def _configure_custom_styles(self):
+        """Central place for every custom ttk style this dashboard relies on.
+        Called once, first thing in build_ui(), before any widget that uses
+        these style names is constructed.
+
+        Fixes two visual bugs by construction rather than by tweaking colors
+        until they happen to look right:
+
+        1. THE METRIC-CARD BACKGROUND BUG. A Label styled with just
+           `bootstyle=PRIMARY` gets colored TEXT, but the label's own
+           background still resolves to the theme's base window background —
+           not whatever background its parent Frame actually has. Put that
+           label inside a `bootstyle="dark"` card (a different background
+           than the window) and the mismatch shows up as a visible rectangle
+           behind the number. The fix: compute the card's real background as
+           one hex value (self.CARD_BG) and give every label inside it that
+           *exact same* hex as its own background — not just a bootstyle
+           keyword — so there's nothing left to mismatch.
+        2. HARSH BORDERS / LOUD TREEVIEW HEADER. Softened to a muted grey
+           derived from each panel's own background (self.SOFT_BORDER),
+           instead of the theme's brighter default border and saturated
+           accent-blue Treeview heading.
+        """
+        colors = self.style.colors
+
+        # The actual pixel background every metric card uses. colors.dark
+        # reads as a "raised panel" against colors.bg in the darkly theme —
+        # the ORIGINAL intent behind bootstyle="dark" cards; the bug was only
+        # ever that the child labels didn't match it.
+        self.CARD_BG = colors.get("dark")
+
+        # A soft, muted border a few shades lighter than whatever background
+        # it's drawn on — enough to still define an edge, nowhere near the
+        # theme's brighter default. Recomputed from real colors so it stays
+        # sensible even if the ttkbootstrap theme is ever switched.
+        self.SOFT_BORDER = _mix_hex(self.CARD_BG, colors.get("fg"), 0.08)
+        BG_BORDER = _mix_hex(colors.get("bg"), colors.get("fg"), 0.10)
+
+        # --- Metric cards (DATABASE TELEMETRY / EVENT CHECK-IN METRICS) ---
+        self.style.configure(
+            "Card.TFrame", background=self.CARD_BG,
+            bordercolor=self.SOFT_BORDER, lightcolor=self.SOFT_BORDER,
+            darkcolor=self.SOFT_BORDER, borderwidth=1, relief="solid",
+        )
+        self.style.configure(
+            "CardTitle.TLabel", background=self.CARD_BG,
+            foreground=_mix_hex(self.CARD_BG, colors.get("fg"), 0.55),
+            font="-size 9 -weight bold",
+        )
+        # One matched-background value style per metric color actually used
+        # across the DATABASE TELEMETRY / EVENT CHECK-IN METRICS cards.
+        for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"):
+            self.style.configure(
+                f"CardValue.{key}.TLabel", background=self.CARD_BG,
+                foreground=colors.get(key), font="-size 28 -weight bold",
+            )
+
+        # --- Generic soft-bordered dark panel (devices table, log boxes) ---
+        self.style.configure(
+            "Soft.TFrame", background=colors.get("bg"),
+            bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER,
+            borderwidth=1, relief="solid",
+        )
+
+        # --- Labelframe (sidebar boxes) — same soft border treatment ---
+        self.style.configure(
+            "TLabelframe", background=colors.get("bg"),
+            bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER,
+        )
+        self.style.configure("TLabelframe.Label", background=colors.get("bg"))
+
+        # --- Log box header strip ---
+        self.style.configure(
+            "LogHeader.TLabel", background="#252526", foreground="#CCCCCC",
+            font="-size 10 -weight bold", padding=10,
+        )
+
+        # --- Treeview: a muted, dark-theme-friendly header instead of the
+        # theme's saturated accent blue, plus a matching soft border. ---
+        self.style.configure(
+            "Treeview.Heading",
+            background=_mix_hex(self.CARD_BG, colors.get("fg"), 0.12),
+            foreground=_mix_hex(self.CARD_BG, colors.get("fg"), 0.82),
+            bordercolor=BG_BORDER, relief="flat", font="-size 9 -weight bold",
+        )
+        self.style.map(
+            "Treeview.Heading",
+            background=[("active", _mix_hex(self.CARD_BG, colors.get("fg"), 0.20))],
+        )
+        self.style.configure("Treeview", bordercolor=BG_BORDER, borderwidth=1)
+
     def build_ui(self):
+        self._configure_custom_styles()
+
         self.root_container = ttk.Frame(self)
         self.root_container.pack(fill=BOTH, expand=True)
 
@@ -1245,10 +1483,16 @@ class ServerHub(ttk.Window):
         self.lbl_flask_link.pack(pady=8)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
         
-        flask_btn_row = ttk.Frame(flask_frame)
-        flask_btn_row.pack(fill=X, pady=(5, 5))
-        ttk.Button(flask_btn_row, text="Copy HTTPS", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
-        ttk.Button(flask_btn_row, text="Copy HTTP", bootstyle="outline-info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        # width=164, not 160: the QR image itself is 160x160 (see update_qr's
+        # resize), but a ttk.Label adds ~4px of its own internal padding
+        # around image content (confirmed via winfo_reqwidth()) — matching
+        # the label's actual rendered width, not just the image size, is
+        # what makes this land pixel-precise under the QR code above it.
+        flask_btn_row = ttk.Frame(flask_frame, width=164, height=32)
+        flask_btn_row.pack(pady=(5, 5))
+        flask_btn_row.pack_propagate(False)
+        ttk.Button(flask_btn_row, text="Copy HTTPS", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=BOTH, padx=(0, 3))
+        ttk.Button(flask_btn_row, text="Copy HTTP", bootstyle="outline-info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=BOTH, padx=(3, 0))
 
         cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=15)
         cf_frame.pack(fill=X, pady=20)
@@ -1267,10 +1511,11 @@ class ServerHub(ttk.Window):
         self.lbl_cf_link.pack(pady=8)
         self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url != "Offline" else None)
 
-        cf_btn_row = ttk.Frame(cf_frame)
-        cf_btn_row.pack(fill=X, pady=(5, 5))
-        ttk.Button(cf_btn_row, text="Copy Link", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
-        ttk.Button(cf_btn_row, text="Browser", bootstyle="outline-info", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=2)
+        cf_btn_row = ttk.Frame(cf_frame, width=160, height=32)
+        cf_btn_row.pack(pady=(5, 5))
+        cf_btn_row.pack_propagate(False)
+        ttk.Button(cf_btn_row, text="Copy Link", bootstyle="outline-light", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=BOTH, padx=(0, 3))
+        ttk.Button(cf_btn_row, text="Browser", bootstyle="outline-info", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=BOTH, padx=(3, 0))
 
         test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=15)
         test_frame.pack(fill=X, pady=5)
@@ -1316,7 +1561,7 @@ class ServerHub(ttk.Window):
         self.lbl_stats_health = ttk.Label(devices_header_row, text="", font="-size 9", bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
 
-        devices_frame = ttk.Frame(content, borderwidth=1, relief="solid", bootstyle="dark")
+        devices_frame = ttk.Frame(content, style="Soft.TFrame")
         devices_frame.pack(fill=X, pady=(0, 20))
 
         # A slightly tighter row height than the theme default — more devices
@@ -1324,12 +1569,18 @@ class ServerHub(ttk.Window):
         # to hurt readability on a gate laptop viewed from arm's length.
         self.style.configure("Treeview", rowheight=22)
 
+        # No bootstyle= here on purpose: bootstyle=INFO (the previous value)
+        # generates its own "info.Treeview.Heading" style using the theme's
+        # saturated accent blue — that's what actually caused the loud blue
+        # header, and it can't be muted by reconfiguring "Treeview.Heading"
+        # since that's a different, unrelated style name. Leaving bootstyle
+        # unset uses the plain "Treeview"/"Treeview.Heading" styles, which
+        # _configure_custom_styles() already set up with muted colors.
         self.tree_devices = ttk.Treeview(
             devices_frame,
             columns=("name", "ip", "last_seen", "signal"),
             show="headings",
             height=6,
-            bootstyle=INFO,
         )
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
@@ -1371,10 +1622,25 @@ class ServerHub(ttk.Window):
         ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 10))
         logs_frame = ttk.Frame(content)
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
-        
-        self.log_network = self._create_log_box(logs_frame, "Devices & Network Routing")
-        self.log_flask = self._create_log_box(logs_frame, "Live Operator Activity & API Logs")
-        self.log_cf = self._create_log_box(logs_frame, "Cloudflare Tunnel Status")
+
+        # Previously all 3 logs sat side by side in one row, giving each
+        # barely a third of the width and causing aggressive text wrapping.
+        # Now: the busiest, most information-dense log — every checkin/
+        # register event, fully color-coded — gets a full-width row of its
+        # own on top (weighted 3 vs 2, i.e. ~60% of the available height).
+        # The two lower-traffic, mostly-status logs share the row below.
+        logs_frame.columnconfigure(0, weight=1)
+        logs_frame.rowconfigure(0, weight=3)
+        logs_frame.rowconfigure(1, weight=2)
+
+        logs_top_row = ttk.Frame(logs_frame)
+        logs_top_row.grid(row=0, column=0, sticky="nsew", pady=(0, 10))
+        self.log_flask = self._create_log_box(logs_top_row, "📟 Live Operator Activity & API Logs")
+
+        logs_bottom_row = ttk.Frame(logs_frame)
+        logs_bottom_row.grid(row=1, column=0, sticky="nsew")
+        self.log_network = self._create_log_box(logs_bottom_row, "🌐 Devices & Network Routing")
+        self.log_cf = self._create_log_box(logs_bottom_row, "☁️ Cloudflare Tunnel Status")
 
         footer = ttk.Frame(content)
         footer.pack(fill=X, pady=(15, 0))
@@ -1384,20 +1650,45 @@ class ServerHub(ttk.Window):
         self._append_log(self.log_network, f"Local Network IP Address Detected: {self.local_ip}")
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        frame = ttk.Frame(parent, borderwidth=1, relief="solid", padding=20, bootstyle="dark")
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
-        ttk.Label(frame, text=title, font="-size 9 -weight bold", foreground="#AAA").pack(anchor=CENTER)
-        val_lbl = ttk.Label(frame, text=initial_value, font="-size 28 -weight bold", bootstyle=style)
-        val_lbl.pack(anchor=CENTER, pady=(12,0))
+        # height=118 + pack_propagate(False): every card in a row is the same
+        # height regardless of content, instead of the row squishing/growing
+        # based on whichever card happens to be tallest.
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(18, 16), height=118)
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
+        frame.pack_propagate(False)
+
+        # style="CardValue.<color>.TLabel" (not bootstyle=) — these styles
+        # were configured in _configure_custom_styles() with a background
+        # that EXACTLY matches this card's own background. That's the actual
+        # fix for the old floating-rectangle bug: bootstyle=style alone gave
+        # colored text but left the label's background at the theme's base
+        # window color, which doesn't match this card's "dark" background.
+        ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor=CENTER)
+        val_lbl = ttk.Label(frame, text=initial_value, style=f"CardValue.{style}.TLabel")
+        val_lbl.pack(anchor=CENTER, expand=True, pady=(8, 0))
         self.stat_vars[var_name] = val_lbl
 
     def _create_log_box(self, parent, title):
-        frame = ttk.Frame(parent, borderwidth=1, relief="solid", bootstyle="dark")
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
-        ttk.Label(frame, text=title, font="-size 10 -weight bold", padding=10, background="#252526", foreground="#CCC").pack(anchor=W, fill=X)
+        frame = ttk.Frame(parent, style="Soft.TFrame")
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
+        ttk.Label(frame, text=title, style="LogHeader.TLabel").pack(anchor=W, fill=X)
         log_box = ScrolledText(frame, font=("Consolas", 10))
         log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
-        log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0) 
+        text_widget = log_box.text
+        text_widget.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
+
+        # --- Color tags for at-a-glance readability during a live event ---
+        # System/info text stays neutral; status codes and API actions get
+        # distinct, consistent colors so an operator can scan hundreds of
+        # lines and immediately spot errors or watch REGISTER/CHECKIN flow.
+        text_widget.tag_configure("log_default", foreground="#D4D4D4")                                    # general system/info text
+        text_widget.tag_configure("log_dim",     foreground="#6A7178")                                    # timestamps — present, out of the way
+        text_widget.tag_configure("log_success", foreground="#4CD37E")                                    # 2xx status codes / [SUCCESS]
+        text_widget.tag_configure("log_warning", foreground="#FFB454")                                    # 4xx status codes / [WARNING]
+        text_widget.tag_configure("log_error",   foreground="#FF6B6B")                                    # 5xx status codes / [ERROR]
+        text_widget.tag_configure("log_info",    foreground="#5DADE2")                                    # [CLIPBOARD] / misc info
+        text_widget.tag_configure("log_register",foreground="#6EC6FF", font=("Consolas", 10, "bold"))     # REGISTER events — light blue
+        text_widget.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 10, "bold"))     # CHECKIN events — soft purple
         return log_box
 
     def update_qr(self, label, data):
@@ -1612,27 +1903,18 @@ class ServerHub(ttk.Window):
                             self._append_log(self.log_cf, f"[SUCCESS] Tunnel active at: {self.cloudflare_url}")
                             
             except FileNotFoundError:
-                logging.error("'cloudflared.exe' not found")
+                # Covers all 3 places it might be missing from — MSI install,
+                # sitting next to the script, or on PATH — in one clear message
+                # instead of three near-duplicate handlers only the first of
+                # which could ever actually fire.
+                logging.error("'cloudflared' binary not found")
                 self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, "[ERROR] 'cloudflared.exe' not found. Ensure the MSI installer finished successfully.")
-            except Exception as e:
-                logging.exception("Cloudflare tunnel failed")
-                self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {str(e)}")
-                            
-            except FileNotFoundError:
-                logging.error("'cloudflared.exe' not found in script directory")
-                self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, "[ERROR] 'cloudflared.exe' not found next to server_hub.py.")
-            except Exception as e:
-                logging.exception("Cloudflare tunnel failed")
-                self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {str(e)}")
-                            
-            except FileNotFoundError:
-                logging.error("'cloudflared' binary not found in PATH")
-                self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, "[ERROR] 'cloudflared' binary not found. Ensure it is installed and in your system PATH.")
+                self._append_log(
+                    self.log_cf,
+                    "[ERROR] 'cloudflared' not found. Make sure the MSI installer finished "
+                    "successfully, or that cloudflared.exe sits next to server_hub.py, or "
+                    "that 'cloudflared' is on your system PATH.",
+                )
             except Exception as e:
                 logging.exception("Cloudflare tunnel failed")
                 self.gui_queue.put(self.stop_cf)
