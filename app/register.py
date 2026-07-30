@@ -4,6 +4,7 @@ import time
 import threading
 import queue
 import re
+import uuid
 import requests
 import urllib3
 import tkinter as tk
@@ -19,6 +20,14 @@ except ImportError:
 
 # Suppress InsecureRequestWarning for adhoc self-signed HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# ==============================================================================
+# 24/7 STABILITY: GLOBAL CRASH HANDLER
+# ==============================================================================
+def global_exception_handler(*args):
+    print(f"Uncaught GUI Exception intercepted: {args}")
+
+tk.Tk.report_callback_exception = global_exception_handler
 
 # ==============================================================================
 # DATA: STATES & MAJOR CITIES (For Autocomplete)
@@ -47,16 +56,17 @@ POPULAR_CITIES = [
 ]
 
 # ==============================================================================
-# CONFIGURATION MANAGER
+# CONFIGURATION & BACKUP MANAGER
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'register.json')
+BACKUP_FILE = os.path.join(LOG_DIR, 'unsynced_registrations.json')
 
 def load_config():
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        
+    os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
@@ -66,17 +76,41 @@ def load_config():
     return {"server_url": "https://127.0.0.1:5000", "device_name": "Main Desktop Kiosk"}
 
 def save_config(url, name):
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR, exist_ok=True)
+    os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w') as f:
         json.dump({"server_url": url, "device_name": name}, f, indent=4)
 
+class LocalBackupManager:
+    """Disaster recovery. Ensures zero data loss if power fails during a network outage."""
+    def __init__(self):
+        self.lock = threading.Lock()
+
+    def save(self, payload):
+        with self.lock:
+            data = self.load()
+            data.append(payload)
+            with open(BACKUP_FILE, 'w') as f:
+                json.dump(data, f, indent=4)
+
+    def remove(self, backup_id):
+        with self.lock:
+            data = self.load()
+            data = [d for d in data if d.get('_backup_id') != backup_id]
+            with open(BACKUP_FILE, 'w') as f:
+                json.dump(data, f, indent=4)
+
+    def load(self):
+        if not os.path.exists(BACKUP_FILE): return []
+        try:
+            with open(BACKUP_FILE, 'r') as f: return json.load(f)
+        except Exception: return []
+
+backup_mgr = LocalBackupManager()
 
 # ==============================================================================
 # CUSTOM UI WIDGETS
 # ==============================================================================
 class RobustScrollFrame(ttk.Frame):
-    """A foolproof scrollable frame that guarantees inner content is always reachable."""
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         
@@ -109,14 +143,12 @@ class RobustScrollFrame(ttk.Frame):
         self.canvas.yview_moveto(fraction)
 
 class AutocompleteCombobox(ttk.Combobox):
-    """A combobox that filters its dropdown list as you type."""
     def __init__(self, parent, completion_list, **kwargs):
         self._completion_list = sorted(list(set(completion_list)))
         super().__init__(parent, values=self._completion_list, **kwargs)
         self.bind('<KeyRelease>', self.handle_keyrelease)
         
     def handle_keyrelease(self, event):
-        # Ignore navigation and special keys
         if event.keysym in ('BackSpace', 'Left', 'Right', 'Up', 'Down', 'Return', 'Tab', 'Shift_L', 'Shift_R'):
             return
             
@@ -125,11 +157,7 @@ class AutocompleteCombobox(ttk.Combobox):
             self.configure(values=self._completion_list)
             return
 
-        # Filter the list
-        matching_items = [
-            item for item in self._completion_list 
-            if item.lower().startswith(typed_text)
-        ]
+        matching_items = [item for item in self._completion_list if item.lower().startswith(typed_text)]
         self.configure(values=matching_items)
 
 
@@ -139,38 +167,53 @@ class AutocompleteCombobox(ttk.Combobox):
 class OfflineKioskApp(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Desktop Registration Kiosk")
-        self.geometry("850x700")
-        self.minsize(600, 500)
+        self.geometry("900x800")
+        self.minsize(700, 600)
+        
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"+{(sw - 900) // 2}+{(sh - 800) // 2 - 20}")
         
         self.config = load_config()
         self.server_url = self.config["server_url"].rstrip('/')
         self.device_name = self.config["device_name"]
         
+        self.http_session = requests.Session()
+        self.http_session.headers.update({"User-Agent": "EventHub-Kiosk/1.0"})
+        
         self.gui_queue = queue.Queue()
         self.is_pinging = True
+        self.is_submitting = False
         
-        # Validation Regex
         self.MOBILE_RE = re.compile(r"^[6-9]\d{9}$")
         self.PIN_RE = re.compile(r"^\d{6}$")
         self.EMAIL_RE = re.compile(r"^[\w.\-+]+@[\w.\-]+\.\w{2,}$")
+        self._mobile_check_timer = None
 
         self.build_ui()
         self.setup_reactive_logic()
+        self.bind_shortcuts()
         
         if not HAS_INDIAPINS:
             messagebox.showwarning("Missing Library", "The 'indiapins' library is not installed. Auto-filling City and State by Pincode will be disabled. Run 'pip install indiapins' to enable it.")
         
-        # Start background tasks
         self.process_gui_queue()
-        self.ping_thread = threading.Thread(target=self.network_ping_loop, daemon=True)
-        self.ping_thread.start()
+        threading.Thread(target=self.network_ping_loop, daemon=True).start()
+        threading.Thread(target=self.background_sync_loop, daemon=True).start()
+
+    def bind_shortcuts(self):
+        self.bind("<Control-s>", self.submit_form)
+        self.bind("<Control-S>", self.submit_form)
+        self.bind("<Control-Return>", self.submit_form)
+        self.bind("<Alt-c>", lambda e: self.reset_form())
+        self.bind("<Alt-C>", lambda e: self.reset_form())
 
     # --- UI BUILDING ---
     def build_ui(self):
         header_frame = ttk.Frame(self, padding=(15, 15, 15, 5))
         header_frame.pack(fill=X)
         
-        title_lbl = ttk.Label(header_frame, text="Kiosk Registration", font="-size 18 -weight bold")
+        title_lbl = ttk.Label(header_frame, text="Kiosk Registration", font="-size 20 -weight bold", bootstyle=PRIMARY)
         title_lbl.pack(side=LEFT)
 
         control_frame = ttk.Frame(header_frame)
@@ -189,6 +232,8 @@ class OfflineKioskApp(ttk.Window):
         self.net_label = ttk.Label(self.net_pill, text="Checking...", font="-size 9 -weight bold")
         self.net_label.pack(side=LEFT)
 
+        ttk.Label(self, text="⌨️ Shortcuts: [Ctrl+S] Save  |  [Alt+C] Clear Form", font="-size 9", foreground="gray").pack(anchor=E, padx=15)
+
         self.scroll_frame = RobustScrollFrame(self)
         self.scroll_frame.pack(fill=BOTH, expand=True)
         container = self.scroll_frame.container
@@ -198,25 +243,28 @@ class OfflineKioskApp(ttk.Window):
         self.errors = {}
 
         # --- SECTION: IDENTITY ---
-        self.create_section_title(container, "👤 Identity")
-        self.create_input(container, "full_name", "Full Name *")
+        id_card = ttk.Labelframe(container, text=" 👤 Identity Details ", padding=15)
+        id_card.pack(fill=X, pady=(10, 10), padx=5)
         
-        row1 = ttk.Frame(container)
-        row1.pack(fill=X, pady=(0, 5))
+        self.create_input(id_card, "full_name", "Full Name *")
+        
+        row1 = ttk.Frame(id_card)
+        row1.pack(fill=X, pady=(5, 0))
         self.create_input(row1, "mobile", "Mobile Number *", is_half=True)
         self.create_dropdown(row1, "gender", "Gender *", ["", "MALE", "FEMALE", "OTHER"], is_half=True)
         
-        self.create_input(container, "email", "Email (Optional)")
+        self.create_input(id_card, "email", "Email Address (Optional)")
 
         # --- SECTION: PROFESSIONAL ---
-        self.create_section_title(container, "💼 Professional Details")
+        prof_card = ttk.Labelframe(container, text=" 💼 Professional Details ", padding=15)
+        prof_card.pack(fill=X, pady=(10, 10), padx=5)
         
-        row2 = ttk.Frame(container)
+        row2 = ttk.Frame(prof_card)
         row2.pack(fill=X, pady=(0, 5))
         self.create_dropdown(row2, "attendee_type", "Attendee Type *", ["GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"], is_half=True, default="GENERAL")
         self.create_input(row2, "business_name", "Company / Firm Name", is_half=True)
 
-        row3 = ttk.Frame(container)
+        row3 = ttk.Frame(prof_card)
         row3.pack(fill=X, pady=(0, 5))
         cat_opts = [
             "", "TENT", "CATERING", "DECORATOR", "FLOWER", "DJ", "LIGHT", 
@@ -227,65 +275,53 @@ class OfflineKioskApp(ttk.Window):
         self.create_input(row3, "other_category", "Specify Other", is_half=True, state=DISABLED)
 
         # --- SECTION: LOCATION ---
-        self.create_section_title(container, "📍 Location")
-        self.create_input(container, "address", "Full Address *")
+        loc_card = ttk.Labelframe(container, text=" 📍 Location Details ", padding=15)
+        loc_card.pack(fill=X, pady=(10, 10), padx=5)
         
-        row4 = ttk.Frame(container)
-        row4.pack(fill=X, pady=(0, 5))
+        self.create_input(loc_card, "address", "Full Address *")
+        
+        row4 = ttk.Frame(loc_card)
+        row4.pack(fill=X, pady=(5, 0))
         self.create_input(row4, "pincode", "Pincode *", width_ratio=0.33)
         self.create_autocomplete(row4, "city", "City *", POPULAR_CITIES, width_ratio=0.33)
         self.create_autocomplete(row4, "state", "State *", INDIAN_STATES, width_ratio=0.33)
 
         # --- SECTION: ATTENDANCE DAYS ---
-        self.create_section_title(container, "📅 Attendance Days *")
-        days_frame = ttk.Frame(container)
-        days_frame.pack(fill=X, pady=(0, 5))
+        day_card = ttk.Labelframe(container, text=" 📅 Attendance Days * ", padding=15)
+        day_card.pack(fill=X, pady=(10, 15), padx=5)
+        
+        days_frame = ttk.Frame(day_card)
+        days_frame.pack(fill=X)
         
         self.vars['day_1'] = tk.BooleanVar()
         self.vars['day_2'] = tk.BooleanVar()
         self.vars['day_3'] = tk.BooleanVar()
         
-        ttk.Checkbutton(days_frame, text="30 Aug", variable=self.vars['day_1'], bootstyle="info-square-toggle").pack(side=LEFT, padx=(0, 15))
-        ttk.Checkbutton(days_frame, text="31 Aug", variable=self.vars['day_2'], bootstyle="info-square-toggle").pack(side=LEFT, padx=(0, 15))
+        ttk.Checkbutton(days_frame, text="30 Aug", variable=self.vars['day_1'], bootstyle="info-square-toggle").pack(side=LEFT, padx=(0, 20))
+        ttk.Checkbutton(days_frame, text="31 Aug", variable=self.vars['day_2'], bootstyle="info-square-toggle").pack(side=LEFT, padx=(0, 20))
         ttk.Checkbutton(days_frame, text="1 Sept", variable=self.vars['day_3'], bootstyle="info-square-toggle").pack(side=LEFT)
         
-        self.errors['days'] = ttk.Label(container, text="", foreground="#ff4444", font="-size 8")
-        self.errors['days'].pack(anchor=W, pady=(0, 15))
+        self.errors['days'] = ttk.Label(day_card, text="", foreground="#ff4444", font="-size 8")
+        self.errors['days'].pack(anchor=W, pady=(5, 0))
 
         # --- ACTION ROW (CLEAR & TOGGLE) ---
         action_frame = ttk.Frame(container)
-        action_frame.pack(fill=X, pady=(15, 5), padx=5)
+        action_frame.pack(fill=X, pady=(10, 5), padx=5)
 
         self.vars['auto_clear'] = tk.BooleanVar(value=True)
-        chk_auto_clear = ttk.Checkbutton(
-            action_frame, 
-            text=" Auto-clear form after success", 
-            variable=self.vars['auto_clear'], 
-            bootstyle="round-toggle"
-        )
+        chk_auto_clear = ttk.Checkbutton(action_frame, text=" Auto-clear form on success", variable=self.vars['auto_clear'], bootstyle="round-toggle")
         chk_auto_clear.pack(side=LEFT)
 
-        btn_clear = ttk.Button(
-            action_frame, 
-            text="🗑️ Clear Form", 
-            bootstyle=SECONDARY, 
-            command=self.reset_form
-        )
+        btn_clear = ttk.Button(action_frame, text="🗑️ Clear Form (Alt+C)", bootstyle="outline-secondary", command=self.reset_form)
         btn_clear.pack(side=RIGHT)
 
         # --- SUBMIT BUTTON ---
-        self.btn_submit = ttk.Button(container, text="Register Offline Attendee (Enter)", bootstyle=INFO, padding=12, command=self.submit_form)
+        self.btn_submit = ttk.Button(container, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS, padding=12, command=self.submit_form)
         self.btn_submit.pack(fill=X, pady=(5, 20), padx=5)
         
-        self.bind('<Return>', self.submit_form)
         self.inputs['full_name'].focus_set()
 
-    # --- UI HELPERS ---
-    def create_section_title(self, parent, text):
-        lbl = ttk.Label(parent, text=text, font="-size 11 -weight bold", foreground="#00d2ff")
-        lbl.pack(anchor=W, pady=(15, 5))
-        ttk.Separator(parent).pack(fill=X, pady=(0, 10))
-
+    # --- UI COMPONENT BUILDERS ---
     def create_input(self, parent, name, label_text, is_half=False, width_ratio=1.0, state=NORMAL):
         frame = ttk.Frame(parent)
         if is_half: frame.pack(side=LEFT, fill=X, expand=True, padx=5)
@@ -294,8 +330,8 @@ class OfflineKioskApp(ttk.Window):
 
         ttk.Label(frame, text=label_text, font="-size 9 -weight bold", foreground="#D4D4D4").pack(anchor=W, pady=(0, 2))
         self.vars[name] = tk.StringVar()
-        entry = ttk.Entry(frame, textvariable=self.vars[name], state=state, font="-size 10")
-        entry.pack(fill=X)
+        entry = ttk.Entry(frame, textvariable=self.vars[name], state=state, font="-size 11")
+        entry.pack(fill=X, ipady=4)
         self.inputs[name] = entry
         
         err_lbl = ttk.Label(frame, text="", foreground="#ff4444", font="-size 8")
@@ -309,8 +345,8 @@ class OfflineKioskApp(ttk.Window):
 
         ttk.Label(frame, text=label_text, font="-size 9 -weight bold", foreground="#D4D4D4").pack(anchor=W, pady=(0, 2))
         self.vars[name] = tk.StringVar(value=default)
-        cb = ttk.Combobox(frame, textvariable=self.vars[name], values=options, state="readonly", font="-size 10")
-        cb.pack(fill=X)
+        cb = ttk.Combobox(frame, textvariable=self.vars[name], values=options, state="readonly", font="-size 11")
+        cb.pack(fill=X, ipady=4)
         self.inputs[name] = cb
         
         err_lbl = ttk.Label(frame, text="", foreground="#ff4444", font="-size 8")
@@ -326,20 +362,34 @@ class OfflineKioskApp(ttk.Window):
         ttk.Label(frame, text=label_text, font="-size 9 -weight bold", foreground="#D4D4D4").pack(anchor=W, pady=(0, 2))
         self.vars[name] = tk.StringVar()
         
-        cb = AutocompleteCombobox(frame, completion_list=options, textvariable=self.vars[name], font="-size 10")
-        cb.pack(fill=X)
+        cb = AutocompleteCombobox(frame, completion_list=options, textvariable=self.vars[name], font="-size 11")
+        cb.pack(fill=X, ipady=4)
         self.inputs[name] = cb
         
         err_lbl = ttk.Label(frame, text="", foreground="#ff4444", font="-size 8")
         err_lbl.pack(anchor=W)
         self.errors[name] = err_lbl
 
-    # --- REACTIVE LOGIC ---
+    # --- LIVE VALIDATION & REACTIVE LOGIC ---
     def setup_reactive_logic(self):
         self.vars['attendee_type'].trace_add('write', self.on_type_change)
         self.vars['business_category'].trace_add('write', self.on_category_change)
         self.vars['mobile'].trace_add('write', self.on_mobile_change)
         self.vars['pincode'].trace_add('write', self.on_pincode_change)
+
+        # LIVE VALIDATION: Instantly clears red field errors when text changes
+        for field, var in self.vars.items():
+            if field not in ['auto_clear', 'day_1', 'day_2', 'day_3']:
+                var.trace_add('write', lambda n, i, m, f=field: self.clear_single_error(f))
+
+        for day in ['day_1', 'day_2', 'day_3']:
+            self.vars[day].trace_add('write', lambda n, i, m: self.clear_single_error('days'))
+
+    def clear_single_error(self, field):
+        if field in self.inputs:
+            self.inputs[field].configure(bootstyle=DEFAULT)
+        if field in self.errors:
+            self.errors[field].configure(text="")
 
     def on_type_change(self, *args):
         att_type = self.vars['attendee_type'].get()
@@ -352,8 +402,8 @@ class OfflineKioskApp(ttk.Window):
             self.inputs['business_category'].configure(state="readonly")
             if self.vars['business_category'].get() == 'MEDIA_PRESS':
                 self.vars['business_category'].set('')
-        self.errors['business_category'].configure(text="")
-        self.errors['business_name'].configure(text="")
+        self.clear_single_error('business_category')
+        self.clear_single_error('business_name')
 
     def on_category_change(self, *args):
         if self.vars['business_category'].get() == 'OTHER':
@@ -361,7 +411,7 @@ class OfflineKioskApp(ttk.Window):
         else:
             self.vars['other_category'].set('')
             self.inputs['other_category'].configure(state=DISABLED)
-        self.errors['other_category'].configure(text="")
+        self.clear_single_error('other_category')
 
     def on_mobile_change(self, *args):
         val = self.vars['mobile'].get()
@@ -370,54 +420,30 @@ class OfflineKioskApp(ttk.Window):
         if val != clean_val:
             self.vars['mobile'].set(clean_val)
             
+        if self._mobile_check_timer:
+            self.after_cancel(self._mobile_check_timer)
+            
         if len(clean_val) == 10:
-            # Set checking state and spawn a thread to hit the API
             self.errors['mobile'].configure(text="⏳ Checking number...", foreground="#00d2ff")
-            threading.Thread(target=self._check_mobile_status, args=(clean_val,), daemon=True).start()
+            self._mobile_check_timer = self.after(400, lambda: threading.Thread(target=self._check_mobile_status, args=(clean_val,), daemon=True).start())
         else:
-            self.errors['mobile'].configure(text="")
+            self.clear_single_error('mobile')
 
     def _check_mobile_status(self, mobile_num):
-        """Background thread to query if a mobile number is already registered."""
         try:
-            res = requests.get(
-                f"{self.server_url}/api/check_mobile", 
-                params={"mobile": mobile_num}, 
-                timeout=3, 
-                verify=False
-            )
-            
+            res = self.http_session.get(f"{self.server_url}/api/check_mobile", params={"mobile": mobile_num}, timeout=3, verify=False)
             if res.status_code == 200:
                 data = res.json()
-                
                 if data.get('status') in ['already_registered', 'registered', 'exists']:
                     aid = data.get('attendee_id', 'UNKNOWN ID')
-                    self.gui_queue.put(lambda: self.errors['mobile'].configure(
-                        text=f"⚠ Already Registered! ID: {aid}", 
-                        foreground="#ffbb33"
-                    ))
+                    self.gui_queue.put(lambda: self.errors['mobile'].configure(text=f"⚠ Already Registered! ID: {aid}", foreground="#ffbb33"))
+                    self.gui_queue.put(lambda: self.inputs['mobile'].configure(bootstyle=WARNING))
                 else:
-                    self.gui_queue.put(lambda: self.errors['mobile'].configure(
-                        text="✓ Ready", 
-                        foreground="#00e676"
-                    ))
+                    self.gui_queue.put(lambda: self.errors['mobile'].configure(text="✓ Ready", foreground="#00e676"))
             elif res.status_code == 404:
-                # This will tell you if the backend route is missing!
-                self.gui_queue.put(lambda: self.errors['mobile'].configure(
-                    text="⚠ Backend missing '/api/check_mobile' route", 
-                    foreground="#ff4444"
-                ))
-            else:
-                self.gui_queue.put(lambda: self.errors['mobile'].configure(text=""))
-                
-        except requests.exceptions.Timeout:
-            self.gui_queue.put(lambda: self.errors['mobile'].configure(
-                text="⚠ Server timeout", foreground="#ff4444"
-            ))
+                self.gui_queue.put(lambda: self.errors['mobile'].configure(text="⚠ Backend missing route", foreground="#ff4444"))
         except Exception:
-            self.gui_queue.put(lambda: self.errors['mobile'].configure(
-                text="⚠ Server offline", foreground="#ff4444"
-            ))
+            self.gui_queue.put(lambda: self.errors['mobile'].configure(text="⚠ Server offline", foreground="#ff4444"))
             
     def on_pincode_change(self, *args):
         val = self.vars['pincode'].get()
@@ -426,23 +452,15 @@ class OfflineKioskApp(ttk.Window):
         if val != clean_val:
             self.vars['pincode'].set(clean_val)
             
-        # Pincode auto-lookup
         if HAS_INDIAPINS and len(clean_val) == 6:
             try:
                 details = indiapins.matching(clean_val)
                 if details:
                     first_match = details[0]
-                    state = first_match.get('State', '')
-                    district = first_match.get('District', '')
-                    
-                    if state:
-                        self.vars['state'].set(state.title())
-                    if district:
-                        self.vars['city'].set(district.title())
-                        
-                    self.errors['pincode'].configure(text="")
-            except Exception:
-                pass # Pincode not found in library DB; let user type manually
+                    if state := first_match.get('State'): self.vars['state'].set(state.title())
+                    if district := first_match.get('District'): self.vars['city'].set(district.title())
+                    self.clear_single_error('pincode')
+            except Exception: pass 
 
     # --- SETTINGS MODAL ---
     def open_settings(self):
@@ -455,12 +473,12 @@ class OfflineKioskApp(ttk.Window):
 
         ttk.Label(modal, text="Hub Connection URL:", font="-weight bold").pack(anchor=W, padx=20, pady=(20, 5))
         url_var = tk.StringVar(value=self.server_url)
-        ttk.Entry(modal, textvariable=url_var).pack(fill=X, padx=20)
+        ttk.Entry(modal, textvariable=url_var).pack(fill=X, padx=20, ipady=4)
         ttk.Label(modal, text="Example: https://192.168.137.1:5000", font="-size 8", foreground="gray").pack(anchor=W, padx=20)
 
         ttk.Label(modal, text="Kiosk Device Name:", font="-weight bold").pack(anchor=W, padx=20, pady=(20, 5))
         name_var = tk.StringVar(value=self.device_name)
-        ttk.Entry(modal, textvariable=name_var).pack(fill=X, padx=20)
+        ttk.Entry(modal, textvariable=name_var).pack(fill=X, padx=20, ipady=4)
 
         def save_and_close(event=None):
             self.server_url = url_var.get().rstrip('/')
@@ -470,56 +488,77 @@ class OfflineKioskApp(ttk.Window):
             self.gui_queue.put(lambda: self.net_label.configure(text="Reconnecting..."))
 
         btn_save = ttk.Button(modal, text="Save Configuration", bootstyle=SUCCESS, command=save_and_close)
-        btn_save.pack(fill=X, padx=20, pady=30)
+        btn_save.pack(fill=X, padx=20, pady=30, ipady=4)
         
         modal.bind('<Return>', save_and_close)
         modal.bind('<Escape>', lambda e: modal.destroy())
 
-    # --- BACKGROUND NETWORK PING ---
+    # --- BACKGROUND NETWORK PING & SYNC ---
     def network_ping_loop(self):
         while self.is_pinging:
             start_time = time.time()
             try:
                 url = f"{self.server_url}/api/status?device_name={requests.utils.quote(self.device_name)}"
-                res = requests.get(url, timeout=2, verify=False)
+                res = self.http_session.get(url, timeout=2, verify=False)
                 res.raise_for_status()
                 
-                duration_ms = (time.time() - start_time) * 1000
+                duration_ms = int((time.time() - start_time) * 1000)
                 if duration_ms < 150:
-                    self.gui_queue.put(lambda: self.update_net_pill("Excellent", "#00e676"))
+                    self.gui_queue.put(lambda ms=duration_ms: self.update_net_pill(f"Excellent • {ms}ms", "#00e676"))
                 elif duration_ms < 500:
-                    self.gui_queue.put(lambda: self.update_net_pill("Fair", "#ffbb33"))
+                    self.gui_queue.put(lambda ms=duration_ms: self.update_net_pill(f"Fair • {ms}ms", "#ffbb33"))
                 else:
-                    self.gui_queue.put(lambda: self.update_net_pill("Poor", "#ff4444"))
+                    self.gui_queue.put(lambda ms=duration_ms: self.update_net_pill(f"Poor • {ms}ms", "#ff4444"))
             except Exception:
                 self.gui_queue.put(lambda: self.update_net_pill("Offline", "#757575"))
             
             time.sleep(3)
 
+    def background_sync_loop(self):
+        while self.is_pinging:
+            backups = backup_mgr.load()
+            if backups:
+                for b in list(backups):
+                    try:
+                        res = self.http_session.post(f"{self.server_url}/api/register", json=b, timeout=5, verify=False)
+                        if res.status_code == 200:
+                            backup_mgr.remove(b['_backup_id'])
+                    except Exception:
+                        break 
+            time.sleep(10)
+
     def update_net_pill(self, text, color):
         self.net_label.configure(text=text)
         self.net_canvas.itemconfig(self.net_dot, fill=color)
+        self.net_canvas.coords(self.net_dot, 1, 1, 11, 11)
+        self.after(200, lambda: self.net_canvas.coords(self.net_dot, 2, 2, 10, 10))
 
     def process_gui_queue(self):
-        while not self.gui_queue.empty():
+        for _ in range(50):
             try:
                 task = self.gui_queue.get_nowait()
                 task()
             except queue.Empty:
                 break
-        self.after(100, self.process_gui_queue)
+        self.after(50, self.process_gui_queue)
 
-    # --- VALIDATION ---
+    # --- ANIMATED SUBMIT LOADER ---
+    def animate_submit_button(self, count=0):
+        if self.is_submitting:
+            dots = "." * ((count % 3) + 1)
+            self.btn_submit.configure(text=f"⏳ Registering{dots}")
+            self.after(400, lambda: self.animate_submit_button(count + 1))
+
+    # --- FORM VALIDATION ---
     def set_error(self, field, msg):
         self.inputs[field].configure(bootstyle=DANGER)
-        self.errors[field].configure(text=f"⚠ {msg}")
-        # Note: DANGER bootstyle resets the foreground color to red.
+        self.errors[field].configure(text=f"⚠ {msg}", foreground="#ff4444")
 
     def clear_all_errors(self):
         for field, entry in self.inputs.items():
             entry.configure(bootstyle=DEFAULT)
         for err_lbl in self.errors.values():
-            err_lbl.configure(text="", foreground="#ff4444")
+            err_lbl.configure(text="")
 
     def validate_form(self):
         self.clear_all_errors()
@@ -578,16 +617,16 @@ class OfflineKioskApp(ttk.Window):
 
         return ok
 
-    # --- SUBMISSION LOGIC ---
+    # --- OFFLINE-RESILIENT SUBMISSION LOGIC ---
     def submit_form(self, event=None):
-        if str(self.btn_submit['state']) == 'disabled':
-            return
-            
+        if self.is_submitting: return
         if not self.validate_form():
             self.bell()
             return
             
-        self.btn_submit.configure(state=DISABLED, text="⏳ Registering...")
+        self.is_submitting = True
+        self.btn_submit.configure(state=DISABLED, bootstyle=WARNING)
+        self.animate_submit_button()
         
         selected_days = []
         if self.vars['day_1'].get(): selected_days.append("30 August")
@@ -595,6 +634,7 @@ class OfflineKioskApp(ttk.Window):
         if self.vars['day_3'].get(): selected_days.append("1 September")
 
         payload = {
+            "_backup_id": str(uuid.uuid4()),
             "full_name": self.vars['full_name'].get().strip(),
             "mobile": self.vars['mobile'].get().strip(),
             "email": self.vars['email'].get().strip() or None,
@@ -611,35 +651,45 @@ class OfflineKioskApp(ttk.Window):
             "device_name": self.device_name
         }
 
-        threading.Thread(target=self._post_registration, args=(payload,), daemon=True).start()
+        backup_mgr.save(payload)
+        threading.Thread(target=self._post_registration_infinite_loop, args=(payload,), daemon=True).start()
 
-    def _post_registration(self, payload):
-        try:
-            res = requests.post(f"{self.server_url}/api/register", json=payload, timeout=5, verify=False)
-            res.raise_for_status()
-            data = res.json()
-            
-            if data.get('status') == 'success':
-                self.gui_queue.put(lambda: self.show_success_modal(data.get('attendee_id'), is_duplicate=False))
-            elif data.get('status') == 'already_registered':
-                self.gui_queue.put(lambda: self.show_success_modal(data.get('attendee_id'), is_duplicate=True))
-            else:
-                err_msg = data.get('message', 'Unknown Error')
-                self.gui_queue.put(lambda: self.handle_submit_error(f"Server Error: {err_msg}"))
+    def _post_registration_infinite_loop(self, payload):
+        attempt = 1
+        while self.is_submitting:
+            try:
+                res = self.http_session.post(f"{self.server_url}/api/register", json=payload, timeout=5, verify=False)
+                res.raise_for_status()
+                data = res.json()
                 
-        except requests.exceptions.RequestException as e:
-            self.gui_queue.put(lambda: self.handle_submit_error("Connection Error. Cannot reach Hub."))
+                backup_mgr.remove(payload['_backup_id'])
+                self.is_submitting = False
+                
+                if data.get('status') == 'success':
+                    self.gui_queue.put(lambda: self.show_success_modal(data.get('attendee_id'), is_duplicate=False))
+                elif data.get('status') in ['already_registered', 'registered', 'exists']:
+                    self.gui_queue.put(lambda: self.show_success_modal(data.get('attendee_id'), is_duplicate=True))
+                else:
+                    self.gui_queue.put(lambda: self.handle_submit_error(f"Server Error: {data.get('message', 'Unknown Error')}"))
+                break
+
+            except requests.exceptions.RequestException:
+                self.gui_queue.put(lambda a=attempt: self.btn_submit.configure(
+                    text=f"⏳ Connection Lost... Retrying ({a})", bootstyle=DANGER
+                ))
+                time.sleep(3)
+                attempt += 1
 
     def handle_submit_error(self, message):
+        self.is_submitting = False
         messagebox.showerror("Registration Failed", message)
-        self.btn_submit.configure(state=NORMAL, text="Register Offline Attendee (Enter)")
+        self.btn_submit.configure(state=NORMAL, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS)
         self.bell()
 
     # --- SUCCESS MODAL ---
     def show_success_modal(self, aid, is_duplicate=False):
         self.bell()
         modal = tk.Toplevel(self)
-        
         modal.geometry("450x350")
         modal.resizable(False, False)
         modal.overrideredirect(True) 
@@ -652,15 +702,15 @@ class OfflineKioskApp(ttk.Window):
         frame.pack(fill=BOTH, expand=True)
 
         if is_duplicate:
-            ttk.Label(frame, text="Already Registered!", font="-size 20 -weight bold", foreground="#ffbb33").pack(pady=(30, 10))
-            ttk.Label(frame, text="This mobile number is already in the system.\nExisting ID:", justify=CENTER, font="-size 11").pack()
+            ttk.Label(frame, text="Already Registered!", font="-size 22 -weight bold", foreground="#ffbb33").pack(pady=(30, 10))
+            ttk.Label(frame, text="This mobile number is already in the system.\nExisting ID:", justify=CENTER, font="-size 12").pack()
             id_color = "#ffbb33"
         else:
-            ttk.Label(frame, text="Registration Saved!", font="-size 20 -weight bold", foreground="#00e676").pack(pady=(30, 10))
-            ttk.Label(frame, text="Please provide the attendee with their official ID pass code:", justify=CENTER, font="-size 11").pack()
+            ttk.Label(frame, text="Registration Saved!", font="-size 22 -weight bold", foreground="#00e676").pack(pady=(30, 10))
+            ttk.Label(frame, text="Please provide the attendee with their pass code:", justify=CENTER, font="-size 12").pack()
             id_color = "#00e676"
 
-        ttk.Label(frame, text=aid, font=("Consolas", 28, "bold"), background="#1E1E1E", foreground=id_color, padding=15).pack(pady=25)
+        ttk.Label(frame, text=aid, font=("Consolas", 32, "bold"), background="#1E1E1E", foreground=id_color, padding=15).pack(pady=25)
 
         countdown_lbl = ttk.Label(frame, text="Returning to form in 8s... (Press Enter)", foreground="#D4D4D4")
         countdown_lbl.pack()
@@ -669,9 +719,8 @@ class OfflineKioskApp(ttk.Window):
             if self.vars['auto_clear'].get():
                 self.reset_form()
             else:
-                self.btn_submit.configure(state=NORMAL, text="Register Offline Attendee (Enter)")
+                self.btn_submit.configure(state=NORMAL, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS)
                 self.inputs['full_name'].focus_set()
-                
             modal.destroy()
 
         modal.bind('<Return>', close_modal)
@@ -685,24 +734,21 @@ class OfflineKioskApp(ttk.Window):
             elif modal.winfo_exists():
                 close_modal()
 
-        ttk.Button(frame, text="Next Registration (Enter)", bootstyle=SECONDARY, command=close_modal).pack(pady=(15, 20))
+        ttk.Button(frame, text="Next Registration (Enter)", bootstyle=SECONDARY, command=close_modal).pack(pady=(15, 20), ipady=4)
         update_countdown(8)
 
     def reset_form(self):
         for name, var in self.vars.items():
-            if name == 'auto_clear': 
-                continue 
-            elif name == 'attendee_type': 
-                var.set("GENERAL")
-            elif name in ['day_1', 'day_2', 'day_3']: 
-                var.set(False)
-            else: 
-                var.set("")
+            if name == 'auto_clear': continue 
+            elif name == 'attendee_type': var.set("GENERAL")
+            elif name in ['day_1', 'day_2', 'day_3']: var.set(False)
+            else: var.set("")
         
         self.inputs['business_category'].configure(state="readonly")
         self.inputs['other_category'].configure(state=DISABLED)
         self.clear_all_errors()
-        self.btn_submit.configure(state=NORMAL, text="Register Offline Attendee (Enter)")
+        self.is_submitting = False
+        self.btn_submit.configure(state=NORMAL, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS)
         
         self.scroll_frame.yview_moveto(0)
         self.inputs['full_name'].focus_set()
