@@ -67,8 +67,8 @@ from sqlalchemy.exc import IntegrityError
 # ==============================================================================
 # 24/7 STABILITY: GLOBAL CRASH HANDLER
 # ==============================================================================
-def global_exception_handler(exc, val, tb):
-    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc, val, tb))
+def global_exception_handler(*args):
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
 tk.Tk.report_callback_exception = global_exception_handler
 
@@ -530,18 +530,13 @@ def db_writer_loop(worker_id):
             break
             
         try:
-            if job.kind == "checkin": 
-                result = _handle_checkin_job(job.payload)
-            elif job.kind == "register": 
-                result = _handle_register_job(job.payload)
-            else: 
-                result = (500, {"status": "error", "message": "Unknown job"})
+            if job.kind == "checkin": result = _handle_checkin_job(job.payload)
+            elif job.kind == "register": result = _handle_register_job(job.payload)
+            else: result = (500, {"status": "error", "message": "Unknown job"})
                 
-            if not job.future.done(): 
-                job.future.set_result(result)
+            if not job.future.done(): job.future.set_result(result)
         except Exception as e:
-            if not job.future.done(): 
-                job.future.set_exception(e)
+            if not job.future.done(): job.future.set_exception(e)
         finally: 
             DB_WRITE_QUEUE.task_done()
 
@@ -687,10 +682,8 @@ class WaitressHttpThread(threading.Thread):
         self.ctx.push()
         
     def run(self):
-        try: 
-            self.server.run()
-        except Exception: 
-            logging.exception("Waitress crashed")
+        try: self.server.run()
+        except Exception: logging.exception("Waitress crashed")
             
     def shutdown(self): 
         self.server.close()
@@ -699,8 +692,7 @@ class WaitressHttpThread(threading.Thread):
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=150):
         super().__init__(daemon=True)  
-        if cheroot_wsgi is None: 
-            raise RuntimeError("Cheroot required.")
+        if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
             
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context()
@@ -710,10 +702,8 @@ class HttpsFlaskThread(threading.Thread):
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
         
     def run(self):
-        try: 
-            self.server.start()
-        except Exception: 
-            logging.exception("Cheroot crashed")
+        try: self.server.start()
+        except Exception: logging.exception("Cheroot crashed")
             
     def shutdown(self): 
         self.server.stop()
@@ -727,18 +717,13 @@ def get_local_ip():
         s.close()
         return ip
     except Exception: 
-        try: 
-            return socket.gethostbyname(socket.gethostname())
-        except Exception: 
-            return "127.0.0.1"
+        try: return socket.gethostbyname(socket.gethostname())
+        except Exception: return "127.0.0.1"
 
 
-def _hex_to_rgb(hex_color): 
-    return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-def _rgb_to_hex(rgb): 
-    return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
-def _mix_hex(c_a, c_b, w): 
-    return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
+def _hex_to_rgb(hex_color): return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
+def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
 
 class NetworkTelemetryWindow(ttk.Toplevel):
@@ -776,7 +761,11 @@ class NetworkTelemetryWindow(ttk.Toplevel):
 
         proc_card = ttk.Labelframe(grid, text=" Server API Speed ", padding=15)
         proc_card.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
-        self.meter_proc = ttk.Meter(proc_card, metersize=180, padding=10, amounttotal=500, amountused=0, metertype="semi", subtext="AVG ms", interactive=False, stripethickness=10, meterthickness=15, bootstyle=INFO)
+        self.meter_proc = ttk.Meter(
+            proc_card, metersize=180, padding=10, amounttotal=500, amountused=0, 
+            metertype="semi", subtext="AVG ms", interactive=False, 
+            stripethickness=10, meterthickness=15, bootstyle=INFO, amountformat="{:.0f} ms"
+        )
         self.meter_proc.pack(pady=(10,0))
         self.lbl_proc_status = ttk.Label(proc_card, text="Throughput: 0 req", font="-weight bold", bootstyle=INFO)
         self.lbl_proc_status.pack(pady=10)
@@ -865,10 +854,7 @@ class CloudflareLogWindow(ttk.Toplevel):
         self.withdraw()  
 
     def show(self):
-        self.deiconify()
-        self.lift()
-        self.focus_force()
-        self.update_idletasks()
+        self.deiconify(); self.lift(); self.focus_force(); self.update_idletasks()
         self.geometry(f"+{max(self.hub.winfo_x() + (self.hub.winfo_width() // 2) - (self.winfo_width() // 2), 0)}+{max(self.hub.winfo_y() + (self.hub.winfo_height() // 2) - (self.winfo_height() // 2), 0)}")
 
     def hide(self): 
@@ -1026,7 +1012,6 @@ class ServerHub(ttk.Window):
         self.root_container = ttk.Frame(self)
         self.root_container.pack(fill=BOTH, expand=True)
 
-        # UI FIX: Expanded width to 280 to stop sidebar buttons cutting off
         sidebar_outer = ttk.Frame(self.root_container, width=280)
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
@@ -1064,7 +1049,6 @@ class ServerHub(ttk.Window):
         self.lbl_flask_link.pack(pady=5)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
         
-        # UI FIX: Condensed Button Text + Wider Sidebar = Perfect Fit
         flask_btn_row1 = ttk.Frame(flask_frame)
         flask_btn_row1.pack(fill=X, pady=(2, 2))
         ttk.Button(flask_btn_row1, text="HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
@@ -1146,17 +1130,16 @@ class ServerHub(ttk.Window):
         hw_f = ttk.Frame(right_hdr)
         hw_f.pack(side=RIGHT)
         
-        # --- UI FIX: Increased metersize to 95 for better visibility and thickness adjustments ---
         self.mini_meter_cpu = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_cpu.pack(side=LEFT, padx=5)
         
         self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_ram.pack(side=LEFT, padx=5)
         
-        self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold")
+        # FIXED: Removed unsupported textformat option, using amountformat instead
+        self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f} ms")
         self.mini_meter_api.pack(side=LEFT, padx=5)
         
-        # --- UI FIX: Network Health Card added next to the Speedometers ---
         net_info_card = ttk.Labelframe(right_hdr, text=" Network Health ", padding=(10, 5))
         net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
         
@@ -1173,7 +1156,6 @@ class ServerHub(ttk.Window):
         self.lbl_stats_health = ttk.Label(devices_header_row, text="", font="-size 9", bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
 
-        # UI FIX: Expand is strictly FALSE. Height is locked to 5 items to keep it clean.
         devices_frame = ttk.Frame(content, style="Soft.TFrame")
         devices_frame.pack(fill=X, expand=False, pady=(0, 15)) 
         self.style.configure("Treeview", rowheight=22)
@@ -1218,7 +1200,6 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-        # UI FIX: Logs Frame dynamically Expands to perfectly fill bottom space
         ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 5))
         logs_frame = ttk.Frame(content)
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
@@ -1306,21 +1287,18 @@ class ServerHub(ttk.Window):
         self._append_log(self.log_network, f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}"); self.refresh_stats()
 
     def refresh_hw_meters(self):
-        # Refresh Host OS details
         try:
             c = int(psutil.cpu_percent()); r = int(psutil.virtual_memory().percent)
             self.mini_meter_cpu.configure(amountused=c, bootstyle=SUCCESS if c < 60 else (WARNING if c < 85 else DANGER))
             self.mini_meter_ram.configure(amountused=r, bootstyle=SUCCESS if r < 70 else (WARNING if r < 90 else DANGER))
         except Exception: pass
         
-        # Refresh API Server Process Speed
         try:
             with metrics_lock: snap_metrics = dict(SERVER_METRICS)
             proc_ms = int(snap_metrics["avg_process_ms"])
             self.mini_meter_api.configure(amountused=min(proc_ms, 500), bootstyle=SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER))
         except Exception: pass
 
-        # Update Live Header Ping Statuses
         with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
         loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
         
