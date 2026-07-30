@@ -122,7 +122,7 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001  
 CERT_DIR = os.path.join(BASE_DIR, 'config', 'certs')
 
-# --- EXTREME PERFORMANCE TUNING ---
+# --- EXTREME PERFORMANCE TUNING (10,000+ Attendees) ---
 DB_WRITER_THREADS = 16            
 DB_JOB_QUEUE_MAXSIZE = 2000       
 DB_JOB_TIMEOUT = 10               
@@ -238,12 +238,10 @@ def log_request(response):
         return response
         
     try:
-        # Update Traffic Graph Count
         global _current_sec_requests
         with traffic_lock:
             _current_sec_requests += 1
 
-        # Update Live Processing MS
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
             try:
@@ -507,7 +505,8 @@ def _handle_register_job(payload):
         except IntegrityError:
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-            if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
+            if existing: 
+                return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
             return 500, {"status": "error", "message": "Integrity Error."}
 
         log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
@@ -531,13 +530,18 @@ def db_writer_loop(worker_id):
             break
             
         try:
-            if job.kind == "checkin": result = _handle_checkin_job(job.payload)
-            elif job.kind == "register": result = _handle_register_job(job.payload)
-            else: result = (500, {"status": "error", "message": "Unknown job"})
+            if job.kind == "checkin": 
+                result = _handle_checkin_job(job.payload)
+            elif job.kind == "register": 
+                result = _handle_register_job(job.payload)
+            else: 
+                result = (500, {"status": "error", "message": "Unknown job"})
                 
-            if not job.future.done(): job.future.set_result(result)
+            if not job.future.done(): 
+                job.future.set_result(result)
         except Exception as e:
-            if not job.future.done(): job.future.set_exception(e)
+            if not job.future.done(): 
+                job.future.set_exception(e)
         finally: 
             DB_WRITE_QUEUE.task_done()
 
@@ -581,15 +585,20 @@ def get_server_status():
 def stream_scans():
     def event_stream():
         q = queue.Queue(maxsize=50)
-        with scan_clients_lock: SCAN_CLIENTS.append(q)
+        with scan_clients_lock: 
+            SCAN_CLIENTS.append(q)
         try:
             while True:
-                try: yield f"data: {json.dumps(q.get(timeout=10))}\n\n"
-                except queue.Empty: yield ": heartbeat\n\n"
-        except GeneratorExit: pass 
+                try: 
+                    yield f"data: {json.dumps(q.get(timeout=10))}\n\n"
+                except queue.Empty: 
+                    yield ": heartbeat\n\n"
+        except GeneratorExit: 
+            pass 
         finally:
             with scan_clients_lock:
-                if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
+                if q in SCAN_CLIENTS: 
+                    SCAN_CLIENTS.remove(q)
                     
     return Response(event_stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'})
 
@@ -623,22 +632,27 @@ def process_registration():
 @app.route('/api/check_mobile', methods=['GET'])
 def check_mobile():
     mobile_number = request.args.get('mobile', '').strip()
-    if not mobile_number: return jsonify({"status": "error", "message": "Mobile required"}), 400
+    if not mobile_number: 
+        return jsonify({"status": "error", "message": "Mobile required"}), 400
         
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return jsonify({"status": "error", "message": "DB offline"}), 503
+    if not mysql_factory: 
+        return jsonify({"status": "error", "message": "DB offline"}), 503
         
     session = mysql_factory()
     try:
         em = session.query(Attendee).filter_by(mobile=mobile_number).first()
-        if em: return jsonify({"status": "already_registered", "attendee_id": em.attendee_id}), 200
+        if em: 
+            return jsonify({"status": "already_registered", "attendee_id": em.attendee_id}), 200
             
         ek = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-        if ek: return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
+        if ek: 
+            return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
             
         return jsonify({"status": "not_found"}), 200
-    except Exception: return jsonify({"status": "error", "message": "Internal error."}), 500
+    except Exception: 
+        return jsonify({"status": "error", "message": "Internal error."}), 500
     finally:
         try: session.close()
         except Exception: pass
@@ -673,8 +687,10 @@ class WaitressHttpThread(threading.Thread):
         self.ctx.push()
         
     def run(self):
-        try: self.server.run()
-        except Exception: logging.exception("Waitress crashed")
+        try: 
+            self.server.run()
+        except Exception: 
+            logging.exception("Waitress crashed")
             
     def shutdown(self): 
         self.server.close()
@@ -683,7 +699,8 @@ class WaitressHttpThread(threading.Thread):
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=150):
         super().__init__(daemon=True)  
-        if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
+        if cheroot_wsgi is None: 
+            raise RuntimeError("Cheroot required.")
             
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context()
@@ -693,8 +710,10 @@ class HttpsFlaskThread(threading.Thread):
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
         
     def run(self):
-        try: self.server.start()
-        except Exception: logging.exception("Cheroot crashed")
+        try: 
+            self.server.start()
+        except Exception: 
+            logging.exception("Cheroot crashed")
             
     def shutdown(self): 
         self.server.stop()
@@ -708,13 +727,18 @@ def get_local_ip():
         s.close()
         return ip
     except Exception: 
-        try: return socket.gethostbyname(socket.gethostname())
-        except Exception: return "127.0.0.1"
+        try: 
+            return socket.gethostbyname(socket.gethostname())
+        except Exception: 
+            return "127.0.0.1"
 
 
-def _hex_to_rgb(hex_color): return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
-def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
-def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
+def _hex_to_rgb(hex_color): 
+    return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
+def _rgb_to_hex(rgb): 
+    return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
+def _mix_hex(c_a, c_b, w): 
+    return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
 
 class NetworkTelemetryWindow(ttk.Toplevel):
@@ -819,7 +843,7 @@ class NetworkTelemetryWindow(ttk.Toplevel):
             x_data = list(range(len(y_data)))
             self.line.set_data(x_data, y_data)
             self.ax.set_xlim(0, 59)
-            self.ax.set_ylim(0, max(10, max(y_data) + 5)) # Dynamic Y-Axis scale
+            self.ax.set_ylim(0, max(10, max(y_data) + 5)) 
             self.canvas.draw()
 
         self.after(1000, self.refresh_meters)
@@ -841,7 +865,10 @@ class CloudflareLogWindow(ttk.Toplevel):
         self.withdraw()  
 
     def show(self):
-        self.deiconify(); self.lift(); self.focus_force(); self.update_idletasks()
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        self.update_idletasks()
         self.geometry(f"+{max(self.hub.winfo_x() + (self.hub.winfo_width() // 2) - (self.winfo_width() // 2), 0)}+{max(self.hub.winfo_y() + (self.hub.winfo_height() // 2) - (self.winfo_height() // 2), 0)}")
 
     def hide(self): 
@@ -999,7 +1026,8 @@ class ServerHub(ttk.Window):
         self.root_container = ttk.Frame(self)
         self.root_container.pack(fill=BOTH, expand=True)
 
-        sidebar_outer = ttk.Frame(self.root_container, width=260)
+        # UI FIX: Expanded width to 280 to stop sidebar buttons cutting off
+        sidebar_outer = ttk.Frame(self.root_container, width=280)
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
         
@@ -1036,16 +1064,16 @@ class ServerHub(ttk.Window):
         self.lbl_flask_link.pack(pady=5)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
         
-        # UI FIX: Added Browser Web Buttons for HTTP and HTTPS
+        # UI FIX: Condensed Button Text + Wider Sidebar = Perfect Fit
         flask_btn_row1 = ttk.Frame(flask_frame)
         flask_btn_row1.pack(fill=X, pady=(2, 2))
-        ttk.Button(flask_btn_row1, text="📋 Copy HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(flask_btn_row1, text="📋 Copy HTTP", bootstyle="info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
+        ttk.Button(flask_btn_row1, text="HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
+        ttk.Button(flask_btn_row1, text="HTTP", bootstyle="info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
         flask_btn_row2 = ttk.Frame(flask_frame)
         flask_btn_row2.pack(fill=X, pady=(2, 5))
-        ttk.Button(flask_btn_row2, text="🌐 Web HTTPS", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(flask_btn_row2, text="🌐 Web HTTP", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
+        ttk.Button(flask_btn_row2, text="Web (Sec)", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
+        ttk.Button(flask_btn_row2, text="Web (Local)", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
 
         # --- CLOUDFLARE TUNNEL SECTION ---
@@ -1071,8 +1099,8 @@ class ServerHub(ttk.Window):
         
         cf_btn_row = ttk.Frame(cf_frame)
         cf_btn_row.pack(fill=X, pady=(2, 5))
-        ttk.Button(cf_btn_row, text="📋 Copy", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(cf_btn_row, text="🌐 Web", bootstyle="secondary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
+        ttk.Button(cf_btn_row, text="Copy URL", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
+        ttk.Button(cf_btn_row, text="Browser", bootstyle="secondary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
 
         # --- SIMULATOR SECTION ---
@@ -1110,24 +1138,33 @@ class ServerHub(ttk.Window):
         right_hdr = ttk.Frame(header_container)
         right_hdr.pack(side=RIGHT, fill=Y)
         
-        hw_f = ttk.Frame(right_hdr)
-        hw_f.pack(side=LEFT, padx=(0, 15))
-        
-        # --- UI FIX: Changed to metertype="semi" so text won't clip ---
-        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=85, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont="-size 7", textfont="-size 10 -weight bold")
-        self.mini_meter_cpu.pack(side=LEFT, padx=5)
-        
-        self.mini_meter_ram = ttk.Meter(hw_f, metersize=85, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 7", textfont="-size 10 -weight bold")
-        self.mini_meter_ram.pack(side=LEFT, padx=5)
-        
-        self.mini_meter_api = ttk.Meter(hw_f, metersize=85, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 7", textfont="-size 10 -weight bold")
-        self.mini_meter_api.pack(side=LEFT, padx=5)
-
         actions_f = ttk.Frame(right_hdr)
-        actions_f.pack(side=LEFT)
+        actions_f.pack(side=RIGHT, padx=(15, 0))
         ttk.Button(actions_f, text="⟳ Refresh Data", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 4))
         ttk.Button(actions_f, text="🎛️ Speedometers", bootstyle="outline-info", command=self.open_telemetry_window).pack(side=TOP, fill=X)
         
+        hw_f = ttk.Frame(right_hdr)
+        hw_f.pack(side=RIGHT)
+        
+        # --- UI FIX: Increased metersize to 95 for better visibility and thickness adjustments ---
+        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont="-size 8", textfont="-size 11 -weight bold")
+        self.mini_meter_cpu.pack(side=LEFT, padx=5)
+        
+        self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
+        self.mini_meter_ram.pack(side=LEFT, padx=5)
+        
+        self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold")
+        self.mini_meter_api.pack(side=LEFT, padx=5)
+        
+        # --- UI FIX: Network Health Card added next to the Speedometers ---
+        net_info_card = ttk.Labelframe(right_hdr, text=" Network Health ", padding=(10, 5))
+        net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
+        
+        self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN Ping: WAIT", font="-size 9 -weight bold", bootstyle=SUCCESS)
+        self.lbl_hdr_local_ping.pack(anchor=W, pady=2)
+        
+        self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN Ping: WAIT", font="-size 9 -weight bold", bootstyle=SUCCESS)
+        self.lbl_hdr_cloud_ping.pack(anchor=W, pady=2)
 
         devices_header_row = ttk.Frame(content)
         devices_header_row.pack(fill=X, pady=(5, 5))
@@ -1136,7 +1173,7 @@ class ServerHub(ttk.Window):
         self.lbl_stats_health = ttk.Label(devices_header_row, text="", font="-size 9", bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
 
-        # --- UI FIX: Reduced Devices size. expand=False prevents it from eating vertical space ---
+        # UI FIX: Expand is strictly FALSE. Height is locked to 5 items to keep it clean.
         devices_frame = ttk.Frame(content, style="Soft.TFrame")
         devices_frame.pack(fill=X, expand=False, pady=(0, 15)) 
         self.style.configure("Treeview", rowheight=22)
@@ -1181,7 +1218,7 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-        # --- UI FIX: Log Frame dynamically Expands to fill rest of screen ---
+        # UI FIX: Logs Frame dynamically Expands to perfectly fill bottom space
         ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 5))
         logs_frame = ttk.Frame(content)
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
@@ -1269,17 +1306,33 @@ class ServerHub(ttk.Window):
         self._append_log(self.log_network, f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}"); self.refresh_stats()
 
     def refresh_hw_meters(self):
+        # Refresh Host OS details
         try:
             c = int(psutil.cpu_percent()); r = int(psutil.virtual_memory().percent)
             self.mini_meter_cpu.configure(amountused=c, bootstyle=SUCCESS if c < 60 else (WARNING if c < 85 else DANGER))
             self.mini_meter_ram.configure(amountused=r, bootstyle=SUCCESS if r < 70 else (WARNING if r < 90 else DANGER))
         except Exception: pass
         
+        # Refresh API Server Process Speed
         try:
             with metrics_lock: snap_metrics = dict(SERVER_METRICS)
             proc_ms = int(snap_metrics["avg_process_ms"])
             self.mini_meter_api.configure(amountused=min(proc_ms, 500), bootstyle=SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER))
         except Exception: pass
+
+        # Update Live Header Ping Statuses
+        with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
+        loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
+        
+        if snap_net["local_status"] == "ONLINE":
+            self.lbl_hdr_local_ping.configure(text=f"LAN Ping: {loc_ms} ms", bootstyle=SUCCESS if loc_ms < 150 else WARNING)
+        else:
+            self.lbl_hdr_local_ping.configure(text="LAN Ping: DOWN", bootstyle=DANGER)
+            
+        if snap_net["cloud_status"] == "ONLINE":
+            self.lbl_hdr_cloud_ping.configure(text=f"WAN Ping: {c_ms} ms", bootstyle=SUCCESS if c_ms < 300 else WARNING)
+        else:
+            self.lbl_hdr_cloud_ping.configure(text="WAN Ping: DOWN", bootstyle=SECONDARY)
 
         self.after(1000, self.refresh_hw_meters)
 
@@ -1331,7 +1384,8 @@ class ServerHub(ttk.Window):
         try:
             self.http_thread = WaitressHttpThread(app, '0.0.0.0', HTTP_PORT)
             self.https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
-            self.http_thread.start(); self.https_thread.start()
+            self.http_thread.start()
+            self.https_thread.start()
         except Exception as e:
             self._append_log(self.log_flask, f"[ERROR] Start failed: {e}")
             if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
@@ -1345,16 +1399,30 @@ class ServerHub(ttk.Window):
         self._append_log(self.log_flask, f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
         
     def stop_flask(self):
-        if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
-        self.btn_stop_flask.configure(state=DISABLED); self.btn_start_flask.configure(state=NORMAL); self.btn_start_cf.configure(state=DISABLED)
-        self.update_qr(self.lbl_flask_qr, "OFFLINE"); self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
+        if self.btn_stop_cf['state'] == NORMAL: 
+            self.stop_cf()
+            
+        self.btn_stop_flask.configure(state=DISABLED)
+        self.btn_start_flask.configure(state=NORMAL)
+        self.btn_start_cf.configure(state=DISABLED)
+        self.update_qr(self.lbl_flask_qr, "OFFLINE")
+        self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
+        
         stop_db_writers()
-        if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
-        if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
+        
+        if self.http_thread: 
+            self.http_thread.shutdown()
+            self.http_thread = None
+            
+        if self.https_thread: 
+            self.https_thread.shutdown()
+            self.https_thread = None
+            
         self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
 
     def _animate_cf_connecting(self, tick=0):
-        if not self.winfo_exists() or not self._cf_connecting: return
+        if not self.winfo_exists() or not self._cf_connecting: 
+            return
         self.lbl_stat_cf.configure(text=f"● Cloudflare: CONNECTING{'.' * (tick % 4)}", bootstyle=WARNING)
         self.after(450, lambda: self._animate_cf_connecting(tick + 1))
 
@@ -1363,9 +1431,13 @@ class ServerHub(ttk.Window):
         self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS)
 
     def start_cf(self):
-        if not self.http_thread: return self._append_log(self.log_cf, "[ERROR] Start Local Engine FIRST!")
-        self.btn_start_cf.configure(state=DISABLED); self.btn_stop_cf.configure(state=NORMAL)
-        self._cf_connecting = True; self._animate_cf_connecting()
+        if not self.http_thread: 
+            return self._append_log(self.log_cf, "[ERROR] Start Local Engine FIRST!")
+            
+        self.btn_start_cf.configure(state=DISABLED)
+        self.btn_stop_cf.configure(state=NORMAL)
+        self._cf_connecting = True
+        self._animate_cf_connecting()
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
 
         def _run_cf():
@@ -1379,32 +1451,46 @@ class ServerHub(ttk.Window):
                     if not url_found:
                         m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
                         if m:
-                            tunnel_url = m.group(0); self.cloudflare_url = tunnel_url; url_found = True
-                            self._append_log(self.log_cf, "[INFO] Waiting 30s for DNS propagation..."); time.sleep(30)
+                            tunnel_url = m.group(0)
+                            self.cloudflare_url = tunnel_url
+                            url_found = True
+                            
+                            self._append_log(self.log_cf, "[INFO] Waiting 30s for DNS propagation...")
+                            time.sleep(30)
+                            
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
                             self.gui_queue.put(self._mark_cf_live)
                             self._append_log(self.log_cf, f"[SUCCESS] Tunnel active: {self.cloudflare_url}")
             except FileNotFoundError:
-                self.gui_queue.put(self.stop_cf); self._append_log(self.log_cf, "[ERROR] 'cloudflared' not found in PATH.")
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, "[ERROR] 'cloudflared' not found in PATH.")
             except Exception as e: 
-                self.gui_queue.put(self.stop_cf); self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {e}")
+                self.gui_queue.put(self.stop_cf)
+                self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {e}")
                 
         threading.Thread(target=_run_cf, daemon=True).start()
         
     def stop_cf(self):
-        self.btn_stop_cf.configure(state=DISABLED); self._cf_connecting = False  
+        self.btn_stop_cf.configure(state=DISABLED)
+        self._cf_connecting = False  
         self.btn_start_cf.configure(state=NORMAL if self.http_thread else DISABLED)
         self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
         
         if self.cf_process:
             try: 
-                if platform.system() == "Windows": subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.cf_process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else: self.cf_process.terminate()
-            except Exception: pass
-            finally: self.cf_process = None
+                if platform.system() == "Windows":
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.cf_process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    self.cf_process.terminate()
+            except Exception: 
+                pass
+            finally: 
+                self.cf_process = None
                 
-        self.cloudflare_url = "Offline"; self.update_qr(self.lbl_cf_qr, "OFFLINE"); self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
+        self.cloudflare_url = "Offline"
+        self.update_qr(self.lbl_cf_qr, "OFFLINE")
+        self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
         self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
 
 
