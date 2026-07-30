@@ -82,21 +82,21 @@ def _configure_windows_platform():
         try:
             if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)):
                 dpi_awareness_set = True
-        except Exception: 
-            pass
+        except Exception as e: 
+            logging.debug(f"DPI Awareness Context failed: {e}")
         
         if not dpi_awareness_set:
             try:
                 windll.shcore.SetProcessDpiAwareness(2)
                 dpi_awareness_set = True
-            except Exception: 
-                pass
+            except Exception as e: 
+                logging.debug(f"SetProcessDpiAwareness failed: {e}")
                 
         if not dpi_awareness_set:
             try: 
                 windll.user32.SetProcessDPIAware()
-            except Exception: 
-                pass
+            except Exception as e: 
+                logging.debug(f"SetProcessDPIAware failed: {e}")
 
         try: windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
         except Exception: pass
@@ -184,8 +184,8 @@ def get_cached_sessions():
                     return None
                 try: 
                     DB_SESSIONS_CACHE = get_database_sessions()
-                except Exception:
-                    logging.exception(f"DB failed — retry in {DB_SESSIONS_RETRY_COOLDOWN}s")
+                except Exception as e:
+                    logging.exception(f"DB failed — retry in {DB_SESSIONS_RETRY_COOLDOWN}s: {e}")
                     _db_cache_last_failure = time.time()
                     return None
     return DB_SESSIONS_CACHE
@@ -255,8 +255,8 @@ def log_request(response):
                 
         if duration_ms > SLOW_REQUEST_THRESHOLD_MS: 
             logging.warning(f"Slow req: {request.method} {request.path} took {duration_ms:.0f}ms")
-    except Exception: 
-        pass
+    except Exception as e: 
+        logging.debug(f"Request logging error: {e}")
         
     return response
 
@@ -367,6 +367,7 @@ class DBJob:
     payload: dict
     future: concurrent.futures.Future = field(default_factory=concurrent.futures.Future)
 
+
 DB_WRITE_QUEUE = queue.Queue(maxsize=DB_JOB_QUEUE_MAXSIZE)
 _db_writer_threads = []
 
@@ -426,9 +427,11 @@ def _handle_checkin_job(payload):
             return 403, {"status": "error", "message": f"Denied (No pass {today_key})"}
 
         if today_key in history:
-            log_event_clean("CHECKIN", device_name, f"Duplicate: {attendee.full_name}", 400)
-            broadcast_scan(attendee, "DUPLICATE", f"Duplicate: {attendee.full_name}", device_name, iso_timestamp)
-            return 400, {"status": "error", "message": f"Duplicate: {attendee.full_name}"}
+            # --- IMPROVED USER-FRIENDLY DUPLICATE MESSAGE ---
+            friendly_msg = f"Already checked in for {today_key}: {attendee.full_name}"
+            log_event_clean("CHECKIN", device_name, friendly_msg, 400)
+            broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
+            return 400, {"status": "error", "message": friendly_msg}
 
         history[today_key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_name, "date_code": current_date_str, "display_date": today_key}
         
@@ -446,6 +449,7 @@ def _handle_checkin_job(payload):
         try: session.rollback()
         except Exception: pass
         log_event_clean("CHECKIN", device_name, f"DB Error", 500)
+        logging.error(f"Internal Check-in error: {e}")
         return 500, {"status": "error", "message": "Internal error."}
     finally:
         try: session.close()
@@ -515,6 +519,7 @@ def _handle_register_job(payload):
     except Exception as e:
         try: session.rollback()
         except Exception: pass
+        logging.error(f"Internal Register error: {e}")
         return 500, {"status": "error", "message": "Internal error."}
     finally:
         try: session.close()
@@ -1136,7 +1141,6 @@ class ServerHub(ttk.Window):
         self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_ram.pack(side=LEFT, padx=5)
         
-        # FIXED: Removed unsupported textformat option, using amountformat instead
         self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f} ms")
         self.mini_meter_api.pack(side=LEFT, padx=5)
         
