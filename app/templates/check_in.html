@@ -7,9 +7,9 @@
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <style>
     :root {
-      --bg-dark: #090a0f;
-      --surface: #151821;
-      --surface-hover: #1e222e;
+      --bg-dark: #07080c;
+      --surface: #12141c;
+      --surface-hover: #1a1d29;
       --primary: #00d2ff;
       --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
@@ -38,11 +38,11 @@
     .app-container {
       width: 100%;
       max-width: 540px;
-      padding: 20px;
+      padding: 15px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      animation: fadeIn 0.5s ease-out;
+      animation: fadeIn 0.4s ease-out;
       box-sizing: border-box;
     }
 
@@ -51,17 +51,20 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
+    /* Glassmorphism Header */
     .header {
       width: 100%;
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
-      background: var(--surface);
-      padding: 12px 16px;
+      background: rgba(18, 20, 28, 0.8);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 14px 16px;
       border-radius: var(--radius-md);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       box-sizing: border-box;
     }
 
@@ -74,26 +77,30 @@
       align-items: center;
       gap: 5px;
       transition: var(--transition);
+      background: rgba(255, 255, 255, 0.05);
+      padding: 6px 10px;
+      border-radius: 8px;
     }
-    .btn-back:hover { color: var(--text-main); }
+    .btn-back:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.1); }
     .btn-back:active { transform: scale(0.95); }
 
     .header-title {
       margin: 0;
-      font-size: 1.1rem;
+      font-size: 1.05rem;
       display: flex;
       align-items: center;
       gap: 8px;
-      font-weight: 700;
+      font-weight: 800;
+      letter-spacing: 0.5px;
     }
 
     .version-tag {
       font-size: 0.65rem;
-      background: rgba(0, 210, 255, 0.1);
+      background: rgba(0, 210, 255, 0.15);
       color: var(--primary);
       padding: 3px 8px;
       border-radius: 20px;
-      border: 1px solid var(--primary-glow);
+      border: 1px solid rgba(0, 210, 255, 0.3);
     }
 
     .network-pill {
@@ -104,8 +111,9 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(255, 255, 255, 0.03);
+      background: rgba(0, 0, 0, 0.4);
       border: 1px solid rgba(255, 255, 255, 0.1);
+      transition: var(--transition);
     }
 
     .net-dot { width: 8px; height: 8px; border-radius: 50%; }
@@ -117,7 +125,7 @@
     .banner {
       width: 100%;
       text-align: center;
-      padding: 10px;
+      padding: 12px;
       font-size: 0.85rem;
       font-weight: 800;
       border-radius: var(--radius-md);
@@ -125,6 +133,7 @@
       box-sizing: border-box;
       display: none;
       animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      letter-spacing: 0.5px;
     }
 
     @keyframes popIn {
@@ -138,27 +147,28 @@
     .device-identity {
       width: 100%;
       text-align: center;
-      font-size: 0.85rem;
+      font-size: 0.9rem;
       color: var(--text-muted);
       margin-bottom: 20px;
       cursor: pointer;
-      padding: 12px;
+      padding: 14px;
       background: var(--surface);
       border-radius: var(--radius-md);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       box-sizing: border-box;
       transition: var(--transition);
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
-    .device-identity:hover { background: var(--surface-hover); transform: translateY(-2px); }
-    .device-identity span { color: var(--primary); font-weight: 700; }
+    .device-identity:hover { background: var(--surface-hover); transform: translateY(-2px); border-color: rgba(0, 210, 255, 0.3); }
+    .device-identity span { color: var(--primary); font-weight: 800; }
 
     .tabs {
       display: flex;
       width: 100%;
-      background: var(--surface);
+      background: rgba(0, 0, 0, 0.3);
       border-radius: var(--radius-lg);
       margin-bottom: 20px;
-      padding: 5px;
+      padding: 6px;
       box-sizing: border-box;
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
@@ -174,19 +184,19 @@
       cursor: pointer;
       transition: var(--transition);
     }
-    .tab-btn.active { background: var(--primary); color: var(--bg-dark); box-shadow: 0 4px 15px var(--primary-glow); }
+    .tab-btn.active { background: var(--primary); color: #000; box-shadow: 0 4px 15px var(--primary-glow); }
 
     .scanner-wrapper { width: 100%; position: relative; }
 
     .camera-selector {
       width: 100%;
-      padding: 12px 16px;
+      padding: 14px 16px;
       background: var(--surface);
       color: var(--text-main);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: var(--radius-md);
       margin-bottom: 15px;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
       font-weight: 600;
       outline: none;
       cursor: pointer;
@@ -199,15 +209,16 @@
     }
     .camera-selector:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
 
+    /* Upgraded Viewfinder UI */
     .scanner-box {
       position: relative;
       width: 100%;
       border-radius: var(--radius-lg);
       overflow: hidden;
-      border: 2px solid rgba(255, 255, 255, 0.05);
-      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
       background: #000;
-      min-height: 250px;
+      min-height: 280px;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -215,17 +226,41 @@
 
     #reader { width: 100%; border: none !important; }
     #reader video { object-fit: cover; border-radius: var(--radius-lg); }
-
     #reader__dashboard_section_csr button,
     #reader__dashboard_section_swap_link,
     #html5-qrcode-anchor-scan-type-change { display: none !important; }
 
-    /* PERMISSION OVERLAY */
+    /* High-tech Viewfinder Corners */
+    .viewfinder-corners {
+      position: absolute;
+      inset: 20px;
+      pointer-events: none;
+      z-index: 15;
+      display: none; /* Shows only when camera is active */
+    }
+    .viewfinder-corners::before, .viewfinder-corners::after,
+    .viewfinder-corners div::before, .viewfinder-corners div::after {
+      content: '';
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      border-color: var(--primary);
+      border-style: solid;
+      border-width: 0;
+      opacity: 0.8;
+      box-shadow: 0 0 10px var(--primary-glow);
+    }
+    .viewfinder-corners::before { top: 0; left: 0; border-top-width: 4px; border-left-width: 4px; border-top-left-radius: 12px;}
+    .viewfinder-corners::after { top: 0; right: 0; border-top-width: 4px; border-right-width: 4px; border-top-right-radius: 12px;}
+    .viewfinder-corners div::before { bottom: 0; left: 0; border-bottom-width: 4px; border-left-width: 4px; border-bottom-left-radius: 12px;}
+    .viewfinder-corners div::after { bottom: 0; right: 0; border-bottom-width: 4px; border-right-width: 4px; border-bottom-right-radius: 12px;}
+
     .permission-overlay {
       position: absolute;
       inset: 0;
       background: rgba(0, 0, 0, 0.85);
-      backdrop-filter: blur(5px);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       z-index: 20;
       display: none;
       flex-direction: column;
@@ -235,21 +270,21 @@
       padding: 20px;
       box-sizing: border-box;
     }
-    .permission-overlay h4 { color: var(--danger); margin: 10px 0; font-size: 1.2rem; }
-    .permission-overlay p { font-size: 0.85rem; color: #ccc; margin-bottom: 20px; line-height: 1.4; }
+    .permission-overlay h4 { color: var(--danger); margin: 10px 0; font-size: 1.3rem; font-weight: 800;}
+    .permission-overlay p { font-size: 0.9rem; color: #ddd; margin-bottom: 25px; line-height: 1.5; }
     .btn-permission {
       background: var(--primary);
       color: #000;
       border: none;
-      padding: 12px 20px;
-      border-radius: 8px;
+      padding: 14px 24px;
+      border-radius: var(--radius-md);
       font-weight: 800;
-      font-size: 1rem;
+      font-size: 1.05rem;
       cursor: pointer;
-      box-shadow: 0 4px 15px var(--primary-glow);
+      box-shadow: 0 4px 20px var(--primary-glow);
       transition: var(--transition);
     }
-    .btn-permission:hover { transform: scale(1.05); }
+    .btn-permission:active { transform: scale(0.95); }
 
     .scan-overlay {
       position: absolute;
@@ -257,7 +292,7 @@
       z-index: 10;
       pointer-events: none;
       display: none;
-      box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.8);
+      box-shadow: inset 0 0 80px rgba(0, 0, 0, 0.9);
       border-radius: var(--radius-lg);
     }
 
@@ -265,17 +300,17 @@
       width: 100%;
       height: 3px;
       background-color: var(--primary);
-      box-shadow: 0 0 15px var(--primary), 0 0 30px var(--primary), 0 0 45px var(--primary);
+      box-shadow: 0 0 20px var(--primary), 0 0 40px var(--primary), 0 0 60px var(--primary);
       position: absolute;
-      animation: scanSweep 2.5s infinite ease-in-out;
+      animation: scanSweep 2s infinite ease-in-out;
       border-radius: 50%;
     }
 
     @keyframes scanSweep {
-      0% { top: 5%; opacity: 0; }
+      0% { top: 10%; opacity: 0; }
       15% { opacity: 1; }
       85% { opacity: 1; }
-      100% { top: 95%; opacity: 0; }
+      100% { top: 90%; opacity: 0; }
     }
 
     .zoom-toolbar {
@@ -285,11 +320,12 @@
       margin-top: 15px;
       width: 100%;
       background: var(--surface);
-      padding: 16px;
+      padding: 18px;
       border-radius: var(--radius-md);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       box-sizing: border-box;
       animation: popIn 0.3s ease-out;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
     .zoom-header {
       display: flex;
@@ -298,20 +334,20 @@
       width: 100%;
       font-size: 0.85rem;
       color: var(--primary);
-      font-weight: 700;
+      font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 1px;
     }
-    .zoom-controls-row { display: flex; align-items: center; gap: 12px; width: 100%; }
+    .zoom-controls-row { display: flex; align-items: center; gap: 15px; width: 100%; }
     
     .zoom-btn {
-      width: 40px;
-      height: 40px;
+      width: 44px;
+      height: 44px;
       border-radius: 50%;
       border: none;
       background: rgba(0, 210, 255, 0.1);
       color: var(--primary);
-      font-size: 1.5rem;
+      font-size: 1.8rem;
       font-weight: 300;
       display: flex;
       justify-content: center;
@@ -319,8 +355,9 @@
       cursor: pointer;
       transition: var(--transition);
       flex-shrink: 0;
+      border: 1px solid rgba(0, 210, 255, 0.2);
     }
-    .zoom-btn:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary-glow); }
+    .zoom-btn:hover { background: var(--primary); color: #000; box-shadow: 0 0 20px var(--primary-glow); }
     .zoom-btn:active { transform: scale(0.9); }
 
     .zoom-slider-wrapper { flex-grow: 1; display: flex; align-items: center; }
@@ -336,22 +373,22 @@
     .zoom-slider::-webkit-slider-thumb {
       -webkit-appearance: none;
       appearance: none;
-      width: 24px;
-      height: 24px;
+      width: 26px;
+      height: 26px;
       border-radius: 50%;
       background: var(--primary);
       cursor: pointer;
-      box-shadow: 0 0 12px var(--primary-glow);
+      box-shadow: 0 0 15px var(--primary-glow);
       transition: var(--transition);
     }
-    .zoom-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+    .zoom-slider::-webkit-slider-thumb:active { transform: scale(1.15); }
 
     .auto-zoom-badge {
       background: rgba(0, 210, 255, 0.15);
       color: var(--primary);
-      padding: 3px 10px;
+      padding: 4px 12px;
       border-radius: 12px;
-      font-size: 0.7rem;
+      font-size: 0.75rem;
       opacity: 0;
       transition: opacity 0.3s;
       border: 1px solid var(--primary-glow);
@@ -362,17 +399,17 @@
       padding: 16px;
       background: rgba(255, 187, 51, 0.15);
       color: var(--warning);
-      border: 1px solid var(--warning);
+      border: 1px solid rgba(255, 187, 51, 0.5);
       border-radius: var(--radius-md);
-      font-size: 1rem;
-      font-weight: 700;
+      font-size: 1.05rem;
+      font-weight: 800;
       cursor: pointer;
       margin-top: 15px;
       transition: var(--transition);
+      letter-spacing: 0.5px;
     }
-    .camera-toggle-btn:hover { background: var(--warning); color: #000; box-shadow: 0 4px 20px rgba(255, 187, 51, 0.3); }
-    .camera-toggle-btn.paused { background: rgba(0, 230, 118, 0.15); color: var(--success); border-color: var(--success); }
-    .camera-toggle-btn.paused:hover { background: var(--success); color: #000; box-shadow: 0 4px 20px rgba(0, 230, 118, 0.3); }
+    .camera-toggle-btn:active { transform: scale(0.98); }
+    .camera-toggle-btn.paused { background: rgba(0, 230, 118, 0.15); color: var(--success); border-color: rgba(0, 230, 118, 0.5); }
 
     .manual-wrapper {
       width: 100%;
@@ -380,46 +417,48 @@
       background: var(--surface);
       padding: 30px 20px;
       border-radius: var(--radius-lg);
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.08);
       box-sizing: border-box;
       animation: fadeIn 0.3s ease-out;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
     }
     .input-group { display: flex; flex-direction: column; margin-bottom: 20px; }
     .input-group label {
       font-size: 0.85rem;
       color: var(--text-muted);
-      margin-bottom: 8px;
-      font-weight: 700;
+      margin-bottom: 10px;
+      font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 1px;
     }
     .input-group input {
       background: var(--bg-dark);
       color: var(--text-main);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      padding: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 18px;
       border-radius: var(--radius-md);
-      font-size: 1.1rem;
+      font-size: 1.2rem;
       font-family: monospace;
       text-align: center;
       transition: var(--transition);
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
     }
-    .input-group input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.15); }
+    .input-group input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2), inset 0 2px 10px rgba(0,0,0,0.5); }
     
     .btn-submit {
       width: 100%;
-      padding: 16px;
-      background: rgba(255, 255, 255, 0.05);
+      padding: 18px;
+      background: rgba(255, 255, 255, 0.08);
       color: var(--text-main);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: var(--radius-md);
-      font-size: 1rem;
-      font-weight: 700;
+      font-size: 1.05rem;
+      font-weight: 800;
       cursor: pointer;
       transition: var(--transition);
       margin-top: 10px;
     }
-    .btn-submit:hover { background: var(--primary); color: #000; border-color: var(--primary); box-shadow: 0 4px 15px var(--primary-glow); }
+    .btn-submit:hover { background: var(--primary); color: #000; border-color: var(--primary); box-shadow: 0 4px 20px var(--primary-glow); }
     .btn-submit:active { transform: translateY(2px); }
 
     .divider {
@@ -427,12 +466,12 @@
       margin: 30px 0;
       color: var(--text-muted);
       position: relative;
-      font-weight: 700;
+      font-weight: 800;
       font-size: 0.85rem;
       text-transform: uppercase;
       letter-spacing: 1px;
     }
-    .divider::before, .divider::after { content: ""; position: absolute; top: 50%; width: 35%; height: 1px; background: rgba(255, 255, 255, 0.1); }
+    .divider::before, .divider::after { content: ""; position: absolute; top: 50%; width: 35%; height: 1px; background: rgba(255, 255, 255, 0.15); }
     .divider::before { left: 0; }
     .divider::after { right: 0; }
 
@@ -443,73 +482,78 @@
       transform: translateX(-50%);
       width: 90%;
       max-width: 450px;
-      padding: 20px;
+      padding: 22px;
       border-radius: var(--radius-md);
       text-align: center;
       font-weight: 800;
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       z-index: 1000;
       transition: bottom 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
       box-sizing: border-box;
-      backdrop-filter: blur(10px);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      letter-spacing: 0.5px;
     }
     #result-card.show { bottom: 40px; }
 
-    .res-success { background-color: rgba(0, 230, 118, 0.9); color: #000; border: 1px solid #00c853; }
-    .res-duplicate { background-color: rgba(255, 187, 51, 0.9); color: #000; border: 1px solid #ff9100; }
-    .res-error { background-color: rgba(255, 68, 68, 0.9); color: #fff; border: 1px solid #d50000; }
-    .res-offline { background-color: rgba(255, 145, 0, 0.9); color: #000; border: 1px solid #e65100; }
+    .res-success { background-color: rgba(0, 230, 118, 0.95); color: #000; border: 2px solid #00c853; }
+    .res-duplicate { background-color: rgba(255, 187, 51, 0.95); color: #000; border: 2px solid #ff9100; }
+    .res-error { background-color: rgba(255, 68, 68, 0.95); color: #fff; border: 2px solid #d50000; }
+    .res-offline { background-color: rgba(255, 145, 0, 0.95); color: #000; border: 2px solid #e65100; }
 
     #device-modal {
       display: none;
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.85);
-      backdrop-filter: blur(8px);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       z-index: 9999;
       align-items: center;
       justify-content: center;
     }
     .dev-modal-content {
       background: var(--surface);
-      padding: 35px 25px;
+      padding: 40px 25px;
       border-radius: var(--radius-lg);
-      border: 1px solid rgba(0, 210, 255, 0.2);
+      border: 1px solid rgba(0, 210, 255, 0.3);
       width: 90%;
       max-width: 400px;
       text-align: center;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+      box-shadow: 0 20px 60px rgba(0,0,0,0.9);
       animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
-    .dev-modal-content h3 { margin-top: 0; color: var(--primary); font-size: 1.4rem; }
+    .dev-modal-content h3 { margin-top: 0; color: var(--primary); font-size: 1.5rem; font-weight: 800;}
     .dev-modal-content input {
       width: 100%;
-      padding: 16px;
+      padding: 18px;
       background: var(--bg-dark);
       color: #fff;
-      border: 1px solid rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.15);
       border-radius: var(--radius-md);
       box-sizing: border-box;
       margin-bottom: 25px;
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       text-align: center;
       transition: var(--transition);
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
     }
-    .dev-modal-content input:focus { border-color: var(--primary); outline: none; }
+    .dev-modal-content input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2), inset 0 2px 10px rgba(0,0,0,0.5);}
     .dev-modal-content button {
       width: 100%;
-      padding: 16px;
+      padding: 18px;
       background: var(--primary);
       color: #000;
       font-weight: 800;
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       border: none;
       border-radius: var(--radius-md);
       cursor: pointer;
       transition: var(--transition);
+      box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3);
     }
-    .dev-modal-content button:hover { transform: translateY(-2px); box-shadow: 0 10px 25px var(--primary-glow); }
+    .dev-modal-content button:active { transform: translateY(2px); box-shadow: 0 2px 5px rgba(0, 210, 255, 0.3); }
   </style>
 </head>
 
@@ -521,16 +565,16 @@
         Back
       </a>
       <h3 class="header-title">
-        Live Check-in <span class="version-tag">v2.3</span>
+        Live Check-in <span class="version-tag">v2.4</span>
       </h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
-        <span id="net-text">Checking...</span>
+        <span id="net-text">Connecting...</span>
       </div>
     </div>
 
     <div id="test-mode-banner" class="banner test-mode-banner">
-      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+      ⚠️ TEST MODE ACTIVE (DATE: <span id="test-mode-date">...</span>)
     </div>
 
     <div id="offline-badge" class="banner offline-badge">
@@ -538,30 +582,32 @@
     </div>
 
     <div class="device-identity" onclick="promptDeviceName()">
-      Scanner Identity: <span id="display-device-name">Loading...</span> 
-      <svg style="vertical-align: middle; margin-left: 5px;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+      Device ID: <span id="display-device-name">Loading...</span> 
+      <svg style="vertical-align: middle; margin-left: 5px; color: #888;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
     </div>
 
     <div class="tabs">
-      <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">📷 Auto Scan</button>
-      <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">⌨️ Manual Entry</button>
+      <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">📷 Smart Scan</button>
+      <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">⌨️ Manual ID</button>
     </div>
 
     <div class="scanner-wrapper" id="qr-view">
       
       <select id="camera-select" class="camera-selector" style="display: none;" onchange="onCameraChange()">
-        <option value="">Detecting Cameras...</option>
+        <option value="">Detecting Lenses...</option>
       </select>
 
       <div class="scanner-box">
         <div id="reader"></div>
         
+        <div class="viewfinder-corners" id="viewfinder-corners"><div></div></div>
+
         <!-- Permission Fallback Overlay -->
         <div class="permission-overlay" id="permission-overlay">
-          <div style="font-size: 2.5rem; margin-bottom: 10px;">📸</div>
-          <h4>Camera Access Blocked</h4>
-          <p>We need your permission to use the camera for scanning QR codes. Please click below to grant access.</p>
-          <button class="btn-permission" onclick="requestCameraPermissionNatively()">Grant Permission</button>
+          <div style="font-size: 3rem; margin-bottom: 10px;">📸</div>
+          <h4>Lens Access Required</h4>
+          <p>Please grant camera permission to scan attendee QR passes instantly.</p>
+          <button class="btn-permission" onclick="requestCameraPermissionNatively()">Grant Access</button>
         </div>
 
         <div class="scan-overlay" id="scan-overlay">
@@ -571,7 +617,7 @@
 
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
-          <span>Camera Zoom</span>
+          <span>Lens Zoom</span>
           <span id="auto-zoom-badge" class="auto-zoom-badge">Auto-Focusing</span>
           <span id="zoom-val-display">1.0x</span>
         </div>
@@ -593,13 +639,13 @@
       <div class="input-group">
         <label>Find by Attendee ID</label>
         <input type="text" id="manual-id" placeholder="TDE26-G-XXXXXX" oninput="formatID(this)" maxlength="14" />
-        <button class="btn-submit" onclick="submitManual('id')">Check In via ID</button>
+        <button class="btn-submit" onclick="submitManual('id')">Verify ID Check-in</button>
       </div>
       <div class="divider">OR</div>
       <div class="input-group">
         <label>Find by Phone Number</label>
         <input type="tel" id="manual-phone" placeholder="10-digit number" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')" />
-        <button class="btn-submit" onclick="submitManual('phone')">Check In via Phone</button>
+        <button class="btn-submit" onclick="submitManual('phone')">Verify Phone Check-in</button>
       </div>
     </div>
 
@@ -609,12 +655,12 @@
 
   <div id="device-modal">
     <div class="dev-modal-content">
-      <h3>Identify Scanner</h3>
-      <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 25px; line-height: 1.4;">
-        Assign a unique name to this device so the central hub can track gate activity.
+      <h3>Scanner Identity</h3>
+      <p style="font-size: 0.95rem; color: #aaa; margin-bottom: 25px; line-height: 1.5;">
+        Name this device so the Hub can track gate operations (e.g. VIP Gate 1).
       </p>
-      <input type="text" id="device-name-input" placeholder="e.g. Gate 1, VIP Scanner" />
-      <button onclick="saveDeviceName()">Save Device Identity</button>
+      <input type="text" id="device-name-input" placeholder="Device Name" />
+      <button onclick="saveDeviceName()">Confirm Identity</button>
     </div>
   </div>
 
@@ -659,7 +705,7 @@
     let html5QrCode = null;
     let isCameraActive = false;
     let isProcessing = false;
-    let isCameraTransitioning = false; // NEW GUARD FLAG TO PREVENT STATE CRASHES
+    let isCameraTransitioning = false;
     
     let currentTrack = null;
     let minZoom = 1;
@@ -698,13 +744,12 @@
           devices.forEach((device, index) => {
             const option = document.createElement("option");
             option.value = device.id;
-            option.text = device.label || `Camera ${index + 1}`;
+            option.text = device.label || `Lens ${index + 1}`;
             select.appendChild(option);
           });
           select.style.display = "block";
         }
       } catch (err) {
-        console.warn("Could not fetch camera list: ", err);
         document.getElementById("permission-overlay").style.display = "flex";
       }
     }
@@ -718,7 +763,7 @@
     }
 
     async function startHardware() {
-      if (isCameraTransitioning) return; // Prevent "already under transition" error
+      if (isCameraTransitioning) return; 
       
       if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
       if (!isCameraActive) {
@@ -727,12 +772,10 @@
         const select = document.getElementById("camera-select");
         const cameraId = select.value;
 
-        btn.innerHTML = "⏳ Starting Camera...";
+        btn.innerHTML = "⏳ Initializing Lens...";
         btn.classList.remove("paused");
         document.getElementById("permission-overlay").style.display = "none";
         
-        // FIX: The library strictly wants EITHER a string OR an object with exact 1 key { facingMode: ... }
-        // We cannot pass advanced constraints here directly. We will apply zoom AFTER it starts.
         let cameraTarget = cameraId ? cameraId : { facingMode: "environment" };
 
         try {
@@ -741,11 +784,11 @@
           isCameraActive = true;
           btn.innerHTML = "⏸ Pause Scanner";
           document.getElementById("scan-overlay").style.display = "block";
+          document.getElementById("viewfinder-corners").style.display = "block";
           
           setTimeout(initAdvancedCameraControls, 1200);
           startAutoZoomSweep();
         } catch (err) {
-          console.error("Camera Start Failed:", err);
           document.getElementById("permission-overlay").style.display = "flex";
           btn.innerHTML = "▶ Resume Scanner";
           btn.classList.add("paused");
@@ -760,8 +803,6 @@
         currentTrack = html5QrCode.getRunningTrack();
         if (currentTrack) {
           const cap = currentTrack.getCapabilities();
-          
-          // Apply initial zoom of 1.0 since we couldn't pass it in the start config
           applyZoom(1.0);
 
           if (cap.zoom) {
@@ -784,9 +825,7 @@
              document.getElementById("zoom-controls").style.display = "none";
           }
         }
-      } catch (e) {
-        console.warn("Zoom not supported on this device.");
-      }
+      } catch (e) { }
     }
 
     async function applyZoom(val) {
@@ -825,7 +864,7 @@
     }
 
     async function stopHardware() {
-      if (isCameraTransitioning) return; // Prevent "already under transition" error
+      if (isCameraTransitioning) return; 
       
       if (html5QrCode && isCameraActive) {
         isCameraTransitioning = true;
@@ -839,10 +878,9 @@
           btn.innerHTML = "▶ Resume Scanner";
           btn.classList.add("paused");
           document.getElementById("scan-overlay").style.display = "none";
+          document.getElementById("viewfinder-corners").style.display = "none";
           document.getElementById("zoom-controls").style.display = "none";
-        } catch (e) { 
-          console.error(e); 
-        } finally {
+        } catch (e) { } finally {
           isCameraTransitioning = false;
         }
       }
@@ -854,7 +892,7 @@
     }
 
     async function switchMode(mode) {
-      if (isCameraTransitioning) return; // Wait for camera to finish starting/stopping
+      if (isCameraTransitioning) return; 
       
       document.getElementById("result-card").classList.remove("show");
       if (mode === "qr") {
@@ -966,6 +1004,7 @@
       }
     }
 
+    // --- FIX: Calibrated Network Ping Thresholds & Increased Timeout ---
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
             text = document.getElementById("net-text"),
@@ -982,7 +1021,9 @@
       const start = performance.now();
       try {
         const c = new AbortController();
-        const id = setTimeout(() => c.abort(), 2000);
+        // Increased timeout from 2000 to 5000 to prevent false-offline over Cloudflare tunnels
+        const id = setTimeout(() => c.abort(), 5000);
+        
         const response = await fetch(
           `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
           { cache: "no-store", signal: c.signal }
@@ -990,9 +1031,11 @@
         clearTimeout(id);
 
         const dur = performance.now() - start;
-        if (dur < 150) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
-        else if (dur < 500) { dot.className = "net-dot net-fair"; text.textContent = "Fair"; } 
-        else { dot.className = "net-dot net-poor"; text.textContent = "Poor"; }
+        
+        // Realistic thresholds for Mobile Wi-Fi / HTTPS Tunnels
+        if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
+        else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; } 
+        else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
 
         if (response.ok) {
           try {
@@ -1008,7 +1051,7 @@
         }
       } catch (e) {
         dot.className = "net-dot net-poor";
-        text.textContent = "Unstable";
+        text.textContent = "Connecting...";
       }
     }
 
@@ -1072,6 +1115,13 @@
       } catch (e) { }
       processCheckin(id, "id");
     }
+
+    // --- FIX: Prevent Disconnections when browser is minimized ---
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        syncServerStatus(); // Force instant network check when app is opened again
+      }
+    });
 
     window.addEventListener("load", async () => {
       initDeviceName();
