@@ -193,7 +193,7 @@ def get_cached_sessions():
 
 def _write_self_signed_cert(cert_path, key_path, local_ip):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TDE-EventHub-Local")])
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TDE-EventHub-EllowLabs")])
     san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
     try: san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
     except Exception: pass

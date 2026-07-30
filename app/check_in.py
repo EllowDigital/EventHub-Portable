@@ -34,8 +34,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 24/7 STABILITY: GLOBAL CRASH HANDLER
 # Prevents the application from force-closing if a background thread throws a UI error
 # ==============================================================================
-def global_exception_handler(exc, val, tb):
-    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc, val, tb))
+def global_exception_handler(*args):
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
 tk.Tk.report_callback_exception = global_exception_handler
 
@@ -236,8 +236,12 @@ class GateDisplay(ttk.Window):
         
         ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=5)
         
-        self.lbl_hub_status = ttk.Label(controls, text="● Connecting...", font="-weight bold -size 11", bootstyle=WARNING)
-        self.lbl_hub_status.pack(side=LEFT, padx=20)
+        # UI FIX: Clean Live Latency Pill (Single label element to prevent double-dot visual bugs)
+        self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(12, 6))
+        self.net_pill.pack(side=LEFT, padx=20)
+        
+        self.lbl_hub_status = ttk.Label(self.net_pill, text="● Connecting...", font="-weight bold -size 11", bootstyle=WARNING)
+        self.lbl_hub_status.pack(side=LEFT)
 
         # --- DYNAMIC TEST MODE BANNER ---
         self.test_banner = ttk.Frame(self, bootstyle=DANGER)
@@ -328,7 +332,6 @@ class GateDisplay(ttk.Window):
         self.ent_id.pack(fill=X, pady=(0, 15), ipady=6)
         self.ent_id.bind("<Return>", lambda e: self.manual_scan('id'))
 
-        # BUG FIX: Removed invalid 'font' attribute from ttk.Button
         ttk.Button(lookup, text="PROCESS MANUAL SCAN", bootstyle=SUCCESS, command=self.handle_manual_submit).pack(fill=X, ipady=6)
 
         stats_frame = ttk.Frame(right_panel)
@@ -430,17 +433,15 @@ class GateDisplay(ttk.Window):
         threading.Thread(target=_load, daemon=True).start()
 
     def update_photo_ui(self, photo_image):
-        self.current_photo = photo_image  # Overwrites old reference, allowing Python GC to clean up RAM
+        self.current_photo = photo_image  
         self.lbl_photo.configure(image=self.current_photo)
 
     # --- BATCH QUEUE PROCESSORS (Zero Freeze Fix) ---
     def process_queues(self):
-        # Process GUI Tasks
         for _ in range(50):
             try: self.gui_queue.get_nowait()()
             except queue.Empty: break
 
-        # Process Scans
         for _ in range(5):
             try:
                 event_data = self.scan_queue.get_nowait()
@@ -509,7 +510,6 @@ class GateDisplay(ttk.Window):
             for lbl in self.fields.values(): lbl.configure(text="---")
             self.set_placeholder_photo()
 
-        # Update stats counter
         if status_type in ["SUCCESS", "DUPLICATE", "ERROR"]:
             key = "Success" if status_type == "SUCCESS" else ("Duplicate" if status_type == "DUPLICATE" else "Errors")
             self.stats[key] += 1
@@ -532,7 +532,6 @@ class GateDisplay(ttk.Window):
         ttk.Label(bot, text="✓ OK" if style=="success" else "⚠ WARN", font="-weight bold", bootstyle=lbl_style).pack(side=RIGHT)
         
         self.recent_scans.insert(0, card)
-        # Prevent memory leaks by forcing garbage collection of old frames
         if len(self.recent_scans) > 5:
             old = self.recent_scans.pop()
             old.destroy()
@@ -552,17 +551,29 @@ class GateDisplay(ttk.Window):
             device_name = self.config_manager.config.get('device_name', '')
             url = f"{hub_url}/api/status?device_name={requests.utils.quote(device_name)}"
             
+            start_t = time.time()
             try:
                 resp = self.http_session.get(url, timeout=3, verify=False)
+                latency = int((time.time() - start_t) * 1000)
+                
                 if resp.status_code == 200:
                     data = resp.json()
-                    self.gui_queue.put(lambda: self.update_test_banner(data.get("test_mode", False), data.get("test_date", "Unknown")))
+                    self.gui_queue.put(lambda l=latency, tm=data.get("test_mode", False), td=data.get("test_date", "Unknown"): (
+                        self.update_net_pill(f"● Connected • {l}ms", "success" if l < 200 else "warning"),
+                        self.update_test_banner(tm, td)
+                    ))
                 else:
-                    self.gui_queue.put(lambda: self.update_test_banner(False, ""))
+                    self.gui_queue.put(lambda l=latency: (
+                        self.update_net_pill(f"● Error {resp.status_code} • {l}ms", "danger"),
+                        self.update_test_banner(False, "")
+                    ))
             except Exception:
-                self.gui_queue.put(lambda: self.update_test_banner(False, ""))
+                self.gui_queue.put(lambda: (
+                    self.update_net_pill("● Offline / Timeout", "danger"),
+                    self.update_test_banner(False, "")
+                ))
             
-            time.sleep(4)
+            time.sleep(3)
 
     def update_test_banner(self, is_test_mode, test_date):
         if is_test_mode:
@@ -572,17 +583,13 @@ class GateDisplay(ttk.Window):
             if self.test_banner.winfo_ismapped(): self.test_banner.pack_forget()
 
     def listen_to_server_stream(self):
-        """Highly resilient Server-Sent Events (SSE) listener that survives network drops natively."""
         while self.is_polling:
             hub_url = self.config_manager.config.get('hub_url', '')
             url = f"{hub_url}/api/stream-scans"
             
             try:
-                self.gui_queue.put(lambda: self.lbl_hub_status.configure(text="● Connecting Stream...", bootstyle=WARNING))
-                # Timeout ensures the socket drops dead connections instead of hanging eternally
                 with self.http_session.get(url, stream=True, timeout=(5, 20), verify=False) as response:
                     if response.status_code == 200:
-                        self.gui_queue.put(lambda: self.lbl_hub_status.configure(text="● Hub Live Stream", bootstyle=SUCCESS))
                         for line in response.iter_lines():
                             if not self.is_polling: break
                             if line:
@@ -591,15 +598,25 @@ class GateDisplay(ttk.Window):
                                     try: self.scan_queue.put(json.loads(decoded[6:]))
                                     except Exception: pass
                     else:
-                        self.gui_queue.put(lambda: self.lbl_hub_status.configure(text=f"● Hub Error {response.status_code}", bootstyle=WARNING))
                         time.sleep(3)
-                        
-            except requests.exceptions.ChunkedEncodingError:
-                pass # Normal behavior if server restarts, will reconnect instantly
-            except Exception as e:
-                logging.warning(f"Stream dropped: {e}")
-                self.gui_queue.put(lambda: self.lbl_hub_status.configure(text="● Hub Disconnected. Retrying...", bootstyle=DANGER))
+            except Exception:
                 time.sleep(3)
+
+    def update_net_pill(self, text, style_name):
+        self.lbl_hub_status.configure(text=text, bootstyle=style_name)
+
+    def process_queues(self):
+        for _ in range(50):
+            try: self.gui_queue.get_nowait()()
+            except queue.Empty: break
+
+        for _ in range(5):
+            try:
+                event_data = self.scan_queue.get_nowait()
+                self.update_ui_with_event(event_data)
+            except queue.Empty: break
+
+        self.after(30, self.process_queues)
 
     def manual_scan(self, lookup_type):
         val = self.ent_phone.get() if lookup_type == 'phone' else self.ent_id.get()
@@ -630,7 +647,6 @@ class GateDisplay(ttk.Window):
 
         threading.Thread(target=_post_with_retries, daemon=True).start()
         
-        # Reset Input fix preserving active focus
         def reset_inputs():
             for entry in (self.ent_id, self.ent_phone):
                 entry.delete(0, END)
