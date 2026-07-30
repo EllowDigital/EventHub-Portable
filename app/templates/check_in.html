@@ -521,7 +521,7 @@
         Back
       </a>
       <h3 class="header-title">
-        Live Check-in <span class="version-tag">v2.2</span>
+        Live Check-in <span class="version-tag">v2.3</span>
       </h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
@@ -556,7 +556,7 @@
       <div class="scanner-box">
         <div id="reader"></div>
         
-        <!-- NEW: Permission Fallback Overlay -->
+        <!-- Permission Fallback Overlay -->
         <div class="permission-overlay" id="permission-overlay">
           <div style="font-size: 2.5rem; margin-bottom: 10px;">📸</div>
           <h4>Camera Access Blocked</h4>
@@ -659,6 +659,8 @@
     let html5QrCode = null;
     let isCameraActive = false;
     let isProcessing = false;
+    let isCameraTransitioning = false; // NEW GUARD FLAG TO PREVENT STATE CRASHES
+    
     let currentTrack = null;
     let minZoom = 1;
     let maxZoom = 3;
@@ -673,11 +675,9 @@
       aspectRatio: 1.0
     };
 
-    // NEW: Native Permission Request for strict browsers
     async function requestCameraPermissionNatively() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        // We got permission! Stop the native stream so HTML5QrCode can take over cleanly.
         stream.getTracks().forEach(track => track.stop());
         
         document.getElementById("permission-overlay").style.display = "none";
@@ -685,7 +685,6 @@
         await startHardware();
       } catch (err) {
         showToast("Permission denied by system. Check settings.", "ERROR");
-        console.error("Native Permission Error:", err);
       }
     }
 
@@ -706,12 +705,12 @@
         }
       } catch (err) {
         console.warn("Could not fetch camera list: ", err);
-        // If we can't fetch cameras, it's usually a permission issue
         document.getElementById("permission-overlay").style.display = "flex";
       }
     }
 
     async function onCameraChange() {
+      if (isCameraTransitioning) return;
       if (isCameraActive) {
         await stopHardware();
         await startHardware();
@@ -719,8 +718,11 @@
     }
 
     async function startHardware() {
+      if (isCameraTransitioning) return; // Prevent "already under transition" error
+      
       if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
       if (!isCameraActive) {
+        isCameraTransitioning = true;
         const btn = document.getElementById("camera-toggle-btn");
         const select = document.getElementById("camera-select");
         const cameraId = select.value;
@@ -729,12 +731,12 @@
         btn.classList.remove("paused");
         document.getElementById("permission-overlay").style.display = "none";
         
-        let videoConstraints = cameraId 
-          ? { deviceId: { exact: cameraId }, advanced: [{ zoom: 1.0 }] } 
-          : { facingMode: "environment", advanced: [{ zoom: 1.0 }] };
+        // FIX: The library strictly wants EITHER a string OR an object with exact 1 key { facingMode: ... }
+        // We cannot pass advanced constraints here directly. We will apply zoom AFTER it starts.
+        let cameraTarget = cameraId ? cameraId : { facingMode: "environment" };
 
         try {
-          await html5QrCode.start(videoConstraints, scanConfig, onScanSuccess);
+          await html5QrCode.start(cameraTarget, scanConfig, onScanSuccess);
           
           isCameraActive = true;
           btn.innerHTML = "⏸ Pause Scanner";
@@ -747,6 +749,8 @@
           document.getElementById("permission-overlay").style.display = "flex";
           btn.innerHTML = "▶ Resume Scanner";
           btn.classList.add("paused");
+        } finally {
+          isCameraTransitioning = false;
         }
       }
     }
@@ -756,6 +760,10 @@
         currentTrack = html5QrCode.getRunningTrack();
         if (currentTrack) {
           const cap = currentTrack.getCapabilities();
+          
+          // Apply initial zoom of 1.0 since we couldn't pass it in the start config
+          applyZoom(1.0);
+
           if (cap.zoom) {
             minZoom = cap.zoom.min || 1;
             maxZoom = cap.zoom.max || 3;
@@ -817,7 +825,10 @@
     }
 
     async function stopHardware() {
+      if (isCameraTransitioning) return; // Prevent "already under transition" error
+      
       if (html5QrCode && isCameraActive) {
+        isCameraTransitioning = true;
         try {
           clearInterval(autoZoomInterval);
           if (html5QrCode.getState() === 2) {
@@ -829,7 +840,11 @@
           btn.classList.add("paused");
           document.getElementById("scan-overlay").style.display = "none";
           document.getElementById("zoom-controls").style.display = "none";
-        } catch (e) { console.error(e); }
+        } catch (e) { 
+          console.error(e); 
+        } finally {
+          isCameraTransitioning = false;
+        }
       }
     }
 
@@ -839,6 +854,8 @@
     }
 
     async function switchMode(mode) {
+      if (isCameraTransitioning) return; // Wait for camera to finish starting/stopping
+      
       document.getElementById("result-card").classList.remove("show");
       if (mode === "qr") {
         document.getElementById("tab-qr").classList.add("active");
@@ -1060,7 +1077,6 @@
       initDeviceName();
       updateOfflineBadge();
       
-      // Request camera explicitly first to ensure Safari/Chrome don't block it on load
       await fetchCameras();
       startHardware();
       
