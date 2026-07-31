@@ -51,7 +51,6 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* Glassmorphism Header */
     .header {
       width: 100%;
       display: flex;
@@ -209,7 +208,6 @@
     }
     .camera-selector:focus { border-color: var(--primary); box-shadow: 0 0 10px var(--primary-glow); }
 
-    /* Upgraded Viewfinder UI */
     .scanner-box {
       position: relative;
       width: 100%;
@@ -230,13 +228,12 @@
     #reader__dashboard_section_swap_link,
     #html5-qrcode-anchor-scan-type-change { display: none !important; }
 
-    /* High-tech Viewfinder Corners */
     .viewfinder-corners {
       position: absolute;
       inset: 20px;
       pointer-events: none;
       z-index: 15;
-      display: none; /* Shows only when camera is active */
+      display: none;
     }
     .viewfinder-corners::before, .viewfinder-corners::after,
     .viewfinder-corners div::before, .viewfinder-corners div::after {
@@ -665,6 +662,14 @@
   </div>
 
   <script>
+    // --- XSS PROTECTION ---
+    function escapeHTML(str) {
+      if (!str) return "Unknown Device";
+      return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[tag] || tag));
+    }
+
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     
     function playAudioTone(type) {
@@ -717,7 +722,7 @@
     const scanConfig = {
       fps: 30,
       qrbox: { width: 250, height: 250 },
-      formatsToSupport: [0], // QR_CODE
+      formatsToSupport: [0], 
       aspectRatio: 1.0
     };
 
@@ -935,6 +940,16 @@
       document.getElementById("manual-phone").value = "";
     }
 
+    // --- SECURE DEVICE REGISTRY (Fixes Overwrite Bug) ---
+    function getDeviceId() {
+      let id = localStorage.getItem("hub_device_id");
+      if (!id) {
+        id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem("hub_device_id", id);
+      }
+      return id;
+    }
+
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Scanner"; }
     
     function initDeviceName() {
@@ -949,6 +964,7 @@
         localStorage.setItem("hub_device_name", val);
         document.getElementById("display-device-name").textContent = val;
         document.getElementById("device-modal").style.display = "none";
+        syncServerStatus(); // Ping server instantly to register new name
       }
     }
     
@@ -985,6 +1001,7 @@
 
       for (let i = 0; i < queue.length; i++) {
         try {
+          queue[i].device_id = getDeviceId();
           let res = await fetch("/api/checkin", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1004,7 +1021,7 @@
       }
     }
 
-    // --- FIX: Calibrated Network Ping Thresholds & Increased Timeout ---
+    // --- UPGRADED NETWORK PING (Fixes Overwrite Bug) ---
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
             text = document.getElementById("net-text"),
@@ -1021,18 +1038,17 @@
       const start = performance.now();
       try {
         const c = new AbortController();
-        // Increased timeout from 2000 to 5000 to prevent false-offline over Cloudflare tunnels
         const id = setTimeout(() => c.abort(), 5000);
         
+        // Pass both ID and Name to ensure Hub tracks this specific device perfectly
         const response = await fetch(
-          `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
+          `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
           { cache: "no-store", signal: c.signal }
         );
         clearTimeout(id);
 
         const dur = performance.now() - start;
         
-        // Realistic thresholds for Mobile Wi-Fi / HTTPS Tunnels
         if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
         else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; } 
         else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
@@ -1042,7 +1058,7 @@
             const data = await response.json();
             if (data.test_mode) {
               testBanner.style.display = "block";
-              testDate.textContent = data.test_date || "Unknown";
+              testDate.textContent = escapeHTML(data.test_date) || "Unknown";
             } else {
               testBanner.style.display = "none";
             }
@@ -1064,6 +1080,7 @@
         attendee_id: identifier,
         search_type: type,
         device_name: getDeviceName(),
+        device_id: getDeviceId(), // Added Device ID
         offline_scan_time: new Date().toISOString(),
       };
 
@@ -1116,10 +1133,9 @@
       processCheckin(id, "id");
     }
 
-    // --- FIX: Prevent Disconnections when browser is minimized ---
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
-        syncServerStatus(); // Force instant network check when app is opened again
+        syncServerStatus(); 
       }
     });
 

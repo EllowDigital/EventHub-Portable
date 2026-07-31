@@ -116,13 +116,15 @@ except ModuleNotFoundError:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
+CONFIG_DIR = os.path.join(BASE_DIR, 'config')
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(CONFIG_DIR, exist_ok=True)
 
 HTTP_PORT = 5000 
 HTTPS_PORT = 5001  
-CERT_DIR = os.path.join(BASE_DIR, 'config', 'certs')
+CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-# --- EXTREME PERFORMANCE TUNING (10,000+ Attendees) ---
+# --- EXTREME PERFORMANCE TUNING ---
 DB_WRITER_THREADS = 16            
 DB_JOB_QUEUE_MAXSIZE = 2000       
 DB_JOB_TIMEOUT = 10               
@@ -144,9 +146,21 @@ gui_log_callback = None
 SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
+# --- PERSISTENT CUSTOM DEVICE NAMES ---
+CUSTOM_DEVICE_NAMES = {}
+DEVICE_NAMES_FILE = os.path.join(CONFIG_DIR, 'device_names.json')
+
+try:
+    if os.path.exists(DEVICE_NAMES_FILE):
+        with open(DEVICE_NAMES_FILE, 'r') as f:
+            CUSTOM_DEVICE_NAMES = json.load(f)
+except Exception as e:
+    logging.error(f"Failed to load custom device names: {e}")
+
 ACTIVE_DEVICES = {}
 SCAN_CLIENTS = []
 scan_clients_lock = threading.Lock()
+device_lock = threading.Lock()
 DEVICE_ONLINE_WINDOW = 25  
 
 DB_SESSIONS_CACHE = None
@@ -161,7 +175,6 @@ network_latency_lock = threading.Lock()
 SERVER_METRICS = {"avg_process_ms": 0.0, "req_count": 0}
 metrics_lock = threading.Lock()
 
-# Graph Data Tracker
 TRAFFIC_HISTORY = collections.deque([0] * 60, maxlen=60)
 _current_sec_requests = 0
 traffic_lock = threading.Lock()
@@ -367,10 +380,8 @@ class DBJob:
     payload: dict
     future: concurrent.futures.Future = field(default_factory=concurrent.futures.Future)
 
-
 DB_WRITE_QUEUE = queue.Queue(maxsize=DB_JOB_QUEUE_MAXSIZE)
 _db_writer_threads = []
-
 
 def _submit_db_job(kind, payload):
     job = DBJob(kind=kind, payload=payload)
@@ -427,7 +438,6 @@ def _handle_checkin_job(payload):
             return 403, {"status": "error", "message": f"Denied (No pass {today_key})"}
 
         if today_key in history:
-            # --- IMPROVED USER-FRIENDLY DUPLICATE MESSAGE ---
             friendly_msg = f"Already checked in for {today_key}: {attendee.full_name}"
             log_event_clean("CHECKIN", device_name, friendly_msg, 400)
             broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
@@ -559,8 +569,9 @@ def stop_db_writers():
     _db_writer_threads.clear()
 
 
-device_lock = threading.Lock()
-
+# ==============================================================================
+# FLASK ROUTING & ENDPOINTS
+# ==============================================================================
 @app.route('/')
 def index(): return render_template('index.html')
 @app.route('/scanner')
@@ -574,32 +585,84 @@ def stats(): return render_template('network_stats.html')
 @app.route('/api/status', methods=['GET'])
 def get_server_status():
     ip = request.remote_addr
-    custom_device_name = request.args.get('device_name', 'Unknown Device')
-    if custom_device_name and custom_device_name != "null":
-        with device_lock: 
-            ACTIVE_DEVICES[ip] = {'last_seen': time.time(), 'name': custom_device_name}
+    # Compound ID completely solves the "Same Wi-Fi" overwrite bug.
+    reported_name = request.args.get('device_name', 'Unknown Device')
+    if reported_name == "null": reported_name = "Unknown Device"
+    
+    device_id = request.args.get('device_id')
+    if not device_id:
+        device_id = f"{ip}::{reported_name}"
+        
+    with device_lock:
+        display_name = CUSTOM_DEVICE_NAMES.get(device_id, reported_name)
+        ACTIVE_DEVICES[device_id] = {
+            'last_seen': time.time(), 
+            'name': display_name,
+            'original_name': reported_name,
+            'ip': ip
+        }
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
+
+
+@app.route('/api/device/rename', methods=['POST'])
+def rename_device():
+    """Injected endpoint to persist custom device names securely."""
+    data = request.json or {}
+    device_id = data.get('id') or data.get('ip')
+    new_name = data.get('new_name', '').strip()
+    
+    if not device_id or not new_name:
+        return jsonify({"status": "error", "message": "Missing device ID or new name."}), 400
+        
+    with device_lock:
+        CUSTOM_DEVICE_NAMES[device_id] = new_name
+        if device_id in ACTIVE_DEVICES:
+            ACTIVE_DEVICES[device_id]['name'] = new_name
+            
+    # Persist to disk to survive reboots
+    try:
+        with open(DEVICE_NAMES_FILE, 'w') as f:
+            json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
+    except Exception as e:
+        logging.error(f"Failed to save custom device names: {e}")
+        
+    return jsonify({"status": "success", "message": "Device renamed."}), 200
+
+
+@app.route('/api/network-data', methods=['GET'])
+def get_network_data():
+    current_time = time.time()
+    active_devices = {}
+    
+    with device_lock:
+        for d_id, data in list(ACTIVE_DEVICES.items()):
+            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: 
+                active_devices[d_id] = data
+            else: 
+                del ACTIVE_DEVICES[d_id]
+                
+    with stats_lock:
+        global_stats = {
+            "total_scans": STATS_CACHE["total_scans"], 
+            "total_registrations": STATS_CACHE["total_registrations"], 
+            "today_scans": STATS_CACHE["today_scans"]
+        }
+    return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
 
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
         q = queue.Queue(maxsize=50)
-        with scan_clients_lock: 
-            SCAN_CLIENTS.append(q)
+        with scan_clients_lock: SCAN_CLIENTS.append(q)
         try:
             while True:
-                try: 
-                    yield f"data: {json.dumps(q.get(timeout=10))}\n\n"
-                except queue.Empty: 
-                    yield ": heartbeat\n\n"
-        except GeneratorExit: 
-            pass 
+                try: yield f"data: {json.dumps(q.get(timeout=10))}\n\n"
+                except queue.Empty: yield ": heartbeat\n\n"
+        except GeneratorExit: pass 
         finally:
             with scan_clients_lock:
-                if q in SCAN_CLIENTS: 
-                    SCAN_CLIENTS.remove(q)
-                    
+                if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
     return Response(event_stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'})
 
 
@@ -632,89 +695,46 @@ def process_registration():
 @app.route('/api/check_mobile', methods=['GET'])
 def check_mobile():
     mobile_number = request.args.get('mobile', '').strip()
-    if not mobile_number: 
-        return jsonify({"status": "error", "message": "Mobile required"}), 400
-        
+    if not mobile_number: return jsonify({"status": "error", "message": "Mobile required"}), 400
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: 
-        return jsonify({"status": "error", "message": "DB offline"}), 503
-        
+    if not mysql_factory: return jsonify({"status": "error", "message": "DB offline"}), 503
     session = mysql_factory()
     try:
         em = session.query(Attendee).filter_by(mobile=mobile_number).first()
-        if em: 
-            return jsonify({"status": "already_registered", "attendee_id": em.attendee_id}), 200
-            
+        if em: return jsonify({"status": "already_registered", "attendee_id": em.attendee_id}), 200
         ek = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-        if ek: 
-            return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
-            
+        if ek: return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
         return jsonify({"status": "not_found"}), 200
-    except Exception: 
-        return jsonify({"status": "error", "message": "Internal error."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Internal error."}), 500
     finally:
         try: session.close()
         except Exception: pass
 
 
-@app.route('/api/network-data', methods=['GET'])
-def get_network_data():
-    current_time = time.time()
-    active_devices = {}
-    
-    with device_lock:
-        for ip, data in list(ACTIVE_DEVICES.items()):
-            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: 
-                active_devices[ip] = data
-            else: 
-                del ACTIVE_DEVICES[ip]
-                
-    with stats_lock:
-        global_stats = {
-            "total_scans": STATS_CACHE["total_scans"], 
-            "total_registrations": STATS_CACHE["total_registrations"], 
-            "today_scans": STATS_CACHE["today_scans"]
-        }
-    return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
-
-
-# ==============================================================================
-# EXPLORER PORTABLE HUB API
-# ==============================================================================
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: 
-        return jsonify({"status": "error", "message": "DB offline"}), 503
-        
+    if not mysql_factory: return jsonify({"status": "error", "message": "DB offline"}), 503
     session = mysql_factory()
     try:
         main_att = session.query(Attendee).all()
         kiosk_att = session.query(OfflineKioskAttendee).all()
-        
         results = []
         for att in (main_att + kiosk_att):
             att_dict = {
-                "id": att.id,
-                "attendee_id": att.attendee_id,
-                "full_name": att.full_name,
-                "mobile": att.mobile,
-                "email": att.email,
+                "id": att.id, "attendee_id": att.attendee_id, "full_name": att.full_name,
+                "mobile": att.mobile, "email": att.email,
                 "gender": att.gender.name if hasattr(att.gender, 'name') else str(att.gender),
                 "attendee_type": att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type),
-                "business_name": att.business_name,
-                "business_category": att.business_category,
-                "city": att.city,
-                "state": att.state,
-                "pincode": att.pincode,
+                "business_name": att.business_name, "business_category": att.business_category,
+                "city": att.city, "state": att.state, "pincode": att.pincode,
                 "needs_cloud_sync": getattr(att, 'needs_cloud_sync', False),
                 "checkin_history": att.checkin_history if isinstance(att.checkin_history, dict) else {},
                 "created_at": att.created_at.isoformat() + "Z" if att.created_at else None
             }
             results.append(att_dict)
-            
         return jsonify(results), 200
     except Exception as e:
         logging.error(f"Failed to fetch attendees API: {e}")
@@ -724,47 +744,39 @@ def get_all_attendees():
         except Exception: pass
 
 
+# ==============================================================================
+# SERVER THREADS & UTILS
+# ==============================================================================
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
         self.server = create_server(app, host=host, port=port, threads=150, connection_limit=500, channel_timeout=15)
-        self.ctx = app.app_context()
-        self.ctx.push()
-        
+        self.ctx = app.app_context(); self.ctx.push()
     def run(self):
         try: self.server.run()
         except Exception: logging.exception("Waitress crashed")
-            
-    def shutdown(self): 
-        self.server.close()
+    def shutdown(self): self.server.close()
 
 
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=150):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
-            
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
-        self.ctx = app.app_context()
-        self.ctx.push()
-        
+        self.ctx = app.app_context(); self.ctx.push()
         self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=512)
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
-        
     def run(self):
         try: self.server.start()
         except Exception: logging.exception("Cheroot crashed")
-            
-    def shutdown(self): 
-        self.server.stop()
+    def shutdown(self): self.server.stop()
 
 
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("10.255.255.255", 1))
-        ip, _ = s.getsockname()
-        s.close()
+        ip, _ = s.getsockname(); s.close()
         return ip
     except Exception: 
         try: return socket.gethostbyname(socket.gethostname())
@@ -775,17 +787,15 @@ def _hex_to_rgb(hex_color): return tuple(int(hex_color.lstrip('#')[i:i+2], 16) f
 def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
 def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
-
+# ==============================================================================
+# GUI INTERFACES (TELEMETRY, LOGS, HUB DASHBOARD)
+# ==============================================================================
 class NetworkTelemetryWindow(ttk.Toplevel):
     def __init__(self, parent, hub_instance):
         super().__init__(parent)
         self.title("Live Network & Traffic Telemetry")
-        
-        if MATPLOTLIB_AVAILABLE:
-            self.geometry("900x650")
-        else:
-            self.geometry("850x380")
-            
+        if MATPLOTLIB_AVAILABLE: self.geometry("900x650")
+        else: self.geometry("850x380")
         self.resizable(False, False)
         self.hub = hub_instance
         self.attributes('-topmost', True)
@@ -827,17 +837,14 @@ class NetworkTelemetryWindow(ttk.Toplevel):
         self.lbl_cloud_status = ttk.Label(cloud_card, text="Status: OFFLINE", font="-weight bold", bootstyle=SECONDARY)
         self.lbl_cloud_status.pack(pady=10)
 
-        # --- LIVE MATPLOTLIB GRAPH ---
         if MATPLOTLIB_AVAILABLE:
             chart_frame = ttk.Labelframe(main_frame, text=" Live API Traffic (Requests / Sec) ", padding=10)
             chart_frame.pack(fill=BOTH, expand=True, pady=(15, 0))
             
             self.fig = Figure(figsize=(8, 2), dpi=100, facecolor='#222222')
             self.ax = self.fig.add_subplot(111)
-            self.ax.set_facecolor('#222222')
-            self.ax.tick_params(colors='white')
-            for spine in self.ax.spines.values():
-                spine.set_color('#555555')
+            self.ax.set_facecolor('#222222'); self.ax.tick_params(colors='white')
+            for spine in self.ax.spines.values(): spine.set_color('#555555')
                 
             self.line, = self.ax.plot([], [], color='#4CD37E', linewidth=2)
             self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
@@ -876,14 +883,9 @@ class NetworkTelemetryWindow(ttk.Toplevel):
             self.meter_cloud.configure(amountused=0, bootstyle=SECONDARY)
             self.lbl_cloud_status.configure(text="Status: OFFLINE", bootstyle=DANGER)
 
-        # Draw Matplotlib Graph
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'line'):
-            y_data = list(TRAFFIC_HISTORY)
-            x_data = list(range(len(y_data)))
-            self.line.set_data(x_data, y_data)
-            self.ax.set_xlim(0, 59)
-            self.ax.set_ylim(0, max(10, max(y_data) + 5)) 
-            self.canvas.draw()
+            y_data = list(TRAFFIC_HISTORY); x_data = list(range(len(y_data)))
+            self.line.set_data(x_data, y_data); self.ax.set_xlim(0, 59); self.ax.set_ylim(0, max(10, max(y_data) + 5)); self.canvas.draw()
 
         self.after(1000, self.refresh_meters)
 
@@ -1366,20 +1368,21 @@ class ServerHub(ttk.Window):
     def refresh_stats(self):
         current_time = time.time()
         with device_lock:
-            active_ips = [ip for ip, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
-            device_info = {ip: dict(ACTIVE_DEVICES[ip]) for ip in active_ips}
+            active_ids = [d_id for d_id, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
+            device_info = {d_id: dict(ACTIVE_DEVICES[d_id]) for d_id in active_ids}
 
-        self._set_stat("online_scanners", len(active_ips))
+        self._set_stat("online_scanners", len(active_ids))
         if hasattr(self, 'lbl_devices_header'): 
-            self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ips)})")
+            self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)})")
 
         for row in self.tree_devices.get_children(): self.tree_devices.delete(row)
             
-        if active_ips:
-            for ip in sorted(active_ips, key=lambda i: device_info[i]['name'].lower()):
-                sec_ago = max(0, int(current_time - device_info[ip]['last_seen']))
+        if active_ids:
+            for d_id in sorted(active_ids, key=lambda i: device_info[i]['name'].lower()):
+                info = device_info[d_id]
+                sec_ago = max(0, int(current_time - info['last_seen']))
                 sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
-                self.tree_devices.insert("", END, values=(device_info[ip]['name'], ip, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
+                self.tree_devices.insert("", END, values=(info['name'], info['ip'], "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
         else: 
             self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
 

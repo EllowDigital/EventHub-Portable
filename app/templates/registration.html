@@ -37,7 +37,7 @@
 
     .app-container {
       width: 100%;
-      max-width: 700px; /* Wider max-width for tablets/laptops */
+      max-width: 700px;
       padding: 15px 20px 40px 20px;
       display: flex;
       flex-direction: column;
@@ -51,7 +51,6 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* Glassmorphism Header */
     .header {
       width: 100%;
       display: flex;
@@ -164,7 +163,6 @@
     .device-identity:hover { background: var(--surface-hover); transform: translateY(-2px); border-color: rgba(0, 210, 255, 0.3); }
     .device-identity span { color: var(--primary); font-weight: 800; }
 
-    /* Fluid Form Container */
     .form-container {
       width: 100%;
       background: var(--surface);
@@ -188,7 +186,6 @@
     }
     .section-title:first-child { margin-top: 0; }
 
-    /* Flex-based responsive rows */
     .input-row {
       display: flex;
       flex-wrap: wrap;
@@ -199,12 +196,11 @@
     .input-group {
       display: flex;
       flex-direction: column;
-      flex: 1 1 250px; /* Grows to fill, wraps if screen < 250px wide */
-      min-width: 0; /* Prevents overflow */
-      margin-bottom: 0; /* Margin handled by .input-row gap */
+      flex: 1 1 250px;
+      min-width: 0;
+      margin-bottom: 0;
     }
 
-    /* Catch-all for standalone inputs not in a row */
     .form-container > .input-group {
       margin-bottom: 20px;
     }
@@ -231,16 +227,15 @@
       box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);
       width: 100%;
       box-sizing: border-box;
-      appearance: none; /* Removes native OS styling for selects */
+      appearance: none;
     }
 
-    /* Add a custom dropdown arrow to selects */
     .input-group select {
       background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%238b93a5%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
       background-repeat: no-repeat;
       background-position: right 16px center;
       background-size: 18px;
-      padding-right: 40px; /* Make room for arrow */
+      padding-right: 40px;
     }
 
     .input-group input:focus,
@@ -275,7 +270,6 @@
     .msg-success { color: var(--success); }
     .msg-warning { color: var(--warning); }
 
-    /* Upgraded Modern Day Chips */
     .day-chips-container {
       display: flex;
       gap: 15px;
@@ -289,7 +283,7 @@
     }
 
     .day-chip-label input {
-      display: none; /* Hide native checkbox */
+      display: none;
     }
 
     .chip-content {
@@ -310,7 +304,6 @@
       color: #fff;
     }
 
-    /* Style when the hidden checkbox is checked */
     .day-chip-label input:checked + .chip-content {
       background: rgba(0, 210, 255, 0.15);
       border-color: var(--primary);
@@ -371,7 +364,6 @@
 
     #toast.show { bottom: 30px; }
 
-    /* Premium Modal */
     #success-modal, #device-modal {
       display: none;
       position: fixed;
@@ -609,7 +601,7 @@
         Register Attendee
       </button>
     </div>
-  </div> <!-- End Container -->
+  </div>
 
   <div id="toast">Error Message</div>
 
@@ -643,6 +635,14 @@
   </div>
 
   <script>
+    // --- XSS PROTECTION ---
+    function escapeHTML(str) {
+      if (!str) return "Unknown Device";
+      return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[tag] || tag));
+    }
+
     // --- AUDIO ENGINE ---
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     function playAudioTone(type) {
@@ -701,8 +701,18 @@
       toastTimeout = setTimeout(() => t.classList.remove("show"), 3000);
     }
 
-    // --- DEVICE REGISTRY ---
+    // --- SECURE DEVICE REGISTRY (Fixes Overwrite Bug) ---
+    function getDeviceId() {
+      let id = localStorage.getItem("hub_device_id");
+      if (!id) {
+        id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem("hub_device_id", id);
+      }
+      return id;
+    }
+
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Kiosk"; }
+    
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
       if (!name) {
@@ -712,6 +722,7 @@
         document.getElementById("display-device-name").textContent = name;
       }
     }
+
     function saveDeviceName() {
       let val = document.getElementById("device-name-input").value.trim();
       if (val) {
@@ -721,10 +732,12 @@
         const modal = document.getElementById("device-modal");
         modal.classList.remove("show");
         setTimeout(() => modal.style.display = "none", 300);
+        syncServerStatus(); // Ping server instantly to register new name
       } else {
         showToast("Please enter a valid Kiosk name.");
       }
     }
+
     function promptDeviceName() {
       document.getElementById("device-name-input").value = localStorage.getItem("hub_device_name") || "";
       const modal = document.getElementById("device-modal");
@@ -761,6 +774,8 @@
 
       for (let i = 0; i < queue.length; i++) {
         try {
+          // Attach permanent ID to background syncs as well
+          queue[i].device_id = getDeviceId();
           let res = await fetch("/api/register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -781,7 +796,7 @@
       }
     }
 
-    // --- UPGRADED NETWORK PING ---
+    // --- UPGRADED NETWORK PING (Fixes Overwrite Bug) ---
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
             text = document.getElementById("net-text"),
@@ -797,16 +812,17 @@
       const start = performance.now();
       try {
         const c = new AbortController();
-        const id = setTimeout(() => c.abort(), 5000); // 5 sec timeout, matching the robust scanner fix
+        const id = setTimeout(() => c.abort(), 5000);
+        
+        // Pass both ID and Name to ensure Hub tracks this specific device perfectly
         const response = await fetch(
-          `/api/status?device_name=${encodeURIComponent(getDeviceName())}`,
+          `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
           { cache: "no-store", signal: c.signal }
         );
         clearTimeout(id);
 
         const dur = performance.now() - start;
         
-        // Realistic thresholds
         if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
         else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; } 
         else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
@@ -816,7 +832,7 @@
             const data = await response.json();
             if (data.test_mode) {
               testBanner.style.display = "block";
-              testDate.textContent = data.test_date || "Unknown";
+              testDate.textContent = escapeHTML(data.test_date) || "Unknown";
             } else {
               testBanner.style.display = "none";
             }
@@ -1088,6 +1104,7 @@
         pincode: document.getElementById("f-pincode").value.trim(),
         attendance_days: selectedDays,
         device_name: getDeviceName(),
+        device_id: getDeviceId() // Added Device ID
       };
 
       fetch("/api/register", {
@@ -1114,7 +1131,6 @@
         });
     }
 
-    // Instantly reconnect if the tablet screen turns off and turns back on
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") syncServerStatus(); 
     });

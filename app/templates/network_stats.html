@@ -38,7 +38,7 @@
 
     .app-container {
       width: 100%;
-      max-width: 1200px; /* Wide layout for dashboards */
+      max-width: 1200px;
       padding: 20px;
       display: flex;
       flex-direction: column;
@@ -51,7 +51,6 @@
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* Glassmorphism Header */
     .header {
       width: 100%;
       display: flex;
@@ -130,7 +129,6 @@
       100% { transform: scale(0.95); opacity: 0.8; }
     }
 
-    /* Banners */
     .banner {
       width: 100%;
       text-align: center;
@@ -149,7 +147,6 @@
     .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
     .offline-banner { background-color: rgba(255, 187, 51, 0.15); color: var(--warning); border: 1px solid var(--warning); box-shadow: 0 4px 20px rgba(255, 187, 51, 0.2); }
 
-    /* Telemetry Grid */
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -201,7 +198,6 @@
     .card-purple h3 { color: var(--purple); }
     .card-purple p { color: var(--purple); text-shadow: 0 0 20px rgba(199, 146, 234, 0.3); }
 
-    /* Speedometer Advanced CSS */
     .speedometer-container {
       position: relative;
       width: 100%;
@@ -228,8 +224,8 @@
       stroke: var(--success);
       stroke-width: 12;
       stroke-linecap: round;
-      stroke-dasharray: 125.6; /* Math.PI * r(40) */
-      stroke-dashoffset: 125.6; /* Starts empty */
+      stroke-dasharray: 125.6; 
+      stroke-dashoffset: 125.6; 
       transition: stroke-dashoffset 0.8s cubic-bezier(0.34, 1.56, 0.64, 1), stroke 0.5s;
     }
 
@@ -258,7 +254,6 @@
       margin-top: -2px;
     }
 
-    /* Table Section */
     .section-title {
       margin-bottom: 20px;
       font-size: 1.2rem;
@@ -323,7 +318,6 @@
     .btn-edit:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary-glow); }
     .btn-edit:active { transform: scale(0.95); }
 
-    /* Latency Bars in Table */
     .latency-container {
       width: 120px;
       background: rgba(0,0,0,0.5);
@@ -465,32 +459,41 @@
       fetchStats();
     }
 
+    // 🔥 Anti-XSS Sanitizer added here
+    function escapeHTML(str) {
+      if (!str) return "Unknown Device";
+      return String(str).replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag));
+    }
+
     function updateSpeedometer(ping) {
       const gauge = document.getElementById('speedo-gauge');
       const valText = document.getElementById('hub-latency');
       
       if (ping < 0) {
         valText.innerText = "FAIL";
-        gauge.style.strokeDashoffset = 125.6; // Empty
+        gauge.style.strokeDashoffset = 125.6; 
         gauge.style.stroke = "var(--danger)";
         return;
       }
 
       valText.innerText = ping;
 
-      // Map ping to "Network Quality" (0 to 100%) where lower ping = higher quality
       let quality = 0;
       if (ping <= 50) quality = 100;
-      else if (ping <= 150) quality = 100 - ((ping - 50) / 100) * 20; // 80 to 100%
-      else if (ping <= 400) quality = 80 - ((ping - 150) / 250) * 30; // 50 to 80%
-      else if (ping <= 1000) quality = 50 - ((ping - 400) / 600) * 40; // 10 to 50%
+      else if (ping <= 150) quality = 100 - ((ping - 50) / 100) * 20; 
+      else if (ping <= 400) quality = 80 - ((ping - 150) / 250) * 30; 
+      else if (ping <= 1000) quality = 50 - ((ping - 400) / 600) * 40; 
       else quality = 5;
 
-      // Math.PI * 40 = 125.6 max offset
       const offset = 125.6 - (125.6 * (quality / 100));
       gauge.style.strokeDashoffset = offset;
 
-      // Color mapping based on ping
       if (ping < 150) gauge.style.stroke = "var(--success)";
       else if (ping < 400) gauge.style.stroke = "var(--primary)";
       else if (ping < 800) gauge.style.stroke = "var(--warning)";
@@ -516,9 +519,8 @@
       const start = performance.now();
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 sec tolerant timeout
+        const timeoutId = setTimeout(() => controller.abort(), 5000); 
 
-        // 1. Fetch Server Status (For ping and Test Mode)
         const statusRes = await fetch("/api/status", { cache: "no-store", signal: controller.signal });
         clearTimeout(timeoutId);
         
@@ -535,7 +537,6 @@
           }
         }
 
-        // 2. Fetch Core Stats
         const res = await fetch("/api/network-data", { cache: "no-store" });
         const data = await res.json();
 
@@ -556,8 +557,8 @@
           return;
         }
 
-        // Render Active Devices
-        for (const [ip, info] of Object.entries(data.active_devices)) {
+        // 🔥 Uses the new Compound ID to process multiple devices perfectly
+        for (const [deviceId, info] of Object.entries(data.active_devices)) {
           const tr = document.createElement("tr");
 
           const secondsAgo = Math.round(Date.now() / 1000 - info.last_seen);
@@ -579,6 +580,14 @@
             healthScore = 20;
           }
 
+          // XSS Safe Variables
+          const safeName = escapeHTML(info.name);
+          const safeIp = escapeHTML(info.ip);
+          
+          // Secure string escape for HTML attribute injection
+          const jsSafeId = String(deviceId).replace(/'/g, "\\'").replace(/"/g, '\\"');
+          const jsSafeName = String(info.name).replace(/'/g, "\\'").replace(/"/g, '\\"');
+
           tr.innerHTML = `
             <td>
               <div class="status-wrapper" style="background: transparent; padding: 0; border: none;">
@@ -586,14 +595,14 @@
                 <span style="font-size: 0.85rem; color:var(--text-muted);">${statusText}</span>
               </div>
             </td>
-            <td><strong style="font-size: 1.1rem; color: #fff; letter-spacing: 0.5px;">${info.name}</strong></td>
-            <td style="font-family: monospace; color: #888;">${ip}</td>
+            <td><strong style="font-size: 1.1rem; color: #fff; letter-spacing: 0.5px;">${safeName}</strong></td>
+            <td style="font-family: monospace; color: #888;">${safeIp}</td>
             <td>
               <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${barColor};"></div></div>
               <span class="latency-text">Pinged ${secondsAgo}s ago</span>
             </td>
             <td>
-              <button class="btn-edit" onclick="renameDevice('${ip}', '${info.name.replace(/'/g, "\\'")}')">Edit Name</button>
+              <button class="btn-edit" onclick="renameDevice('${jsSafeId}', '${jsSafeName}')">Edit Name</button>
             </td>
           `;
           tbody.appendChild(tr);
@@ -605,29 +614,28 @@
       }
     }
 
-    async function renameDevice(ip, oldName) {
+    // Connects to the newly added /api/device/rename Python Endpoint
+    async function renameDevice(deviceId, oldName) {
       playClick();
-      const newName = prompt(`Enter a new custom name for the device at ${ip}:`, oldName);
+      const newName = prompt(`Enter a new custom name for this device:`, oldName);
       if (newName && newName.trim() !== "" && newName !== oldName) {
         try {
           await fetch("/api/device/rename", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ip: ip, new_name: newName.trim() }),
+            body: JSON.stringify({ id: deviceId, new_name: newName.trim() }),
           });
-          fetchStats();
+          fetchStats(); // Instantly refresh GUI after renaming
         } catch (err) {
           alert("Failed to rename device. Ensure the hub is online.");
         }
       }
     }
 
-    // Instantly reconnect if browser window/tab is made active again
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") fetchStats(); 
     });
 
-    // Initialize
     window.addEventListener("load", () => {
       fetchStats();
       setInterval(fetchStats, 3000);
