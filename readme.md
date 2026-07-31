@@ -1,64 +1,46 @@
 # EventHub Portable
+**Offline-First Event Management & Attendee Check-In Suite**
 
-EventHub Portable is an offline-first event management and attendee check-in system. It is designed to handle attendee registration, QR code check-ins, and data synchronization between a local SQLite database and a remote MySQL server.
+EventHub Portable is a high-performance, robust offline ecosystem engineered for seamless event operations, real-time QR code check-ins, attendee registration, and bi-directional database synchronization. It is optimized to operate smoothly even with zero or unstable internet connectivity.
+
+---
+
+## 🏗️ Core Architecture & Modules
+
+The system is split into modular, dedicated micro-utilities managed centrally through an automated GUI launcher:
+
+* **Central Launcher (`launcher.py` / `main.py`):** Acts as the master command center with stealth administrator elevation, automated dependency bootstrapping, live system health diagnostics, and zero-CMD process management.
+* **Server Hub (`server_hub.py`):** A high-performance Flask + Waitress/Cheroot engine managing local API routing, real-time socket tracking, mobile registration endpoints, and network telemetry.
+* **Sync Manager (`sync_manager.py`):** Handles robust synchronization between the local offline SQLite database (`eventhub_local.db`), local MySQL hub, and remote cloud databases (Supabase), including automated conflict resolution.
+* **Attendee Explorer (`explorer.py`):** A lag-free management dashboard supporting dual connection modes (Direct MySQL vs. Portable Hub API), real-time analytics by ticket type, multi-criteria sorting, and CSV data export.
+* **Gate Display & Kiosks (`check_in.py`, `register.py`):** Dedicated interfaces for high-speed gate scanning, audio feedback triggers, and walk-in registration desks.
+* **Photo Engine (`photo_down.py`):** Smart local asset downloader that automatically caches attendee photos locally and links them to database rows while saving Cloudinary API credits.
+
+---
 
 ## 📂 Project Structure
 
-Below is the directory structure of the project along with descriptions for each core component:
-
 ```text
 ├── app/
-│   ├── attendee_photos/      # Downloaded attendee photos for offline check-in
-│   ├── config/               # Configuration and JSON settings (sync, server, secrets)
-│   ├── db/                   # Dedicated folder for local databases
-│   │   └── eventhub_local.db # Local SQLite offline database
-│   ├── logs/                 # Application & error logs
-│   ├── sounds/               # Audio alerts for scanning (success, error, warning)
-│   │   ├── error.wav
-│   │   ├── success.wav
-│   │   └── warn.wav
-│   ├── templates/            # HTML pages served to connected devices
-│   │   ├── check_in.html     # QR Check-in interface
-│   │   ├── index.html        # Main home dashboard
-│   │   ├── network_stats.html# Network & connected devices monitor
-│   │   └── registration.html # Offline attendee registration page
-│   ├── check_in.py           # QR code scanning and attendee check-in module
-│   ├── explorer.py           # Search & attendee database explorer
-│   ├── photo_down.py         # Script to batch-download attendee photos
-│   ├── register.py           # Offline attendee registration logic
-│   ├── schema.py             # SQLAlchemy models & database schema definitions
-│   ├── server_hub.py         # Main Flask server, routing, and WebSocket handling
-│   └── sync_manager.py       # Engine syncing data between local SQLite and remote MySQL
-├── .gitignore                # Git ignore rules for logs, DBs, and secrets
-├── main.py                   # Main application entry point to initialize and launch
-├── mynote.txt                # Developer notes and scratchpad
-├── readme.md                 # Project documentation and setup instructions
-├── requirements.txt          # Python dependencies required for the project
-└── test.py                   # Testing scripts
-```
-
-## 🚀 Getting Started
-
-### Prerequisites
-Ensure you have Python installed. You can install the required dependencies using the `requirements.txt` file.
-
-### Installation
-1. Clone the repository to your local machine.
-2. Navigate to the project directory.
-3. Install the dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### Running the Application
-To launch the EventHub Portable server, run the main entry point script:
-
-```bash
-python main.py
-```
-
-## ⚙️ Core Modules
-
-* **Server Hub (`server_hub.py`):** Acts as the central Flask server managing all routes and real-time WebSocket communications.
-* **Sync Manager (`sync_manager.py`):** Crucial for offline reliability. It ensures local changes in `eventhub_local.db` are synced to the master MySQL database when a network connection is available.
-* **Check-In & Registration (`check_in.py`, `register.py`):** Core business logic for handling user data securely and efficiently during live events.
+│   ├── attendee_photos/      # Local image assets for offline profiles
+│   ├── config/               # JSON configurations (schema.json, secrets.json, explorer.json)
+│   ├── db/                   # Local database instances (eventhub_local.db)
+│   ├── logs/                 # Rolling execution and error logs
+│   ├── sounds/               # Audio alerts for scan events (success, warning, error)
+│   ├── templates/            # Responsive web portals for remote client devices
+│   │   ├── check_in.html     # Gate scanner feed
+│   │   ├── index.html        # Client dashboard
+│   │   ├── network_stats.html# Node traffic & active devices monitor
+│   │   └── registration.html # Kiosk registration form
+│   ├── check_in.py           # Gate scanning terminal logic
+│   ├── explorer.py           # Profile inspection & filtering engine
+│   ├── photo_down.py         # Cloud asset synchronizer
+│   ├── register.py           # Walk-in registration service
+│   ├── schema.py             # SQLAlchemy models & database definitions
+│   ├── server_hub.py         # Central Flask API & network broadcaster
+│   └── sync_manager.py       # Multi-tier synchronization engine
+├── .gitignore                # Version control exclusions
+├── launcher.py               # Master GUI control panel & process manager
+├── main.py                   # Primary application entry point
+├── requirements.txt          # Python runtime dependencies
+└── stress_test.py            # Performance benchmarking scripts
