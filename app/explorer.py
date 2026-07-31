@@ -35,7 +35,7 @@ def global_exception_handler(*args):
 tk.Tk.report_callback_exception = global_exception_handler
 
 # ==============================================================================
-# PATHS & CONFIG
+# PATHS & CONFIG (USING EXPLORER.JSON)
 # ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PHOTOS_DIR = os.path.join(BASE_DIR, 'attendee_photos')
@@ -96,7 +96,7 @@ class AttendeeExplorer(ttk.Window):
         self.current_sort_col = None
         self.sort_reverse = False
         
-        # Setup Resilient API Session
+        # Setup Resilient API Session with Auto-Retries
         self.api_session = requests.Session()
         retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
         self.api_session.mount('http://', HTTPAdapter(max_retries=retries))
@@ -143,6 +143,7 @@ class AttendeeExplorer(ttk.Window):
             logging.error(f"Database Connection Failed: {e}")
 
     def get_hub_url(self):
+        """Reads exclusive configuration from explorer.json"""
         if os.path.exists(EXPLORER_CONFIG):
             try:
                 with open(EXPLORER_CONFIG, 'r') as f:
@@ -176,7 +177,7 @@ class AttendeeExplorer(ttk.Window):
                 with open(EXPLORER_CONFIG, 'w') as f:
                     json.dump(config_data, f, indent=4)
                     
-                messagebox.showinfo("Saved", f"API URL updated to:\n{new_url}\n\nExplorer will now use this for Portable Mode.")
+                messagebox.showinfo("Saved", f"API URL updated in explorer.json to:\n{new_url}")
                 
                 self.combo_source.current(1)
                 self.load_data_async(is_manual=True)
@@ -184,7 +185,7 @@ class AttendeeExplorer(ttk.Window):
                 messagebox.showerror("Error", f"Failed to save URL: {e}")
 
     # ==========================================================================
-    # UI CONSTRUCTION
+    # UI CONSTRUCTION (RESPONSIVE & CLEAN)
     # ==========================================================================
     def build_ui(self):
         main_container = ttk.Frame(self, padding=25)
@@ -205,7 +206,7 @@ class AttendeeExplorer(ttk.Window):
         self.lbl_record_count = ttk.Label(action_box, text="Loading records...", font="-size 11 -weight bold", bootstyle=INFO)
         self.lbl_record_count.pack(side=LEFT, padx=(0, 10))
         
-        # Connection Health Indicator
+        # Live Connection Indicator
         self.lbl_conn_status = ttk.Label(action_box, text="● Syncing...", font="-size 10 -weight bold", bootstyle=SECONDARY)
         self.lbl_conn_status.pack(side=LEFT, padx=(0, 15))
         
@@ -246,23 +247,23 @@ class AttendeeExplorer(ttk.Window):
         filter_frame.pack(fill=X, pady=(0, 15))
         
         ttk.Label(filter_frame, text="🔍", font="-size 12", background=self.CARD_BG).pack(side=LEFT, padx=(5, 5))
-        self.ent_search = ttk.Entry(filter_frame, font="-size 10", width=25)
+        self.ent_search = ttk.Entry(filter_frame, font="-size 10", width=22)
         self.ent_search.pack(side=LEFT, fill=X, expand=True, padx=(0, 15))
         self.ent_search.bind("<KeyRelease>", lambda e: self.apply_filters())
 
         ttk.Label(filter_frame, text="Type:", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, padx=(5, 5))
-        self.combo_type = ttk.Combobox(filter_frame, values=["All Types", "GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"], state="readonly", width=14)
+        self.combo_type = ttk.Combobox(filter_frame, values=["All Types", "GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"], state="readonly", width=12)
         self.combo_type.current(0)
         self.combo_type.pack(side=LEFT, padx=(0, 15))
         self.combo_type.bind("<<ComboboxSelected>>", lambda e: self.apply_filters())
 
         ttk.Label(filter_frame, text="Sort By:", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, padx=(5, 5))
-        self.combo_sort = ttk.Combobox(filter_frame, values=["Latest First", "Oldest First", "Name (A-Z)", "Name (Z-A)"], state="readonly", width=16)
+        self.combo_sort = ttk.Combobox(filter_frame, values=["Latest First", "Oldest First", "Name (A-Z)", "Name (Z-A)"], state="readonly", width=14)
         self.combo_sort.current(0)
         self.combo_sort.pack(side=LEFT, padx=(0, 15))
         self.combo_sort.bind("<<ComboboxSelected>>", lambda e: self.apply_filters())
 
-        ttk.Button(filter_frame, text="Clear Filters", bootstyle="secondary-link", command=self.clear_filters).pack(side=RIGHT, padx=(5, 5))
+        ttk.Button(filter_frame, text="Clear", bootstyle="secondary-link", command=self.clear_filters).pack(side=RIGHT, padx=(5, 5))
 
         # -- TREEVIEW --
         tree_card = ttk.Frame(left_frame, style="Card.TFrame", padding=2)
@@ -290,26 +291,26 @@ class AttendeeExplorer(ttk.Window):
         self.tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side=RIGHT, fill=Y)
 
-        # RIGHT PANEL: PROFILE & PHOTO CARD
+        # RIGHT PANEL: PROFILE & PHOTO CARD (FIXED CLIPPING & OVERLAPS)
         right_frame = ttk.Frame(split_frame, width=420)
         right_frame.pack(side=RIGHT, fill=Y)
         right_frame.pack_propagate(False)
 
-        profile_card = ttk.Frame(right_frame, style="Card.TFrame", padding=25)
+        profile_card = ttk.Frame(right_frame, style="Card.TFrame", padding=20)
         profile_card.pack(fill=BOTH, expand=True)
 
-        ttk.Label(profile_card, text="ATTENDEE PROFILE", font="-size 12 -weight bold", background=self.CARD_BG, foreground="gray").pack(anchor=W, pady=(0, 15))
+        ttk.Label(profile_card, text="ATTENDEE PROFILE", font="-size 12 -weight bold", background=self.CARD_BG, foreground="gray").pack(anchor=W, pady=(0, 10))
 
         self.lbl_photo = ttk.Label(profile_card, text="Select an attendee to\nview profile details.", justify=CENTER, background=self.CARD_BG, font="-size 10", foreground="gray")
-        self.lbl_photo.pack(pady=(0, 20))
+        self.lbl_photo.pack(pady=(0, 10))
         
-        self.lbl_profile_name = ttk.Label(profile_card, text="--", font="-size 20 -weight bold", background=self.CARD_BG, wraplength=340)
+        self.lbl_profile_name = ttk.Label(profile_card, text="--", font="-size 18 -weight bold", background=self.CARD_BG, wraplength=360)
         self.lbl_profile_name.pack(anchor=W)
-        self.lbl_profile_id = ttk.Label(profile_card, text="--", font="-size 11 -weight bold", background=self.CARD_BG, bootstyle=SECONDARY)
-        self.lbl_profile_id.pack(anchor=W, pady=(0, 15))
+        self.lbl_profile_id = ttk.Label(profile_card, text="--", font="-size 10 -weight bold", background=self.CARD_BG, bootstyle=SECONDARY)
+        self.lbl_profile_id.pack(anchor=W, pady=(0, 10))
 
         self.badge_frame = ttk.Frame(profile_card, style="Flat.TFrame")
-        self.badge_frame.pack(fill=X, anchor=W, pady=(0, 20))
+        self.badge_frame.pack(fill=X, anchor=W, pady=(0, 10))
         
         self.lbl_badge_type = ttk.Label(self.badge_frame, text="TYPE", font="-size 9 -weight bold", padding=(10, 4), bootstyle="inverse-secondary")
         self.lbl_badge_type.pack(side=LEFT, padx=(0, 8))
@@ -317,7 +318,7 @@ class AttendeeExplorer(ttk.Window):
         self.lbl_badge_sync = ttk.Label(self.badge_frame, text="SYNC", font="-size 9 -weight bold", padding=(10, 4), bootstyle="inverse-secondary")
         self.lbl_badge_sync.pack(side=LEFT)
 
-        ttk.Separator(profile_card).pack(fill=X, pady=(0, 15))
+        ttk.Separator(profile_card).pack(fill=X, pady=(0, 10))
 
         details_frame = ttk.Frame(profile_card, style="Flat.TFrame")
         details_frame.pack(fill=BOTH, expand=True)
@@ -334,13 +335,13 @@ class AttendeeExplorer(ttk.Window):
 
         for i, (label_text, var) in enumerate(self.profile_vars.items()):
             row = ttk.Frame(details_frame, style="Flat.TFrame")
-            row.pack(fill=X, pady=(5, 5))
+            row.pack(fill=X, pady=(3, 3))
             
-            ttk.Label(row, text=f"{label_text.upper()}", width=12, font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, anchor=N)
-            ttk.Label(row, textvariable=var, font="-size 11", background=self.CARD_BG, wraplength=250).pack(side=LEFT, fill=X, expand=True, anchor=N)
+            ttk.Label(row, text=f"{label_text.upper()}", width=11, font="-size 8 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, anchor=N)
+            ttk.Label(row, textvariable=var, font="-size 10", background=self.CARD_BG, wraplength=260).pack(side=LEFT, fill=X, expand=True, anchor=N)
             
             if i < len(self.profile_vars) - 1:
-                ttk.Separator(details_frame).pack(fill=X, pady=2)
+                ttk.Separator(details_frame).pack(fill=X, pady=1)
 
     def _build_mini_stat(self, parent, title, bootstyle, is_purple=False):
         frame = ttk.Frame(parent, style="Card.TFrame", padding=(15, 12))
@@ -359,7 +360,7 @@ class AttendeeExplorer(ttk.Window):
         return val_lbl
 
     # ==========================================================================
-    # THREAD-SAFE DATA LOADING & QUEUE
+    # THREAD-SAFE DATA LOADING & QUEUE (RESILIENT AUTO-HEALING)
     # ==========================================================================
     def _process_gui_queue(self):
         for _ in range(50):
@@ -376,17 +377,11 @@ class AttendeeExplorer(ttk.Window):
         self.after(10000, self._auto_refresh_loop)
 
     def load_data_async(self, is_manual=False):
-        """
-        Fetches data gracefully. 
-        is_manual=True : User clicked Refresh manually (shows popups if errors occur).
-        is_manual=False: Auto-refresh or mode-switch (suppresses error popups, only updates UI status badge).
-        """
         mode = self.combo_source.get()
         
         if is_manual:
             self.btn_refresh.configure(state=DISABLED, text="Loading...")
             
-        # Do not overwrite red error text during a silent retry unless it succeeds
         if self.lbl_record_count.cget("text") != "Fetch Failed (Offline)":
             self.lbl_record_count.configure(text="Syncing records...", bootstyle=INFO)
         
@@ -403,7 +398,7 @@ class AttendeeExplorer(ttk.Window):
                         self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● API: Connected", bootstyle=SUCCESS))
                     except Exception as e:
                         self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● API: Offline", bootstyle=DANGER))
-                        raise Exception(f"Failed to reach Hub Server at {hub_url}.\n\nPlease check network or server status.")
+                        raise Exception(f"Failed to reach Hub Server at {hub_url}.")
                 else:
                     if not self.SessionMySQL:
                         self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● DB: Offline", bootstyle=DANGER))
@@ -422,6 +417,7 @@ class AttendeeExplorer(ttk.Window):
                 logging.error(f"Failed to load data: {e}")
                 self.gui_queue.put(lambda: self.lbl_record_count.configure(text="Fetch Failed (Offline)", bootstyle=DANGER))
                 
+                # Only show popup if user manually clicked refresh
                 if is_manual:
                     self.gui_queue.put(lambda err=str(e): messagebox.showerror("Connection Error", err))
             finally:
@@ -603,9 +599,9 @@ class AttendeeExplorer(ttk.Window):
     def render_image(self, path):
         try:
             img = Image.open(path)
-            img = ImageOps.fit(img, (220, 220), Image.Resampling.LANCZOS)
+            img = ImageOps.fit(img, (180, 180), Image.Resampling.LANCZOS)
             
-            bg = Image.new('RGBA', (230, 230), self._hex_to_rgb(self.SOFT_BORDER) + (255,))
+            bg = Image.new('RGBA', (190, 190), self._hex_to_rgb(self.SOFT_BORDER) + (255,))
             bg.paste(img, (5, 5))
             
             tk_img = ImageTk.PhotoImage(bg)
