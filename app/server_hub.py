@@ -679,6 +679,51 @@ def get_network_data():
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
 
+# ==============================================================================
+# EXPLORER PORTABLE HUB API
+# ==============================================================================
+@app.route('/api/attendees', methods=['GET'])
+def get_all_attendees():
+    sessions = get_cached_sessions() or {}
+    mysql_factory = sessions.get('mysql')
+    if not mysql_factory: 
+        return jsonify({"status": "error", "message": "DB offline"}), 503
+        
+    session = mysql_factory()
+    try:
+        main_att = session.query(Attendee).all()
+        kiosk_att = session.query(OfflineKioskAttendee).all()
+        
+        results = []
+        for att in (main_att + kiosk_att):
+            att_dict = {
+                "id": att.id,
+                "attendee_id": att.attendee_id,
+                "full_name": att.full_name,
+                "mobile": att.mobile,
+                "email": att.email,
+                "gender": att.gender.name if hasattr(att.gender, 'name') else str(att.gender),
+                "attendee_type": att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type),
+                "business_name": att.business_name,
+                "business_category": att.business_category,
+                "city": att.city,
+                "state": att.state,
+                "pincode": att.pincode,
+                "needs_cloud_sync": getattr(att, 'needs_cloud_sync', False),
+                "checkin_history": att.checkin_history if isinstance(att.checkin_history, dict) else {},
+                "created_at": att.created_at.isoformat() + "Z" if att.created_at else None
+            }
+            results.append(att_dict)
+            
+        return jsonify(results), 200
+    except Exception as e:
+        logging.error(f"Failed to fetch attendees API: {e}")
+        return jsonify({"status": "error", "message": "Internal error."}), 500
+    finally:
+        try: session.close()
+        except Exception: pass
+
+
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
