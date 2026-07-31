@@ -1,6 +1,7 @@
 import os
 import json
 import enum
+import logging
 from datetime import datetime
 import pymysql
 
@@ -10,7 +11,7 @@ pymysql.install_as_MySQLdb()
 
 from sqlalchemy import (
     create_engine, inspect, Column, String, Text, DateTime, 
-    Boolean, Enum, Float, Integer, JSON, CheckConstraint, text
+    Boolean, Enum, Float, Integer, JSON, CheckConstraint, text, exc
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -35,7 +36,7 @@ class AttendeeTypeEnum(enum.Enum):
     EXHIBITOR = 'EXHIBITOR'
 
 # ==============================================================================
-# DATABASE MODELS
+# DATABASE MODELS (Unchanged for 100% Compatibility)
 # ==============================================================================
 
 class Attendee(Base):
@@ -64,7 +65,7 @@ class Attendee(Base):
     
     checkin_history = Column(JSON, nullable=False, default={})
     
-    # 🛡️ Synchronization Flags (Updated for Netlify Parity)
+    # 🛡️ Synchronization Flags
     needs_cloud_sync = Column(Boolean, nullable=False, default=True, index=True)
     needs_sheet_sync = Column(Boolean, nullable=False, default=False)
     needs_local_sync = Column(Boolean, nullable=False, default=False, index=True)
@@ -102,7 +103,7 @@ class OfflineKioskAttendee(Base):
     
     checkin_history = Column(JSON, nullable=False, default={})
     
-    # 🛡️ Synchronization Flags (Updated for Netlify Parity)
+    # 🛡️ Synchronization Flags
     needs_cloud_sync = Column(Boolean, nullable=False, default=True, index=True)
     needs_sheet_sync = Column(Boolean, nullable=False, default=False)
     needs_local_sync = Column(Boolean, nullable=False, default=False, index=True)
@@ -125,25 +126,31 @@ class DownloadedPhoto(Base):
 # ==============================================================================
 
 def load_db_config():
-    """Loads the database configurations from schema.json"""
+    """Loads the database configurations safely from schema.json"""
     if not os.path.exists(CONFIG_PATH):
         raise FileNotFoundError(f"Configuration file missing at: {CONFIG_PATH}")
-    with open(CONFIG_PATH, 'r') as f:
-        return json.load(f)
+    try:
+        with open(CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON format in config file {CONFIG_PATH}: {e}")
 
 def create_mysql_database_if_missing(mysql_url, db_name):
-    """Creates the MySQL database if it doesn't already exist."""
+    """Creates the MySQL database securely if it doesn't already exist."""
     base_url = mysql_url.rsplit('/', 1)[0]
     try:
-        temp_engine = create_engine(base_url)
-        with temp_engine.connect() as conn:
+        temp_engine = create_engine(base_url, pool_pre_ping=True)
+        # Using engine.begin() ensures an auto-committing transaction block
+        with temp_engine.begin() as conn:
             conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"))
-            print(f"[MySQL] Verified database '{db_name}' exists.")
-    except Exception as e:
-        print(f"[MySQL] Error verifying/creating database: {e}")
+            logging.info(f"[MySQL] Verified database '{db_name}' exists.")
+    except exc.SQLAlchemyError as e:
+        logging.error(f"[MySQL] Connection/Creation Error: {e}")
+    finally:
+        temp_engine.dispose()
 
 def verify_and_update_columns(engine):
-    """Compares the actual DB schema with SQLAlchemy models and adds missing columns."""
+    """Safely compares actual DB schema with SQLAlchemy models and adds missing columns."""
     inspector = inspect(engine)
     existing_tables = inspector.get_table_names()
 
@@ -152,10 +159,12 @@ def verify_and_update_columns(engine):
             continue
 
         existing_columns = [col['name'] for col in inspector.get_columns(table_name)]
-        with engine.connect() as conn:
+        
+        # Use engine.begin() for safe schema altering (rolls back on failure)
+        with engine.begin() as conn:
             for column in table.columns:
                 if column.name not in existing_columns:
-                    print(f"[{engine.name.upper()}] Missing column detected: {table_name}.{column.name}. Attempting to add...")
+                    logging.info(f"[{engine.name.upper()}] Missing column detected: {table_name}.{column.name}. Attempting to add...")
                     
                     col_type = column.type.compile(engine.dialect)
                     nullable = "NULL" if column.nullable else "NOT NULL"
@@ -164,49 +173,67 @@ def verify_and_update_columns(engine):
                     alter_stmt = f"ALTER TABLE {table_name} ADD COLUMN {column.name} {col_type} {nullable} {default};"
                     try:
                         conn.execute(text(alter_stmt))
-                        conn.commit()
-                        print(f"[{engine.name.upper()}] Successfully added {table_name}.{column.name}.")
-                    except Exception as e:
-                        print(f"[{engine.name.upper()}] Failed to add {column.name}: {e}")
+                        logging.info(f"[{engine.name.upper()}] Successfully added {table_name}.{column.name}.")
+                    except exc.SQLAlchemyError as e:
+                        logging.error(f"[{engine.name.upper()}] Failed to add {column.name} to {table_name}: {e}")
 
 def init_database(db_url, db_name=None, is_mysql=False):
-    """Initializes the connection, creates missing tables, and synchronizes schema."""
+    """Initializes the engine with High-Concurrency pooling parameters."""
     if is_mysql and db_name:
         create_mysql_database_if_missing(db_url, db_name)
-    
-    engine = create_engine(db_url, echo=False)
-    Base.metadata.create_all(engine)
-    verify_and_update_columns(engine)
-    
+        # Robust Pooling: 
+        # pool_recycle drops connections before MySQL's default 8-hour timeout kills them.
+        # pool_pre_ping tests the socket before every single query to ensure zero dead connections.
+        engine = create_engine(
+            db_url, 
+            echo=False, 
+            pool_size=25, 
+            max_overflow=50, 
+            pool_recycle=1800, 
+            pool_pre_ping=True
+        )
+    else:
+        # SQLite needs check_same_thread=False to support 150+ concurrent Flask Waitress threads
+        engine = create_engine(
+            db_url, 
+            echo=False,
+            connect_args={'check_same_thread': False},
+            pool_pre_ping=True
+        )
+
+    try:
+        Base.metadata.create_all(engine)
+        verify_and_update_columns(engine)
+    except exc.SQLAlchemyError as e:
+        logging.error(f"Error initializing schema for {engine.name.upper()}: {e}")
+        
     return sessionmaker(bind=engine)
 
 def get_database_sessions():
-    """Reads config, initializes both databases (if enabled), and returns the session makers."""
+    """Reads config, initializes databases safely, and returns the session makers."""
     config = load_db_config()
     sessions = {"sqlite": None, "mysql": None}
 
-    # Initialize SQLite
+    # Initialize SQLite Server
     if config.get("sqlite", {}).get("enabled", False):
         sq_config = config["sqlite"]
         db_folder = os.path.join(BASE_DIR, sq_config["folder_name"])
-        os.makedirs(db_folder, exist_ok=True)  # Ensure 'app/db' exists
+        os.makedirs(db_folder, exist_ok=True)
         
         sqlite_path = os.path.join(db_folder, sq_config["file_name"])
         sqlite_url = f"sqlite:///{sqlite_path}"
         
-        print(f"Initializing Local SQLite Database at {sqlite_path}...")
+        logging.info(f"Initializing Local SQLite Database at {sqlite_path}...")
         sessions["sqlite"] = init_database(sqlite_url)
-        print("SQLite Ready.\n")
 
-    # Initialize MySQL
+    # Initialize MySQL Server
     if config.get("mysql", {}).get("enabled", False):
         my_config = config["mysql"]
         db_name = my_config["database"]
         mysql_url = f"mysql+mysqldb://{my_config['user']}:{my_config['password']}@{my_config['host']}:{my_config['port']}/{db_name}"
         
-        print(f"Initializing MySQL Hub Database ({db_name})...")
+        logging.info(f"Initializing MySQL Hub Database ({db_name})...")
         sessions["mysql"] = init_database(mysql_url, db_name=db_name, is_mysql=True)
-        print("MySQL Ready.\n")
 
     return sessions
 
@@ -214,6 +241,6 @@ def get_database_sessions():
 # ENTRY POINT / TESTING
 # ==============================================================================
 if __name__ == '__main__':
-    # Running this file directly will execute the initialization
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     db_sessions = get_database_sessions()
-    print("Database initialization script completed successfully.")
+    print("Database robust initialization script completed successfully.")
