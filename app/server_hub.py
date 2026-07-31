@@ -108,6 +108,51 @@ def _configure_windows_platform():
 
 _configure_windows_platform()
 
+# --- SMART HARDWARE SENSORS ---
+def get_system_temp():
+    try:
+        if hasattr(psutil, "sensors_temperatures"):
+            temps = psutil.sensors_temperatures()
+            if not temps: return None
+            # Loop through all hardware sensors to find active CPU temps
+            for name, entries in temps.items():
+                for entry in entries:
+                    if entry.current and entry.current > 0:
+                        return int(entry.current)
+    except Exception:
+        pass
+    return None
+
+# Globals for network bandwidth tracking
+LAST_NET_IO = None
+LAST_NET_TIME = None
+
+def get_network_speed_mbps():
+    global LAST_NET_IO, LAST_NET_TIME
+    try:
+        current_io = psutil.net_io_counters()
+        current_time = time.time()
+        
+        if LAST_NET_IO is None or LAST_NET_TIME is None:
+            LAST_NET_IO = current_io
+            LAST_NET_TIME = current_time
+            return 0.0
+            
+        elapsed = current_time - LAST_NET_TIME
+        if elapsed <= 0: return 0.0
+        
+        bytes_sent = current_io.bytes_sent - LAST_NET_IO.bytes_sent
+        bytes_recv = current_io.bytes_recv - LAST_NET_IO.bytes_recv
+        
+        LAST_NET_IO = current_io
+        LAST_NET_TIME = current_time
+        
+        # Convert total bytes to Megabits per second (Mbps)
+        return ((bytes_sent + bytes_recv) * 8 / 1_000_000) / elapsed
+    except Exception:
+        return 0.0
+
+
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
 except ModuleNotFoundError:
@@ -585,7 +630,6 @@ def stats(): return render_template('network_stats.html')
 @app.route('/api/status', methods=['GET'])
 def get_server_status():
     ip = request.remote_addr
-    # Compound ID completely solves the "Same Wi-Fi" overwrite bug.
     reported_name = request.args.get('device_name', 'Unknown Device')
     if reported_name == "null": reported_name = "Unknown Device"
     
@@ -606,7 +650,6 @@ def get_server_status():
 
 @app.route('/api/device/rename', methods=['POST'])
 def rename_device():
-    """Injected endpoint to persist custom device names securely."""
     data = request.json or {}
     device_id = data.get('id') or data.get('ip')
     new_name = data.get('new_name', '').strip()
@@ -619,7 +662,6 @@ def rename_device():
         if device_id in ACTIVE_DEVICES:
             ACTIVE_DEVICES[device_id]['name'] = new_name
             
-    # Persist to disk to survive reboots
     try:
         with open(DEVICE_NAMES_FILE, 'w') as f:
             json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
@@ -918,9 +960,9 @@ class ServerHub(ttk.Window):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.3 (Hardened + Responsive UI)")
         
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        ww, wh = max(900, min(1600, int(sw * 0.92))), max(600, min(950, int(sh * 0.90)))
+        ww, wh = max(950, min(1600, int(sw * 0.92))), max(650, min(950, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
-        self.minsize(min(1000, ww), min(650, wh))
+        self.minsize(1000, 650)
 
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
@@ -1059,6 +1101,13 @@ class ServerHub(ttk.Window):
         self.style.map("Treeview.Heading", background=[("active", _mix_hex(self.CARD_BG, colors.get("fg"), 0.20))])
         self.style.configure("Treeview", bordercolor=BG_BORDER, borderwidth=1)
 
+    def _build_status_badge(self, parent, initial_text, bootstyle):
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(12, 6))
+        frame.pack(side=LEFT, padx=(0, 10))
+        lbl = ttk.Label(frame, text=initial_text, bootstyle=bootstyle, font="-size 9 -weight bold", background=self.CARD_BG)
+        lbl.pack(anchor=CENTER)
+        return lbl
+
     def build_ui(self):
         self._configure_custom_styles()
         self.root_container = ttk.Frame(self)
@@ -1163,13 +1212,12 @@ class ServerHub(ttk.Window):
         ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font="-size 18 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
         
         bot_hdr = ttk.Frame(left_hdr)
-        bot_hdr.pack(fill=X, pady=(8, 0))
-        self.lbl_stat_cf = ttk.Label(bot_hdr, text="● Cloudflare: OFFLINE", bootstyle=SECONDARY, font="-weight bold")
-        self.lbl_stat_cf.pack(side=LEFT, padx=(0, 15))
-        self.lbl_stat_sqlite = ttk.Label(bot_hdr, text="● SQLITE: CHECKING", bootstyle=INFO, font="-weight bold")
-        self.lbl_stat_sqlite.pack(side=LEFT, padx=(0, 15))
-        self.lbl_stat_mysql = ttk.Label(bot_hdr, text="● MYSQL: CHECKING", bootstyle=INFO, font="-weight bold")
-        self.lbl_stat_mysql.pack(side=LEFT, padx=(0, 15))
+        bot_hdr.pack(fill=X, pady=(12, 0))
+        
+        # Enhanced Badges for Header (Replaces plain text from Image 2)
+        self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
+        self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
+        self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
 
         right_hdr = ttk.Frame(header_container)
         right_hdr.pack(side=RIGHT, fill=Y)
@@ -1187,6 +1235,10 @@ class ServerHub(ttk.Window):
         
         self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_ram.pack(side=LEFT, padx=5)
+        
+        # Dual-Purpose Smart Meter (Temp / Network Speed Fallback)
+        self.mini_meter_hw = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SECONDARY, subtext="HW", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f}")
+        self.mini_meter_hw.pack(side=LEFT, padx=5)
         
         self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f} ms")
         self.mini_meter_api.pack(side=LEFT, padx=5)
@@ -1342,6 +1394,16 @@ class ServerHub(ttk.Window):
             c = int(psutil.cpu_percent()); r = int(psutil.virtual_memory().percent)
             self.mini_meter_cpu.configure(amountused=c, bootstyle=SUCCESS if c < 60 else (WARNING if c < 85 else DANGER))
             self.mini_meter_ram.configure(amountused=r, bootstyle=SUCCESS if r < 70 else (WARNING if r < 90 else DANGER))
+        except Exception: pass
+        
+        # SMART METER: Temperature or Network Speed Fallback
+        try:
+            t = get_system_temp()
+            if t is not None:
+                self.mini_meter_hw.configure(amountused=min(t, 100), amountformat="{:.0f}°C", subtext="TEMP", bootstyle=SUCCESS if t < 60 else (WARNING if t < 80 else DANGER))
+            else:
+                mbps = get_network_speed_mbps()
+                self.mini_meter_hw.configure(amountused=min(mbps, 100), amountformat="{:.1f}", subtext="Mbps", bootstyle=INFO if mbps > 0.5 else SECONDARY)
         except Exception: pass
         
         try:
