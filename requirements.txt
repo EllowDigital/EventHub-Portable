@@ -22,3 +22,7 @@ python-barcode
 qrcode
 cloudinary
 cryptography
+psutil
+matplotlib
+indiapins
+cheroot
