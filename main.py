@@ -18,7 +18,9 @@ import urllib.request
 import re
 import ctypes
 import winreg
+import time
 from datetime import datetime
+import tkinter as tk
 
 # ==============================================================================
 # AUTO-ADMINISTRATOR ELEVATION (WINDOWS) — STEALTH MODE
@@ -31,25 +33,30 @@ def is_admin():
         return False
 
 if os.name == 'nt' and not is_admin():
-    # Force pythonw.exe to completely hide the background console window upon elevation
     executable = sys.executable
     if executable.lower().endswith("python.exe"):
         executable = executable[:-10] + "pythonw.exe"
         
-    # Relaunch the script with an Administrator UAC prompt, fully hidden terminal
     ctypes.windll.shell32.ShellExecuteW(
         None, "runas", executable, " ".join([f'"{arg}"' for arg in sys.argv]), None, 1
     )
-    sys.exit() # Exit the non-admin process
+    sys.exit() 
 
-# We only import GUI modules AFTER ensuring we have admin rights to prevent double-windows
+# ==============================================================================
+# 24/7 STABILITY: GLOBAL CRASH HANDLER
+# ==============================================================================
+def global_exception_handler(*args):
+    print(f"Uncaught GUI Exception intercepted. App remains running: {args}")
+
+tk.Tk.report_callback_exception = global_exception_handler
+
 try:
-    from ttkbootstrap.widgets.scrolled import ScrolledText
-    from ttkbootstrap.constants import *
     import ttkbootstrap as ttk
+    from ttkbootstrap.constants import *
+    from ttkbootstrap.widgets.scrolled import ScrolledText
     from tkinter import messagebox, simpledialog
 except ImportError:
-    pass # Will be handled by _bootstrap_first_run()
+    pass 
 
 # ==============================================================================
 # PATHS & CONFIG
@@ -68,11 +75,6 @@ MIN_PYTHON = (3, 9)
 # ENVIRONMENT INJECTION (PERMANENT)
 # ==============================================================================
 def inject_cloudflared_path():
-    """
-    Injects standard MSI install locations into the current session's PATH
-    AND permanently adds it to the System Environment Variables so `cloudflared`
-    can be typed directly into any new CMD window without needing .exe.
-    """
     cf_paths = [r"C:\Program Files\cloudflared", r"C:\Program Files (x86)\cloudflared"]
     current_path = os.environ.get("PATH", "")
     
@@ -81,23 +83,18 @@ def inject_cloudflared_path():
         if os.path.exists(path):
             valid_path = path
             if path not in current_path:
-                # Prepend the path so it takes highest priority in the current session
                 os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
             break
 
-    # If found, permanently add it to the Windows System PATH
     if valid_path and os.name == 'nt':
         try:
-            # Open the System Environment key (Requires Admin, which this script has)
             key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
             sys_path, _ = winreg.QueryValueEx(key, "Path")
             
-            # Check if it's already permanently added
             if valid_path.lower() not in sys_path.lower():
                 new_path = valid_path + os.pathsep + sys_path
                 winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
                 
-                # Broadcast the environment change to Windows so new CMD windows get it instantly
                 HWND_BROADCAST = 0xFFFF
                 WM_SETTINGCHANGE = 0x001A
                 SMTO_ABORTIFHUNG = 0x0002
@@ -105,25 +102,22 @@ def inject_cloudflared_path():
             
             winreg.CloseKey(key)
         except Exception:
-            pass # Failsafe in case of registry lock
+            pass 
 
 # ==============================================================================
 # FIRST-RUN BOOTSTRAP (100% Invisible)
 # ==============================================================================
 def _bootstrap_first_run():
-    """Installs ttkbootstrap silently if missing so the UI can launch."""
     try:
-        import ttkbootstrap  # noqa: F401
+        import ttkbootstrap 
         return
     except ImportError:
         pass
 
     if not os.path.isfile(REQUIREMENTS_FILE):
-        sys.exit(1) # Cannot proceed without requirements
+        sys.exit(1) 
 
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-    
-    # Install dependencies silently
     subprocess.call(
         [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE, "--disable-pip-version-check"], 
         cwd=ROOT_DIR, 
@@ -132,7 +126,6 @@ def _bootstrap_first_run():
         stderr=subprocess.DEVNULL
     )
     
-    # Relaunch UI silently
     executable = sys.executable
     if os.name == 'nt' and executable.lower().endswith("python.exe"):
         executable = executable[:-10] + "pythonw.exe"
@@ -159,104 +152,153 @@ TOOLS = [
 class LauncherApp(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="EventHub Portable — Central Launcher (Administrator)")
-        self.geometry("1100x950")
-        self.minsize(1000, 800)
+        
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        ww, wh = max(1000, min(1400, int(sw * 0.85))), max(750, min(1000, int(sh * 0.85)))
+        self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
+        self.minsize(1000, 750)
 
-        # Inject PATH on startup
         inject_cloudflared_path()
 
         self.gui_queue = queue.Queue()
         self.processes = {}      
         self.tool_widgets = {}   
+        self.health_widgets = {}
         self.cached_cf_path = None
 
+        self._configure_custom_styles()
         self.build_ui()
 
         # Staggered startup for smooth UI loading
-        self.after(100, self._process_gui_queue)
-        self.after(600, self.check_system_health)
+        self.after(50, self._process_gui_queue)
+        self.after(500, self.check_system_health)
         self.after(2000, self._poll_processes)
+
+    def _configure_custom_styles(self):
+        colors = self.style.colors
+        self.CARD_BG = colors.get("dark")
+        self.SOFT_BORDER = self._mix_hex(self.CARD_BG, colors.get("fg"), 0.08)
+        self.style.configure("Card.TFrame", background=self.CARD_BG, bordercolor=self.SOFT_BORDER, borderwidth=1, relief="solid")
+
+    def _hex_to_rgb(self, hex_color):
+        hex_color = hex_color.lstrip('#')
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+    def _rgb_to_hex(self, rgb):
+        return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
+
+    def _mix_hex(self, c_a, c_b, w):
+        return self._rgb_to_hex(a + (b - a) * w for a, b in zip(self._hex_to_rgb(c_a), self._hex_to_rgb(c_b)))
 
     # --------------------------------------------------------------------------
     # UI CONSTRUCTION
     # --------------------------------------------------------------------------
     def build_ui(self):
+        main_container = ttk.Frame(self, padding=25)
+        main_container.pack(fill=BOTH, expand=True)
+
         # -- Header --
-        header_frame = ttk.Frame(self, padding=(30, 25, 30, 10))
-        header_frame.pack(fill=X)
+        header_frame = ttk.Frame(main_container)
+        header_frame.pack(fill=X, pady=(0, 20))
 
-        ttk.Label(header_frame, text="EventHub Portable", font="-size 26 -weight bold").pack(side=LEFT)
-        ttk.Button(header_frame, text="⟳ Refresh Health Check", bootstyle=(OUTLINE, INFO), command=self.check_system_health).pack(side=RIGHT, pady=5)
-        ttk.Label(header_frame, text="TENT DECOR EXPO UP 2026", font="-size 12", bootstyle=PRIMARY).pack(anchor=W, pady=(5, 0))
+        title_box = ttk.Frame(header_frame)
+        title_box.pack(side=LEFT)
+        ttk.Label(title_box, text="EventHub Portable", font="-size 24 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
+        ttk.Label(title_box, text="CENTRAL LAUNCHER • TDE UP 2026", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
 
-        # -- System Health Panel --
-        health_frame = ttk.Labelframe(self, text="System Health & Versions", padding=15)
-        health_frame.pack(fill=X, padx=30, pady=(10, 20))
+        action_box = ttk.Frame(header_frame)
+        action_box.pack(side=RIGHT)
+        ttk.Button(action_box, text="⟳ Refresh Health Check", bootstyle="outline-info", command=self.check_system_health).pack(side=LEFT, padx=5)
+        ttk.Button(action_box, text="🛑 Stop All Active Tools", bootstyle=DANGER, command=self.stop_all_tools).pack(side=LEFT, padx=5)
+
+        # -- System Health Panel (Cards) --
+        ttk.Label(main_container, text="⚙️ SYSTEM HEALTH", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 5))
+        health_grid = ttk.Frame(main_container)
+        health_grid.pack(fill=X, pady=(0, 20))
         
-        grid_frame = ttk.Frame(health_frame)
-        grid_frame.pack(fill=X)
+        self._build_health_card(health_grid, "python", "PYTHON VER", "Checking...")
+        self._build_health_card(health_grid, "cloudflared", "CLOUDFLARED", "Checking...")
+        self._build_health_card(health_grid, "deps", "DEPENDENCIES", "Checking...")
+        self._build_health_card(health_grid, "config", "CONFIGURATION", "Checking...")
 
-        self.lbl_python = ttk.Label(grid_frame, text="Python: checking...", font="-size 10")
-        self.lbl_python.grid(row=0, column=0, padx=(0, 40), sticky=W)
+        # -- Main Split Content --
+        split_frame = ttk.Frame(main_container)
+        split_frame.pack(fill=BOTH, expand=True)
 
-        self.lbl_cloudflared = ttk.Label(grid_frame, text="Cloudflared: checking...", font="-size 10")
-        self.lbl_cloudflared.grid(row=0, column=1, padx=(0, 40), sticky=W)
+        # Left: Tools 
+        left_col = ttk.Frame(split_frame, width=500)
+        left_col.pack(side=LEFT, fill=Y, padx=(0, 20))
+        left_col.pack_propagate(False)
 
-        self.lbl_deps = ttk.Label(grid_frame, text="Dependencies: checking...", font="-size 10")
-        self.lbl_deps.grid(row=0, column=2, padx=(0, 40), sticky=W)
-
-        self.lbl_config = ttk.Label(grid_frame, text="Configuration: checking...", font="-size 10")
-        self.lbl_config.grid(row=0, column=3, sticky=W)
-
-        # -- Tool Control Grid --
-        tools_frame = ttk.Frame(self, padding=(30, 0, 30, 10))
-        tools_frame.pack(fill=BOTH, expand=True)
-
+        ttk.Label(left_col, text="🛠️ APPLICATION TOOLS", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 10))
+        
         for tool in TOOLS:
-            self._build_tool_card(tools_frame, tool)
+            self._build_tool_card(left_col, tool)
+            
+        btn_row = ttk.Frame(left_col)
+        btn_row.pack(fill=X, side=BOTTOM)
+        ttk.Button(btn_row, text="📁 Open Root", bootstyle="outline-secondary", command=lambda: self.open_folder(ROOT_DIR)).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        ttk.Button(btn_row, text="⚙️ Configs", bootstyle="outline-secondary", command=lambda: self.open_folder(CONFIG_DIR)).pack(side=LEFT, fill=X, expand=True, padx=(5, 0))
 
-        # -- Action Bar --
-        action_bar = ttk.Frame(self, padding=(30, 15, 30, 5))
-        action_bar.pack(fill=X)
+        # Right: Logs
+        right_col = ttk.Frame(split_frame)
+        right_col.pack(side=LEFT, fill=BOTH, expand=True)
 
-        ttk.Button(action_bar, text="📁 Project Root", bootstyle=(OUTLINE, SECONDARY), command=lambda: self.open_folder(ROOT_DIR)).pack(side=LEFT, padx=(0, 10))
-        ttk.Button(action_bar, text="⚙️ Config Folder", bootstyle=(OUTLINE, SECONDARY), command=lambda: self.open_folder(CONFIG_DIR)).pack(side=LEFT)
-        ttk.Button(action_bar, text="🛑 Stop All Active Tools", bootstyle=DANGER, command=self.stop_all_tools).pack(side=RIGHT, padx=(10, 0))
-        ttk.Button(action_bar, text="🗑️ Clear Log", bootstyle=(OUTLINE, SECONDARY), command=self.clear_log).pack(side=RIGHT)
+        log_hdr = ttk.Frame(right_col)
+        log_hdr.pack(fill=X, pady=(0, 5))
+        ttk.Label(log_hdr, text="📟 ACTIVITY LOG (STDOUT)", font="-size 11 -weight bold").pack(side=LEFT)
+        ttk.Button(log_hdr, text="Clear", bootstyle="secondary-link", command=self.clear_log).pack(side=RIGHT)
 
-        # -- Activity Log --
-        log_frame = ttk.Labelframe(self, text="Activity Log (System & Tool Output)", padding=10)
-        log_frame.pack(fill=BOTH, expand=True, padx=30, pady=(10, 25))
+        log_frame = ttk.Frame(right_col, style="Card.TFrame", padding=2)
+        log_frame.pack(fill=BOTH, expand=True)
 
         self.log_box = ScrolledText(log_frame, autohide=True, wrap="word")
-        self.log_box.pack(fill=BOTH, expand=True)
-        self.log_box.text.configure(state="disabled", font=("Consolas", 10), bg="#1e1e1e")
+        self.log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
+        self.log_box.text.configure(state="disabled", font=("Consolas", 10), bg="#1e1e1e", borderwidth=0)
         
-        # Log color tags
         self.log_box.text.tag_config("INFO", foreground="#cccccc")
-        self.log_box.text.tag_config("SUCCESS", foreground="#5cb85c", font=("Consolas", 10, "bold"))
-        self.log_box.text.tag_config("WARNING", foreground="#f0ad4e", font=("Consolas", 10, "bold"))
-        self.log_box.text.tag_config("ERROR", foreground="#d9534f", font=("Consolas", 10, "bold"))
-        self.log_box.text.tag_config("TOOL", foreground="#5bc0de") # Color for tool stdout streams
+        self.log_box.text.tag_config("SUCCESS", foreground="#4CD37E", font=("Consolas", 10, "bold"))
+        self.log_box.text.tag_config("WARNING", foreground="#FFB454", font=("Consolas", 10, "bold"))
+        self.log_box.text.tag_config("ERROR", foreground="#FF6B6B", font=("Consolas", 10, "bold"))
+        self.log_box.text.tag_config("TOOL", foreground="#5DADE2") 
 
         self.log("System initialized with Administrator Privileges. Ready for operations.", "SUCCESS")
 
-    def _build_tool_card(self, parent, tool):
-        card = ttk.Frame(parent, relief="solid", borderwidth=1, padding=2)
-        card.pack(fill=X, pady=5)
+    def _build_health_card(self, parent, key, title, initial_val):
+        card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 10))
+        card.pack(side=LEFT, fill=X, expand=True, padx=4)
+        
+        top = ttk.Frame(card, style="Card.TFrame")
+        top.pack(fill=X)
+        
+        canvas = tk.Canvas(top, width=12, height=12, bg=self.CARD_BG, highlightthickness=0)
+        dot = canvas.create_oval(2, 2, 10, 10, fill="#757575", outline="")
+        canvas.pack(side=LEFT, padx=(0, 5))
+        
+        ttk.Label(top, text=title, font="-size 8 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT)
+        
+        val_lbl = ttk.Label(card, text=initial_val, font="-size 11 -weight bold", background=self.CARD_BG, foreground="gray")
+        val_lbl.pack(anchor=W, pady=(4, 0))
+        
+        self.health_widgets[key] = {"label": val_lbl, "canvas": canvas, "dot": dot}
 
-        inner = ttk.Frame(card, padding=15)
+    def _build_tool_card(self, parent, tool):
+        card = ttk.Frame(parent, style="Card.TFrame", padding=12)
+        card.pack(fill=X, pady=6)
+
+        inner = ttk.Frame(card, style="Card.TFrame")
         inner.pack(fill=BOTH, expand=True)
 
-        ttk.Label(inner, text=tool["icon"], font="-size 24").grid(row=0, column=0, rowspan=2, padx=(5, 20), sticky=W)
-        ttk.Label(inner, text=tool["label"], font="-size 12 -weight bold").grid(row=0, column=1, sticky=W)
-        ttk.Label(inner, text=tool["desc"], font="-size 10", bootstyle=SECONDARY).grid(row=1, column=1, sticky=W)
+        ttk.Label(inner, text=tool["icon"], font="-size 20", background=self.CARD_BG).grid(row=0, column=0, rowspan=2, padx=(5, 15), sticky=W)
+        ttk.Label(inner, text=tool["label"], font="-size 11 -weight bold", background=self.CARD_BG).grid(row=0, column=1, sticky=W)
+        
+        ttk.Label(inner, text=tool["desc"], font="-size 9", background=self.CARD_BG, foreground="gray", wraplength=220).grid(row=1, column=1, sticky=W)
 
-        status_lbl = ttk.Label(inner, text="⚫ IDLE", font="-size 10 -weight bold", bootstyle=SECONDARY, width=12, anchor=CENTER)
-        status_lbl.grid(row=0, column=2, rowspan=2, padx=20)
+        status_lbl = ttk.Label(inner, text="⚫ IDLE", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray", width=12, anchor=CENTER)
+        status_lbl.grid(row=0, column=2, rowspan=2, padx=10)
 
-        btn = ttk.Button(inner, text="Launch Tool", bootstyle=tool["bootstyle"], width=15, command=lambda t=tool: self.launch_tool(t))
-        btn.grid(row=0, column=3, rowspan=2, padx=(5, 5))
+        btn = ttk.Button(inner, text="Launch Tool", bootstyle=tool["bootstyle"], width=14, command=lambda t=tool: self.launch_tool(t))
+        btn.grid(row=0, column=3, rowspan=2)
 
         inner.columnconfigure(1, weight=1)
         self.tool_widgets[tool["key"]] = {"button": btn, "status": status_lbl}
@@ -268,26 +310,40 @@ class LauncherApp(ttk.Window):
         self.gui_queue.put(("log", {"msg": message, "level": level}))
 
     def _process_gui_queue(self):
-        try:
-            for _ in range(50):
+        """Immortal Queue Processing — wrapped in a try/except to survive bad data"""
+        for _ in range(100):
+            try:
                 kind, payload = self.gui_queue.get_nowait()
                 
                 if kind == "log":
                     self._append_log(payload["msg"], payload["level"])
-                elif kind == "deps_done":
-                    if payload:
-                        self.lbl_deps.configure(text="Dependencies: Ready ✓", bootstyle=SUCCESS)
-                    else:
-                        self.lbl_deps.configure(text="Dependencies: Failed ⚠", bootstyle=DANGER)
-                elif kind == "cf_checked":
-                    self._update_cf_ui(payload)
+                    
+                elif kind == "update_health":
+                    w = self.health_widgets.get(payload["key"])
+                    if w:
+                        # SAFELY extract the raw hex color instead of using broken ttk style maps
+                        color = getattr(self.style.colors, payload["style"], "#757575")
+                        
+                        w["label"].configure(text=payload["text"], foreground=color)
+                        w["canvas"].itemconfig(w["dot"], fill=color)
+                        
+                        # Heartbeat Animation
+                        w["canvas"].coords(w["dot"], 1, 1, 11, 11)
+                        self.after(200, lambda cv=w["canvas"], dt=w["dot"]: cv.coords(dt, 2, 2, 10, 10) if cv.winfo_exists() else None)
+                        
                 elif kind == "prompt_cf_token":
                     self._prompt_and_install_cf_service()
                 elif kind == "python_done":
                     messagebox.showinfo("Python Update Complete", "Python 3.14.6 installed. Please restart the app.", parent=self)
-        except queue.Empty:
-            pass
-        self.after(100, self._process_gui_queue) # Light on CPU
+                    
+            except queue.Empty:
+                break
+            except Exception as e:
+                # Failsafe: Ensures UI loop never dies
+                try: self._append_log(f"GUI Queue Error suppressed: {e}", "ERROR")
+                except Exception: pass
+                
+        self.after(30, self._process_gui_queue) 
 
     def _append_log(self, message, level):
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -295,6 +351,11 @@ class LauncherApp(ttk.Window):
         self.log_box.text.configure(state="normal")
         self.log_box.text.insert(END, formatted_msg, level)
         self.log_box.text.see(END)
+        
+        lc = int(self.log_box.text.index('end-1c').split('.')[0])
+        if lc > 2000: 
+            self.log_box.text.delete('1.0', f'{lc - 2000}.0')
+            
         self.log_box.text.configure(state="disabled")
 
     def clear_log(self):
@@ -305,29 +366,32 @@ class LauncherApp(ttk.Window):
     # --------------------------------------------------------------------------
     # SYSTEM HEALTH & VERSION CHECKS
     # --------------------------------------------------------------------------
+    def _set_health(self, key, text, style):
+        self.gui_queue.put(("update_health", {"key": key, "text": text, "style": style}))
+
     def check_system_health(self):
         self.log("Running system health & version checks...", "INFO")
         
         # 1. Python Version Check
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         if sys.version_info[:2] < MIN_PYTHON:
-            self.lbl_python.configure(text=f"Python: v{py_ver} (Needs {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+) ⚠", bootstyle=WARNING)
+            self._set_health("python", f"v{py_ver} (Needs {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+) ⚠", "warning")
             self._offer_python_install()
         else:
-            self.lbl_python.configure(text=f"Python: v{py_ver} ✓", bootstyle=SUCCESS)
+            self._set_health("python", f"v{py_ver} ✓", "success")
 
         # 2. Config Check
         if os.path.isfile(SCHEMA_CONFIG) and os.path.isfile(SECRETS_CONFIG):
-            self.lbl_config.configure(text="Configuration: Valid ✓", bootstyle=SUCCESS)
+            self._set_health("config", "Valid ✓", "success")
         else:
-            self.lbl_config.configure(text="Configuration: Missing ⚠", bootstyle=WARNING)
+            self._set_health("config", "Missing ⚠", "warning")
 
         # 3. Pip Dependencies Check
-        self.lbl_deps.configure(text="Dependencies: Verifying...", bootstyle=WARNING)
+        self._set_health("deps", "Verifying...", "warning")
         threading.Thread(target=self._install_requirements_thread, daemon=True).start()
 
-        # 4. Cloudflared Check (Threaded to prevent freeze)
-        self.lbl_cloudflared.configure(text="Cloudflared: Verifying...", bootstyle=WARNING)
+        # 4. Cloudflared Check
+        self._set_health("cloudflared", "Verifying...", "warning")
         threading.Thread(target=self._verify_cloudflared_thread, daemon=True).start()
 
     def _install_requirements_thread(self):
@@ -337,66 +401,48 @@ class LauncherApp(ttk.Window):
             proc = subprocess.run(cmd, cwd=ROOT_DIR, capture_output=True, text=True, creationflags=flags)
             if proc.returncode == 0:
                 self.log("Python dependencies verified.", "SUCCESS")
-                self.gui_queue.put(("deps_done", True))
+                self._set_health("deps", "Ready ✓", "success")
             else:
                 self.log(f"Dependency error: {proc.stderr}", "ERROR")
-                self.gui_queue.put(("deps_done", False))
+                self._set_health("deps", "Failed ⚠", "danger")
         except Exception as e:
             self.log(f"Failed to check dependencies: {e}", "ERROR")
-            self.gui_queue.put(("deps_done", False))
+            self._set_health("deps", "Error ⚠", "danger")
 
     # --------------------------------------------------------------------------
     # CLOUDFLARED MANAGEMENT
     # --------------------------------------------------------------------------
     def _get_cloudflared_path(self):
-        if self.cached_cf_path:
-            return self.cached_cf_path
-            
-        # Since we injected the directory into the PATH permanently, we can just return "cloudflared"
+        if self.cached_cf_path: return self.cached_cf_path
         if shutil.which("cloudflared"):
             self.cached_cf_path = "cloudflared"
             return "cloudflared"
-        
-        # Fallback check standard MSI install locations
         for base in [os.environ.get("ProgramFiles", "C:\\Program Files"), os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")]:
             guess = os.path.join(base, "cloudflared", "cloudflared.exe")
             if os.path.exists(guess):
-                self.cached_cf_path = "cloudflared" # Rely on our PATH injection instead of absolute .exe
+                self.cached_cf_path = "cloudflared" 
                 return "cloudflared"
         return None
 
     def _verify_cloudflared_thread(self):
         cf_exe = self._get_cloudflared_path()
         if not cf_exe:
-            self.gui_queue.put(("cf_checked", {"status": "missing"}))
+            self._set_health("cloudflared", "Missing ⚠", "warning")
+            self._offer_cloudflared_install()
             return
 
         try:
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            # Run using just "cloudflared" to test the environment variable fix
-            res = subprocess.run(
-                [cf_exe, "--version"], capture_output=True, text=True, timeout=3,
-                creationflags=flags
-            )
+            res = subprocess.run([cf_exe, "--version"], capture_output=True, text=True, timeout=3, creationflags=flags)
             if res.returncode == 0:
                 match = re.search(r"version\s+(\d+\.\d+\.\d+)", res.stdout)
                 ver = match.group(1) if match else "OK"
-                self.gui_queue.put(("cf_checked", {"status": "ok", "version": ver}))
+                self._set_health("cloudflared", f"v{ver} ✓", "success")
             else:
-                self.gui_queue.put(("cf_checked", {"status": "broken"}))
-        except Exception:
-            self.gui_queue.put(("cf_checked", {"status": "broken"}))
-
-    def _update_cf_ui(self, payload):
-        status = payload["status"]
-        if status == "ok":
-            self.lbl_cloudflared.configure(text=f"Cloudflared: v{payload['version']} ✓", bootstyle=SUCCESS)
-        elif status == "missing":
-            self.lbl_cloudflared.configure(text="Cloudflared: Missing ⚠", bootstyle=WARNING)
-            self._offer_cloudflared_install()
-        else:
-            self.lbl_cloudflared.configure(text="Cloudflared: Broken ⚠", bootstyle=DANGER)
-            self.log("Cloudflared executable found, but failed to execute properly.", "ERROR")
+                self._set_health("cloudflared", "Broken ⚠", "danger")
+        except Exception as e:
+            self.log(f"Cloudflared checking error: {e}", "ERROR")
+            self._set_health("cloudflared", "Broken ⚠", "danger")
 
     def _offer_cloudflared_install(self):
         if messagebox.askyesno("Cloudflared Missing", "Cloudflared is required for the tunnel. Download and install it now?", parent=self):
@@ -413,18 +459,14 @@ class LauncherApp(ttk.Window):
             self.log("Installing Cloudflared completely silently in background...", "WARNING")
 
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            # /quiet prevents ALL UI popups from the installer
             subprocess.run(["msiexec.exe", "/i", msi_path, "/quiet", "/norestart"], check=True, creationflags=flags)
             self.log("Cloudflared installation successful.", "SUCCESS")
             
-            # Instantly update environment PATH so child tools and CMD can find it
             inject_cloudflared_path()
-
-            try:
-                os.remove(msi_path)
-            except Exception: pass # Cleanup silent fail
+            try: os.remove(msi_path)
+            except Exception: pass 
             
-            self.cached_cf_path = None # Reset cache
+            self.cached_cf_path = None 
             self.gui_queue.put(("prompt_cf_token", None))
         except Exception as e:
             self.log(f"Cloudflared installation failed: {e}", "ERROR")
@@ -436,7 +478,7 @@ class LauncherApp(ttk.Window):
             threading.Thread(target=self._install_cf_service_thread, args=(token.strip(),), daemon=True).start()
         else:
             self.log("Setup skipped. Tunnel will not auto-start.", "WARNING")
-            self.check_system_health() # Refresh UI
+            self.check_system_health() 
 
     def _install_cf_service_thread(self, token):
         try:
@@ -444,30 +486,20 @@ class LauncherApp(ttk.Window):
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             
             self.log("Clearing any old tunnel configurations...", "INFO")
-            # 1. Quietly uninstall any existing service so it doesn't block the new one
             subprocess.run([cf_exe, "service", "uninstall"], capture_output=True, creationflags=flags)
             
-            # 2. Install the new token, capturing the actual error output
-            proc = subprocess.run(
-                [cf_exe, "service", "install", token], 
-                capture_output=True, 
-                text=True, 
-                creationflags=flags
-            )
+            proc = subprocess.run([cf_exe, "service", "install", token], capture_output=True, text=True, creationflags=flags)
             
             if proc.returncode == 0:
                 self.log("Tunnel service bound successfully. It will now run in the background.", "SUCCESS")
                 self.log("Note: You do NOT need to click 'Start Tunnel' in the Command Center anymore. It is running automatically.", "WARNING")
             else:
-                # Capture Cloudflared's actual error message instead of a generic Python error
                 error_output = proc.stderr.strip() or proc.stdout.strip()
                 self.log(f"Cloudflared rejected the token: {error_output}", "ERROR")
-                
         except Exception as e:
             self.log(f"Service install crashed: {e}", "ERROR")
         finally:
             self.check_system_health()
-            
 
     # --------------------------------------------------------------------------
     # PYTHON MANAGEMENT
@@ -487,7 +519,6 @@ class LauncherApp(ttk.Window):
             self.log("Installing Python silently...", "WARNING")
 
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            # /quiet runs completely invisibly
             subprocess.run([py_path, "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0"], check=True, creationflags=flags)
             self.log("Python installation successful.", "SUCCESS")
 
@@ -503,8 +534,7 @@ class LauncherApp(ttk.Window):
     # --------------------------------------------------------------------------
     def launch_tool(self, tool):
         key = tool["key"]
-        if key in self.processes and self.processes[key].poll() is None:
-            return
+        if key in self.processes and self.processes[key].poll() is None: return
 
         script_path = os.path.join(APP_DIR, tool["script"])
         if not os.path.isfile(script_path):
@@ -512,7 +542,9 @@ class LauncherApp(ttk.Window):
             return
 
         try:
-            # 🛡️ 100% Error-Free Output capturing & Zero CMD window creation
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            
             proc = subprocess.Popen(
                 [sys.executable, script_path], 
                 cwd=APP_DIR,
@@ -520,42 +552,47 @@ class LauncherApp(ttk.Window):
                 stderr=subprocess.STDOUT, 
                 stdin=subprocess.DEVNULL,
                 text=True,
-                encoding='utf-8',       # Prevents unicode crashes
-                errors='replace',       # Safely handles weird characters
-                bufsize=1,              # Line-buffered streaming
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+                encoding='utf-8',       
+                errors='replace',       
+                bufsize=1,              
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                env=env
             )
             self.processes[key] = proc
             self.log(f"Tool started: {tool['label']}", "SUCCESS")
             self._set_tool_status(key, running=True)
             
-            # Start background thread to continuously stream tool logs to UI
             threading.Thread(target=self._stream_tool_logs, args=(proc, tool["label"]), daemon=True).start()
             
         except Exception as e:
             self.log(f"Failed to launch {tool['label']}: {e}", "ERROR")
 
     def _stream_tool_logs(self, proc, tool_name):
-        """Background thread reads a running tool's stdout line-by-line safely."""
         try:
             for line in iter(proc.stdout.readline, ''):
                 if line:
                     clean_line = line.strip()
                     if clean_line:
-                        # Strip raw ANSI terminal color codes (like [0m)
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', clean_line)
                         self.log(f"[{tool_name}] {clean_line}", "TOOL")
+        except ValueError:
+            pass 
         except Exception as e:
             self.log(f"[{tool_name}] Log stream interrupted: {e}", "WARNING")
         finally:
-            if proc.stdout:
-                proc.stdout.close()
+            if proc.stdout: proc.stdout.close()
 
     def stop_tool(self, tool):
         key = tool["key"]
         proc = self.processes.get(key)
         if proc and proc.poll() is None:
-            proc.terminate()
+            try:
+                if os.name == "nt":
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    proc.terminate()
+            except Exception: pass
+            
             self.log(f"Tool stopped: {tool['label']}", "WARNING")
             self._set_tool_status(key, running=False)
 
@@ -570,10 +607,12 @@ class LauncherApp(ttk.Window):
         if not widgets or not tool: return
 
         if running:
-            widgets["status"].configure(text="🟢 RUNNING", bootstyle=SUCCESS)
+            # Safely get Hex colors to prevent TclError crashes
+            color = getattr(self.style.colors, "success", "#4CD37E")
+            widgets["status"].configure(text="🟢 RUNNING", foreground=color)
             widgets["button"].configure(text="Stop", bootstyle=DANGER, command=lambda t=tool: self.stop_tool(t))
         else:
-            widgets["status"].configure(text="⚫ IDLE", bootstyle=SECONDARY)
+            widgets["status"].configure(text="⚫ IDLE", foreground="gray")
             widgets["button"].configure(text="Launch Tool", bootstyle=tool["bootstyle"], command=lambda t=tool: self.launch_tool(t))
 
     def _poll_processes(self):
