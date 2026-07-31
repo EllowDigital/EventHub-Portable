@@ -236,7 +236,7 @@ class GateDisplay(ttk.Window):
         
         ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=5)
         
-        # UI FIX: Clean Live Latency Pill (Single label element to prevent double-dot visual bugs)
+        # UI FIX: Clean Live Latency Pill
         self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(12, 6))
         self.net_pill.pack(side=LEFT, padx=20)
         
@@ -262,9 +262,9 @@ class GateDisplay(ttk.Window):
         profile_frame = ttk.Frame(left_panel)
         profile_frame.pack(fill=BOTH, expand=True)
 
-        # Photo Container 
-        photo_container = ttk.Frame(profile_frame, width=380)
-        photo_container.pack(side=LEFT, fill=Y, padx=(0, 40))
+        # Photo Container (Slightly smaller for better text wrapping room)
+        photo_container = ttk.Frame(profile_frame, width=340)
+        photo_container.pack(side=LEFT, fill=Y, padx=(0, 30))
         photo_container.pack_propagate(False) 
         
         photo_border = ttk.Frame(photo_container, bootstyle=SECONDARY, padding=2)
@@ -281,22 +281,26 @@ class GateDisplay(ttk.Window):
         details = ttk.Frame(profile_frame)
         details.pack(side=LEFT, fill=BOTH, expand=True)
         
+        # 🟢 FIX: Name and Badge grid layout prevents overlapping
         header_frame = ttk.Frame(details)
         header_frame.pack(fill=X, pady=(10, 0))
+        header_frame.columnconfigure(0, weight=1) # Name gets all available space
+        header_frame.columnconfigure(1, weight=0) # Badge stays anchored right
         
-        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 42 -weight bold", bootstyle=DEFAULT)
-        self.lbl_name.pack(side=LEFT, anchor=W)
+        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 36 -weight bold", bootstyle=DEFAULT, wraplength=550)
+        self.lbl_name.grid(row=0, column=0, sticky=NW, pady=(0, 5))
         
         self.lbl_pass_badge = ttk.Label(header_frame, text="PENDING", font="-size 16 -weight bold", bootstyle="inverse-secondary", padding=(20, 8))
-        self.lbl_pass_badge.pack(side=RIGHT, anchor=E, pady=10)
+        self.lbl_pass_badge.grid(row=0, column=1, sticky=NE, padx=(10, 0))
 
-        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 18", bootstyle=INFO)
-        self.lbl_company.pack(anchor=W, pady=(5, 40))
+        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 16", bootstyle=INFO, wraplength=550)
+        self.lbl_company.pack(anchor=W, pady=(5, 30))
 
+        # 🟢 FIX: Details Grid column sizing & wrapping
         grid = ttk.Frame(details)
         grid.pack(fill=BOTH, expand=True)
-        grid.columnconfigure(0, weight=1)
-        grid.columnconfigure(1, weight=1)
+        grid.columnconfigure(0, weight=1, minsize=200)
+        grid.columnconfigure(1, weight=1, minsize=200)
         
         self.fields = {}
         row_col = [
@@ -307,9 +311,10 @@ class GateDisplay(ttk.Window):
         
         for r, c, label, key in row_col:
             f = ttk.Frame(grid, padding=10)
-            f.grid(row=r, column=c, sticky=NSEW, padx=5, pady=10)
+            f.grid(row=r, column=c, sticky=NSEW, padx=5, pady=5)
             ttk.Label(f, text=f"{label.upper()}", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-            val = ttk.Label(f, text="---", font="-size 16 -weight bold")
+            # Wraplength ensures things like "Lucknow, Uttar Pradesh" won't explode the layout
+            val = ttk.Label(f, text="---", font="-size 15 -weight bold", wraplength=260)
             val.pack(anchor=W, pady=(4,0))
             self.fields[key] = val
 
@@ -401,8 +406,9 @@ class GateDisplay(ttk.Window):
     def set_placeholder_photo(self):
         bg_color = '#e9ecef' if self.current_theme == "flatly" else '#222222'
         
+        # 🟢 FIX: Reduced canvas to 320x320 for better layout breathing room
         if bg_color not in self._placeholder_img_cache:
-            img = Image.new('RGB', (380, 380), color=bg_color)
+            img = Image.new('RGB', (320, 320), color=bg_color)
             self._placeholder_img_cache[bg_color] = ImageTk.PhotoImage(img)
             
         self.current_photo = self._placeholder_img_cache[bg_color]
@@ -419,7 +425,8 @@ class GateDisplay(ttk.Window):
                 if os.path.exists(path):
                     try:
                         img = Image.open(path)
-                        img = ImageOps.fit(img, (380, 380), Image.Resampling.LANCZOS)
+                        # 🟢 FIX: Reduced to 320x320
+                        img = ImageOps.fit(img, (320, 320), Image.Resampling.LANCZOS)
                         photo_image = ImageTk.PhotoImage(img)
                         self.gui_queue.put(lambda p=photo_image: self.update_photo_ui(p))
                         photo_found = True
