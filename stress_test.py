@@ -273,29 +273,36 @@ class EnterpriseStressTestApp(tb.Window):
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 20)}")
         self.minsize(1200, 800)
 
+        # Threading/Queues
         self.stats_queue = queue.Queue()
         self.ui_queue = queue.Queue()
+        self.user_queue = queue.Queue()
+        
+        # Safe Lock Data Containers
+        self.data_lock = threading.Lock()
+        self.metrics = Counter()
+        self.rts_checkin = deque(maxlen=10000)
+        self.rts_register = deque(maxlen=10000)
+        self.results_history = deque(maxlen=100000)
+        self.tree_buffer = []
+        self.recent_checkins = deque()
+        self.recent_regs = deque()
+        
+        # Live Graph Deques
+        self.throughput_history = deque(maxlen=300)
+        self.plot_rts_history = deque(maxlen=300)
+        self.meter_max = 50
 
+        # Run State
         self.is_running = False
         self.start_time = 0.0
         self.test_duration = 0
         self.sync_barrier = None
-
-        self.metrics = Counter()
-        self.rts_checkin = []
-        self.rts_register = []
-        self.results_history = []
-        self.response_times = deque(maxlen=300)
-        self.throughput_history = deque(maxlen=300)
-        self.recent_checkins = deque()
-        self.recent_regs = deque()
-        self.meter_max = 50
+        self._last_rendered_total = -1
 
         self.pool_lock = threading.Lock()
         self.user_pool = []
         self.pool_counts = Counter()
-        self.user_queue = queue.Queue()
-
         self._session_factories = None
 
         self.stat_widgets = {}
@@ -305,6 +312,10 @@ class EnterpriseStressTestApp(tb.Window):
 
         self._configure_custom_styles()
         self.setup_ui()
+        
+        # Start Background Background Aggregator (Lag Free Fix)
+        threading.Thread(target=self._data_aggregator_loop, daemon=True).start()
+        
         self.update_gui_loop()
         self.reload_attendee_pool(initial=True)
 
@@ -332,28 +343,43 @@ class EnterpriseStressTestApp(tb.Window):
     def log(self, msg):
         self.ui_queue.put(("log", msg))
 
-    def _append_log_line(self, msg):
-        self.log_txt.configure(state="normal")
-        self.log_txt.insert("end", f"[{time.strftime('%H:%M:%S')}] {msg}\n")
-        self.log_txt.see("end")
-        self.log_txt.configure(state="disabled")
-
-    def _drain_ui_queue(self):
+    # ==========================================================================
+    # BACKGROUND AGGREGATOR (PREVENTS UI FREEZE)
+    # ==========================================================================
+    def _data_aggregator_loop(self):
+        """Dedicated background thread that consumes the firehose of results.
+        It does zero GUI rendering, making it lightning fast and unblockable."""
         while True:
             try:
-                kind, payload = self.ui_queue.get_nowait()
-            except queue.Empty:
-                break
-            if kind == "log":
-                self._append_log_line(payload)
-            elif kind == "enable_widget":
-                getattr(self, payload).config(state="normal")
-            elif kind == "disable_widget":
-                getattr(self, payload).config(state="disabled")
-            elif kind == "pool_loaded":
-                self._refresh_pool_label()
-            elif kind == "reload_pool":
-                self.reload_attendee_pool()
+                code, rt, env_name, req_type, identifier = self.stats_queue.get()
+            except Exception:
+                continue
+
+            bucket = classify_status(code)
+            now = time.time()
+            clock = time.strftime("%H:%M:%S")
+
+            with self.data_lock:
+                self.metrics["total"] += 1
+                self.metrics[bucket] += 1
+
+                if rt > 0:
+                    if req_type == "checkin":
+                        self.rts_checkin.append(rt)
+                        self.recent_checkins.append(now)
+                    elif req_type == "register":
+                        self.rts_register.append(rt)
+                        self.recent_regs.append(now)
+
+                record = (clock, env_name, req_type, code, f"{rt:.0f}", identifier)
+                self.results_history.append(record)
+
+                # Append to buffer for GUI batch update
+                self.tree_buffer.append(record)
+                if len(self.tree_buffer) > 50:
+                    self.tree_buffer.pop(0)
+
+            self.stats_queue.task_done()
 
     def _get_sessions(self):
         if self._session_factories is None:
@@ -901,20 +927,26 @@ class EnterpriseStressTestApp(tb.Window):
         self.after(150, self.destroy)
 
     def reset_stats(self):
-        self.metrics = Counter()
-        self.rts_checkin.clear()
-        self.rts_register.clear()
-        self.recent_checkins.clear()
-        self.recent_regs.clear()
-        self.results_history.clear()
-        self.response_times.clear()
+        with self.data_lock:
+            self.metrics = Counter()
+            self.rts_checkin.clear()
+            self.rts_register.clear()
+            self.results_history.clear()
+            self.recent_checkins.clear()
+            self.recent_regs.clear()
+            self.tree_buffer.clear()
+            self._last_rendered_total = -1
+
         self.throughput_history.clear()
+        self.plot_rts_history.clear()
+        
         for key, widget in self.stat_widgets.items():
             if key == "User Pool": continue
             widget.config(text="0")
         self.meter_chk.configure(amountused=0)
         self.meter_reg.configure(amountused=0)
         self.progress_bar.configure(value=0)
+        
         for item in self.tree.get_children(): self.tree.delete(item)
         for widgets in (self.chk_metrics, self.reg_metrics):
             for key, widget in widgets.items():
@@ -928,6 +960,7 @@ class EnterpriseStressTestApp(tb.Window):
         device_name = f"Enterprise-{env_name}-D{thread_id}"
         device_id = f"stresstest_{uuid.uuid4().hex[:8]}" 
         
+        # Hardened HTTP Session Pool to prevent Socket Exhaustion
         session = requests.Session()
         retries = Retry(total=2, backoff_factor=0.2, status_forcelist=[500, 502, 503, 504])
         adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100, max_retries=retries)
@@ -999,8 +1032,33 @@ class EnterpriseStressTestApp(tb.Window):
             session.close()
 
     def update_gui_loop(self):
-        self._drain_ui_queue()
+        # 1. Process UI/Log Queue (Batched to prevent freeze)
+        log_msgs = []
+        for _ in range(30):
+            try:
+                kind, payload = self.ui_queue.get_nowait()
+                if kind == "log":
+                    log_msgs.append(payload)
+                elif kind == "enable_widget":
+                    getattr(self, payload).config(state="normal")
+                elif kind == "disable_widget":
+                    getattr(self, payload).config(state="disabled")
+                elif kind == "pool_loaded":
+                    self._refresh_pool_label()
+                elif kind == "reload_pool":
+                    self.reload_attendee_pool()
+            except queue.Empty:
+                break
+        
+        if log_msgs:
+            self.log_txt.configure(state="normal")
+            ts = time.strftime('%H:%M:%S')
+            for msg in log_msgs:
+                self.log_txt.insert("end", f"[{ts}] {msg}\n")
+            self.log_txt.see("end")
+            self.log_txt.configure(state="disabled")
 
+        # 2. Update Run Time
         now = time.time()
         if self.is_running:
             elapsed = now - self.start_time
@@ -1010,46 +1068,40 @@ class EnterpriseStressTestApp(tb.Window):
                 self.log("Time limit reached. Halting traffic...")
                 self.stop_test()
 
-        processed = 0
-        while processed < 400:
-            try: code, rt, env_name, req_type, identifier = self.stats_queue.get_nowait()
-            except queue.Empty: break
-            processed += 1
-            self._ingest_result(code, rt, env_name, req_type, identifier, now)
+        # 3. Pull Data Snapshot 
+        with self.data_lock:
+            total = self.metrics.get("total", 0)
+            
+            # If no new requests came in, just reschedule GUI tick
+            if total == self._last_rendered_total and self.is_running:
+                self.after(UI_TICK_MS, self.update_gui_loop)
+                return
+                
+            self._last_rendered_total = total
 
-        if processed > 0 or self.is_running:
-            self._refresh_dashboard(now)
+            # Snapshot Metrics safely
+            metrics_snap = dict(self.metrics)
+            
+            # Prune sliding windows for rate calculation
+            while self.recent_checkins and now - self.recent_checkins[0] > 1.0:
+                self.recent_checkins.popleft()
+            while self.recent_regs and now - self.recent_regs[0] > 1.0:
+                self.recent_regs.popleft()
+            
+            chk_rate = len(self.recent_checkins)
+            reg_rate = len(self.recent_regs)
 
-        self.after(UI_TICK_MS, self.update_gui_loop)
+            # Copy response times for math functions
+            rts_checkin_snap = list(self.rts_checkin)
+            rts_register_snap = list(self.rts_register)
+            all_rts = rts_checkin_snap + rts_register_snap
+            
+            # Pull batched TreeView items
+            tree_items = list(self.tree_buffer)
+            self.tree_buffer.clear()
 
-    def _ingest_result(self, code, rt, env_name, req_type, identifier, now):
-        bucket = classify_status(code)
-        self.metrics["total"] += 1
-        self.metrics[bucket] += 1
-
-        if rt > 0:
-            self.response_times.append(rt)
-            if req_type == "checkin":
-                self.rts_checkin.append(rt)
-                self.recent_checkins.append(now)
-            elif req_type == "register":
-                self.rts_register.append(rt)
-                self.recent_regs.append(now)
-
-        clock = time.strftime("%H:%M:%S")
-        self.results_history.append((clock, env_name, req_type, code, f"{rt:.0f}", identifier))
-
-        tag = "success" if code == 200 else ("warning" if isinstance(code, int) and code < 500 else "error")
-        self.tree.insert("", 0, values=(clock, env_name, req_type, code, f"{rt:.0f}", identifier), tags=(tag,))
-        children = self.tree.get_children()
-        if len(children) > 500:
-            for extra in children[500:]: self.tree.delete(extra)
-
-    def _refresh_dashboard(self, now):
-        while self.recent_checkins and now - self.recent_checkins[0] > 1.0: self.recent_checkins.popleft()
-        while self.recent_regs and now - self.recent_regs[0] > 1.0: self.recent_regs.popleft()
-        chk_rate = len(self.recent_checkins)
-        reg_rate = len(self.recent_regs)
+        # 4. Render Updates (OUTSIDE the lock for speed)
+        latest_rt = all_rts[-1] if all_rts else 0
 
         peak = max(chk_rate, reg_rate, 1)
         if peak > self.meter_max:
@@ -1059,43 +1111,55 @@ class EnterpriseStressTestApp(tb.Window):
         self.meter_chk.configure(amountused=chk_rate)
         self.meter_reg.configure(amountused=reg_rate)
 
-        total = self.metrics.get("total", 0)
-        ok = self.metrics.get("ok_200", 0)
+        ok = metrics_snap.get("ok_200", 0)
         success_rate = (ok / total * 100) if total else 0.0
-        all_rts = self.rts_checkin + self.rts_register
         avg_rt = (sum(all_rts) / len(all_rts)) if all_rts else 0.0
 
         self.stat_widgets["Total Reqs"].config(text=str(total))
-        self.stat_widgets["Success %"].config(
-            text=f"{success_rate:.1f}%",
-            bootstyle="success" if success_rate >= 98 else ("warning" if success_rate >= 90 else "danger"),
-        )
+        self.stat_widgets["Success %"].config(text=f"{success_rate:.1f}%", bootstyle="success" if success_rate >= 98 else ("warning" if success_rate >= 90 else "danger"))
         self.stat_widgets["Avg RT (ms)"].config(text=f"{avg_rt:.0f}")
-        self.stat_widgets["HTTP 503"].config(text=str(self.metrics.get("queue_503", 0)))
+        self.stat_widgets["HTTP 503"].config(text=str(metrics_snap.get("queue_503", 0)))
 
-        self._update_analytics_column(self.chk_metrics, self.rts_checkin)
-        self._update_analytics_column(self.reg_metrics, self.rts_register)
+        self._update_analytics_column(self.chk_metrics, rts_checkin_snap)
+        self._update_analytics_column(self.reg_metrics, rts_register_snap)
 
-        for key, lbl in self.err_labels.items(): lbl.config(text=str(self.metrics.get(key, 0)))
+        for key, lbl in self.err_labels.items():
+            lbl.config(text=str(metrics_snap.get(key, 0)))
 
         sorted_all = sorted(all_rts)
         p95_all = calculate_percentile(sorted_all, 95)
         apdex_all = calculate_apdex(all_rts)
-        server_errors = self.metrics.get("server_5xx", 0) + self.metrics.get("timeouts", 0) + self.metrics.get("conn_refused", 0)
+        server_errors = metrics_snap.get("server_5xx", 0) + metrics_snap.get("timeouts", 0) + metrics_snap.get("conn_refused", 0)
         level, detail = build_verdict(total, ok, server_errors, p95_all, apdex_all)
         self.lbl_verdict.config(text=f"{level} — {detail}")
 
-        self.throughput_history.append(chk_rate + reg_rate)
-        if all_rts: self.response_times.append(all_rts[-1])
+        # 5. TreeView Batched Injection
+        if tree_items:
+            for item in tree_items:
+                code = item[3]
+                tag = "success" if code == 200 else ("warning" if isinstance(code, int) and code < 500 else "error")
+                self.tree.insert("", 0, values=item, tags=(tag,))
             
+            # Prune Grid (O(1) fast deletion)
+            children = self.tree.get_children()
+            if len(children) > 100:
+                self.tree.delete(*children[100:])
+
+        # 6. Smooth Plotly Updates
+        self.throughput_history.append(chk_rate + reg_rate)
+        self.plot_rts_history.append(latest_rt)
+        
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'line_tps'):
             x_tps = range(len(self.throughput_history))
             self.line_tps.set_data(x_tps, list(self.throughput_history))
             self.ax_tps.relim(); self.ax_tps.autoscale_view()
-            x_rt = range(len(self.response_times))
-            self.line_rt.set_data(x_rt, list(self.response_times))
+            
+            x_rt = range(len(self.plot_rts_history))
+            self.line_rt.set_data(x_rt, list(self.plot_rts_history))
             self.ax_rt.relim(); self.ax_rt.autoscale_view()
             self.canvas.draw_idle()
+
+        self.after(UI_TICK_MS, self.update_gui_loop)
 
     def _update_analytics_column(self, widgets, data):
         n = len(data)
@@ -1118,24 +1182,30 @@ class EnterpriseStressTestApp(tb.Window):
         widgets["Min / Max ms:"].config(text=f"{sorted_data[0]:.0f} / {sorted_data[-1]:.0f}")
 
     def export_csv(self):
-        if not self.results_history:
-            self.log("Nothing to export yet — run a test first.")
-            return
+        with self.data_lock:
+            if not self.results_history:
+                self.log("Nothing to export yet — run a test first.")
+                return
+            data_to_export = list(self.results_history)
+            
         file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV File", "*.csv")])
         if not file_path: return
         try:
             with open(file_path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(["Time", "Target", "Action", "Status", "ResponseTimeMs", "Identifier"])
-                writer.writerows(self.results_history)
+                writer.writerows(data_to_export)
             self.log(f"Raw data exported to {file_path}")
         except OSError as e:
             self.log(f"ERROR exporting CSV: {e}")
 
     def export_summary_report(self):
-        if self.metrics.get("total", 0) == 0:
-            self.log("Nothing to export yet — run a test first.")
-            return
+        with self.data_lock:
+            total = self.metrics.get("total", 0)
+            if total == 0:
+                self.log("Nothing to export yet — run a test first.")
+                return
+                
         file_path = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Report", "*.txt")])
         if not file_path: return
         try:
@@ -1146,33 +1216,38 @@ class EnterpriseStressTestApp(tb.Window):
             self.log(f"ERROR saving report: {e}")
 
     def _build_report_text(self):
+        with self.data_lock:
+            total = self.metrics.get("total", 0)
+            ok = self.metrics.get("ok_200", 0)
+            server_errors = self.metrics.get("server_5xx", 0) + self.metrics.get("timeouts", 0) + self.metrics.get("conn_refused", 0)
+            rts_checkin_snap = list(self.rts_checkin)
+            rts_register_snap = list(self.rts_register)
+            metrics_snap = dict(self.metrics)
+            
+        all_rts = sorted(rts_checkin_snap + rts_register_snap)
+        apdex_all = calculate_apdex(rts_checkin_snap + rts_register_snap)
+        p95_all = calculate_percentile(all_rts, 95)
+        level, detail = build_verdict(total, ok, server_errors, p95_all, apdex_all)
+
         lines = []
         lines.append("=" * 72)
         lines.append("ENTERPRISE EVENT LOAD TEST — SUMMARY REPORT")
         lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         lines.append("=" * 72)
 
-        total = self.metrics.get("total", 0)
-        ok = self.metrics.get("ok_200", 0)
-        server_errors = self.metrics.get("server_5xx", 0) + self.metrics.get("timeouts", 0) + self.metrics.get("conn_refused", 0)
-        all_rts = sorted(self.rts_checkin + self.rts_register)
-        apdex_all = calculate_apdex(self.rts_checkin + self.rts_register)
-        p95_all = calculate_percentile(all_rts, 95)
-        level, detail = build_verdict(total, ok, server_errors, p95_all, apdex_all)
-
         lines.append(f"\nVERDICT: {level}\n{detail}\n")
         lines.append(f"Total requests:          {total}")
         lines.append(f"Success (HTTP 200):      {ok} ({(ok/total*100 if total else 0):.1f}%)")
-        lines.append(f"Duplicates (400):        {self.metrics.get('dup_400', 0)}")
-        lines.append(f"Access denied (403):     {self.metrics.get('denied_403', 0)}")
-        lines.append(f"Not found (404):         {self.metrics.get('notfound_404', 0)}")
-        lines.append(f"Queue rejected (503):    {self.metrics.get('queue_503', 0)}")
-        lines.append(f"Server errors (500+):    {self.metrics.get('server_5xx', 0)}")
-        lines.append(f"Timeouts:                {self.metrics.get('timeouts', 0)}")
-        lines.append(f"Connection refused:      {self.metrics.get('conn_refused', 0)}")
+        lines.append(f"Duplicates (400):        {metrics_snap.get('dup_400', 0)}")
+        lines.append(f"Access denied (403):     {metrics_snap.get('denied_403', 0)}")
+        lines.append(f"Not found (404):         {metrics_snap.get('notfound_404', 0)}")
+        lines.append(f"Queue rejected (503):    {metrics_snap.get('queue_503', 0)}")
+        lines.append(f"Server errors (500+):    {metrics_snap.get('server_5xx', 0)}")
+        lines.append(f"Timeouts:                {metrics_snap.get('timeouts', 0)}")
+        lines.append(f"Connection refused:      {metrics_snap.get('conn_refused', 0)}")
         lines.append("")
 
-        for label, data in (("CHECK-IN", self.rts_checkin), ("REGISTRATION", self.rts_register)):
+        for label, data in (("CHECK-IN", rts_checkin_snap), ("REGISTRATION", rts_register_snap)):
             lines.append(f"--- {label} LATENCY ---")
             if not data:
                 lines.append("  No requests of this type.\n")
