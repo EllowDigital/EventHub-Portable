@@ -19,6 +19,8 @@ import re
 import ctypes
 import winreg
 import time
+import json
+import sqlite3
 from datetime import datetime
 import tkinter as tk
 
@@ -55,6 +57,8 @@ try:
     from ttkbootstrap.constants import *
     from ttkbootstrap.widgets.scrolled import ScrolledText
     from tkinter import messagebox, simpledialog
+    from PIL import Image, ImageTk, ImageOps
+    import pymysql
 except ImportError:
     pass 
 
@@ -70,6 +74,7 @@ SECRETS_CONFIG = os.path.join(CONFIG_DIR, "secrets.json")
 EXE_DIR = os.path.join(ROOT_DIR, "exe-files")
 
 MIN_PYTHON = (3, 9)
+MAX_LOG_LINES = 2000 
 
 # ==============================================================================
 # ENVIRONMENT INJECTION (PERMANENT)
@@ -110,6 +115,7 @@ def inject_cloudflared_path():
 def _bootstrap_first_run():
     try:
         import ttkbootstrap 
+        import pymysql
         return
     except ImportError:
         pass
@@ -165,6 +171,7 @@ class LauncherApp(ttk.Window):
         self.tool_widgets = {}   
         self.health_widgets = {}
         self.cached_cf_path = None
+        self.team_img_original = None
 
         self._configure_custom_styles()
         self.build_ui()
@@ -212,41 +219,75 @@ class LauncherApp(ttk.Window):
         ttk.Button(action_box, text="🛑 Stop All Active Tools", bootstyle=DANGER, command=self.stop_all_tools).pack(side=LEFT, padx=5)
 
         # -- System Health Panel (Cards) --
-        ttk.Label(main_container, text="⚙️ SYSTEM HEALTH", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 5))
+        ttk.Label(main_container, text="⚙️ SYSTEM HEALTH", font="-size 11 -weight bold", foreground="gray").pack(anchor=W, pady=(0, 5))
         health_grid = ttk.Frame(main_container)
-        health_grid.pack(fill=X, pady=(0, 20))
+        health_grid.pack(fill=X, pady=(0, 15))
         
-        self._build_health_card(health_grid, "python", "PYTHON VER", "Checking...")
-        self._build_health_card(health_grid, "cloudflared", "CLOUDFLARED", "Checking...")
-        self._build_health_card(health_grid, "deps", "DEPENDENCIES", "Checking...")
-        self._build_health_card(health_grid, "config", "CONFIGURATION", "Checking...")
+        self._build_health_card(health_grid, "python", "🐍 PYTHON VER", "Checking...")
+        self._build_health_card(health_grid, "cloudflared", "☁️ CLOUDFLARED", "Checking...")
+        self._build_health_card(health_grid, "deps", "📦 DEPENDENCIES", "Checking...")
+        self._build_health_card(health_grid, "config", "⚙️ CONFIGURATION", "Checking...")
 
         # -- Main Split Content --
         split_frame = ttk.Frame(main_container)
         split_frame.pack(fill=BOTH, expand=True)
 
-        # Left: Tools 
-        left_col = ttk.Frame(split_frame, width=500)
+        # Left: DB Health + Tools 
+        left_col = ttk.Frame(split_frame, width=480)
         left_col.pack(side=LEFT, fill=Y, padx=(0, 20))
         left_col.pack_propagate(False)
 
-        ttk.Label(left_col, text="🛠️ APPLICATION TOOLS", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 10))
+        # 🗄️ Database Health (Clean Text Cards instead of Speedometers)
+        ttk.Label(left_col, text="🗄️ DATABASE HEALTH", font="-size 10 -weight bold", foreground="gray").pack(anchor=W, pady=(0, 5))
+        db_grid = ttk.Frame(left_col)
+        db_grid.pack(fill=X, pady=(0, 15))
         
+        # Uses a slightly modified health card builder to add a right margin on the first card
+        self._build_db_status_card(db_grid, "mysql_db", "🐬 MYSQL (PRIMARY)", "Checking...")
+        self._build_db_status_card(db_grid, "sqlite_db", "💾 SQLITE (MIRROR)", "Checking...")
+
+        # 🛠️ Application Tools
+        ttk.Label(left_col, text="🛠️ APPLICATION TOOLS", font="-size 10 -weight bold", foreground="gray").pack(anchor=W, pady=(0, 5))
         for tool in TOOLS:
             self._build_tool_card(left_col, tool)
             
         btn_row = ttk.Frame(left_col)
-        btn_row.pack(fill=X, side=BOTTOM)
+        btn_row.pack(fill=X, side=BOTTOM, pady=(10, 0))
         ttk.Button(btn_row, text="📁 Open Root", bootstyle="outline-secondary", command=lambda: self.open_folder(ROOT_DIR)).pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
         ttk.Button(btn_row, text="⚙️ Configs", bootstyle="outline-secondary", command=lambda: self.open_folder(CONFIG_DIR)).pack(side=LEFT, fill=X, expand=True, padx=(5, 0))
 
-        # Right: Logs
+        # Right: Banner & Logs
         right_col = ttk.Frame(split_frame)
         right_col.pack(side=LEFT, fill=BOTH, expand=True)
 
+        # -- Dynamic Team Banner Card --
+        self.team_card = ttk.Frame(right_col, style="Card.TFrame", padding=2) 
+        self.team_card.pack(fill=X, pady=(0, 15))
+        self.team_card.pack_propagate(False) 
+        
+        self.lbl_team_photo = ttk.Label(self.team_card, background=self.CARD_BG, anchor=CENTER)
+        self.lbl_team_photo.pack(fill=BOTH, expand=True)
+
+        team_img_path = os.path.join(ROOT_DIR, "team.png")
+        try:
+            if os.path.exists(team_img_path):
+                self.team_img_original = Image.open(team_img_path)
+                self.team_card.bind("<Configure>", self._resize_team_banner)
+            else:
+                self.team_card.configure(height=100) 
+                self.lbl_team_photo.configure(
+                    text="📸 Place 'team.png' in the root folder to view your team banner.", 
+                    font="-size 10 -slant italic", 
+                    foreground="gray"
+                )
+        except Exception as e:
+            self.team_card.configure(height=100)
+            self.lbl_team_photo.configure(text=f"Image Error: {e}", foreground="#FF6B6B")
+
+        # -- Log Console --
         log_hdr = ttk.Frame(right_col)
         log_hdr.pack(fill=X, pady=(0, 5))
-        ttk.Label(log_hdr, text="📟 ACTIVITY LOG (STDOUT)", font="-size 11 -weight bold").pack(side=LEFT)
+        ttk.Label(log_hdr, text="📟 ACTIVITY LOG (STDOUT)", font="-size 11 -weight bold", foreground="gray").pack(side=LEFT)
         ttk.Button(log_hdr, text="Clear", bootstyle="secondary-link", command=self.clear_log).pack(side=RIGHT)
 
         log_frame = ttk.Frame(right_col, style="Card.TFrame", padding=2)
@@ -263,6 +304,33 @@ class LauncherApp(ttk.Window):
         self.log_box.text.tag_config("TOOL", foreground="#5DADE2") 
 
         self.log("System initialized with Administrator Privileges. Ready for operations.", "SUCCESS")
+
+    def _resize_team_banner(self, event):
+        """Dynamically scales and crops the team banner based on real image aspect ratio."""
+        if not self.team_img_original or event.width <= 10:
+            return
+            
+        # Debounce to prevent stuttering
+        if hasattr(self, '_last_banner_w') and abs(self._last_banner_w - event.width) < 15:
+            return
+        self._last_banner_w = event.width
+
+        try:
+            original_w, original_h = self.team_img_original.size
+            tw = event.width - 4
+            th = int(tw * (original_h / original_w))
+            
+            max_height = 320
+            if th > max_height:
+                th = max_height
+                
+            self.team_card.configure(height=th + 4)
+            img = ImageOps.fit(self.team_img_original, (tw, th), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self.lbl_team_photo.configure(image=photo)
+            self.lbl_team_photo.image = photo 
+        except Exception:
+            pass
 
     def _build_health_card(self, parent, key, title, initial_val):
         card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 10))
@@ -282,9 +350,28 @@ class LauncherApp(ttk.Window):
         
         self.health_widgets[key] = {"label": val_lbl, "canvas": canvas, "dot": dot}
 
+    def _build_db_status_card(self, parent, key, title, initial_val):
+        card = ttk.Frame(parent, style="Card.TFrame", padding=(12, 10))
+        # Adds right margin to the first card (mysql) to create a gap between them
+        card.pack(side=LEFT, fill=X, expand=True, padx=(0, 8) if key == "mysql_db" else (0, 0))
+        
+        top = ttk.Frame(card, style="Card.TFrame")
+        top.pack(fill=X)
+        
+        canvas = tk.Canvas(top, width=12, height=12, bg=self.CARD_BG, highlightthickness=0)
+        dot = canvas.create_oval(2, 2, 10, 10, fill="#757575", outline="")
+        canvas.pack(side=LEFT, padx=(0, 5))
+        
+        ttk.Label(top, text=title, font="-size 8 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT)
+        
+        val_lbl = ttk.Label(card, text=initial_val, font="-size 11 -weight bold", background=self.CARD_BG, foreground="gray")
+        val_lbl.pack(anchor=W, pady=(4, 0))
+        
+        self.health_widgets[key] = {"label": val_lbl, "canvas": canvas, "dot": dot}
+
     def _build_tool_card(self, parent, tool):
         card = ttk.Frame(parent, style="Card.TFrame", padding=12)
-        card.pack(fill=X, pady=6)
+        card.pack(fill=X, pady=4)
 
         inner = ttk.Frame(card, style="Card.TFrame")
         inner.pack(fill=BOTH, expand=True)
@@ -321,13 +408,9 @@ class LauncherApp(ttk.Window):
                 elif kind == "update_health":
                     w = self.health_widgets.get(payload["key"])
                     if w:
-                        # SAFELY extract the raw hex color instead of using broken ttk style maps
                         color = getattr(self.style.colors, payload["style"], "#757575")
-                        
                         w["label"].configure(text=payload["text"], foreground=color)
                         w["canvas"].itemconfig(w["dot"], fill=color)
-                        
-                        # Heartbeat Animation
                         w["canvas"].coords(w["dot"], 1, 1, 11, 11)
                         self.after(200, lambda cv=w["canvas"], dt=w["dot"]: cv.coords(dt, 2, 2, 10, 10) if cv.winfo_exists() else None)
                         
@@ -339,7 +422,6 @@ class LauncherApp(ttk.Window):
             except queue.Empty:
                 break
             except Exception as e:
-                # Failsafe: Ensures UI loop never dies
                 try: self._append_log(f"GUI Queue Error suppressed: {e}", "ERROR")
                 except Exception: pass
                 
@@ -353,8 +435,8 @@ class LauncherApp(ttk.Window):
         self.log_box.text.see(END)
         
         lc = int(self.log_box.text.index('end-1c').split('.')[0])
-        if lc > 2000: 
-            self.log_box.text.delete('1.0', f'{lc - 2000}.0')
+        if lc > MAX_LOG_LINES: 
+            self.log_box.text.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
             
         self.log_box.text.configure(state="disabled")
 
@@ -393,6 +475,69 @@ class LauncherApp(ttk.Window):
         # 4. Cloudflared Check
         self._set_health("cloudflared", "Verifying...", "warning")
         threading.Thread(target=self._verify_cloudflared_thread, daemon=True).start()
+        
+        # 5. Database Status Check
+        self._set_health("mysql_db", "Pinging...", "warning")
+        self._set_health("sqlite_db", "Pinging...", "warning")
+        threading.Thread(target=self._verify_databases_thread, daemon=True).start()
+
+    def _verify_databases_thread(self):
+        """Lightweight check to test MySQL and SQLite latency without breaking UI."""
+        if not os.path.exists(SCHEMA_CONFIG):
+            self._set_health("mysql_db", "Missing Config", "warning")
+            self._set_health("sqlite_db", "Missing Config", "warning")
+            return
+
+        try:
+            with open(SCHEMA_CONFIG, 'r') as f:
+                config = json.load(f)
+        except Exception:
+            self._set_health("mysql_db", "Invalid JSON", "danger")
+            self._set_health("sqlite_db", "Invalid JSON", "danger")
+            return
+
+        # 1. Test MySQL (Lightweight Socket Ping)
+        my_conf = config.get("mysql", {})
+        if my_conf.get("enabled"):
+            try:
+                start_t = time.perf_counter()
+                conn = pymysql.connect(
+                    host=my_conf.get("host", "localhost"),
+                    user=my_conf.get("user", "root"),
+                    password=my_conf.get("password", ""),
+                    database=my_conf.get("database", "eventhub_db"),
+                    port=my_conf.get("port", 3306),
+                    connect_timeout=2
+                )
+                conn.ping(reconnect=False)
+                conn.close()
+                ms = int((time.perf_counter() - start_t) * 1000)
+                status_text = f"Online ✓ ({ms}ms)"
+                self._set_health("mysql_db", status_text, "success" if ms < 100 else "warning")
+            except Exception:
+                self._set_health("mysql_db", "Offline ⚠", "danger")
+        else:
+            self._set_health("mysql_db", "Disabled", "secondary")
+
+        # 2. Test SQLite
+        sq_conf = config.get("sqlite", {})
+        if sq_conf.get("enabled"):
+            db_file = os.path.join(APP_DIR, sq_conf.get("folder_name", "db"), sq_conf.get("file_name", "eventhub_local.db"))
+            if os.path.exists(db_file):
+                try:
+                    start_t = time.perf_counter()
+                    conn = sqlite3.connect(db_file)
+                    conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                    conn.close()
+                    ms = int((time.perf_counter() - start_t) * 1000)
+                    ms_text = "<1ms" if ms == 0 else f"{ms}ms"
+                    self._set_health("sqlite_db", f"Ready ✓ ({ms_text})", "success")
+                except Exception:
+                    self._set_health("sqlite_db", "Corrupted ⚠", "danger")
+            else:
+                self._set_health("sqlite_db", "Missing DB ⚠", "warning")
+        else:
+            self._set_health("sqlite_db", "Disabled", "secondary")
 
     def _install_requirements_thread(self):
         try:
@@ -607,7 +752,6 @@ class LauncherApp(ttk.Window):
         if not widgets or not tool: return
 
         if running:
-            # Safely get Hex colors to prevent TclError crashes
             color = getattr(self.style.colors, "success", "#4CD37E")
             widgets["status"].configure(text="🟢 RUNNING", foreground=color)
             widgets["button"].configure(text="Stop", bootstyle=DANGER, command=lambda t=tool: self.stop_tool(t))
