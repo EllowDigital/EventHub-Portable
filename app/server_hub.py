@@ -24,6 +24,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.widgets.scrolled import ScrolledText
 from ttkbootstrap.dialogs import Messagebox
+from ttkbootstrap.widgets import ToolTip
 import qrcode
 from PIL import Image, ImageTk
 import webbrowser
@@ -108,49 +109,91 @@ def _configure_windows_platform():
 
 _configure_windows_platform()
 
-# --- SMART HARDWARE SENSORS ---
-def get_system_temp():
+# ==============================================================================
+# NON-BLOCKING TELEMETRY ENGINE (PREVENTS GUI LAG & ENSURES LIVE DATA)
+# ==============================================================================
+TELEMETRY_DATA = {
+    "cpu": 0, "ram": 0, "net_type": "Disconnected",
+    "dl_mbps": 0.0, "ul_mbps": 0.0, "total_mbps": 0.0,
+    "iface_name": "N/A", "link_speed": 0,
+    "total_dl_mb": 0.0, "total_ul_mb": 0.0
+}
+_telemetry_lock = threading.Lock()
+
+def _telemetry_worker():
+    """Runs continuously in the background to fetch system metrics.
+       Uses OS routing priority to switch seamlessly between Ethernet/USB/Wi-Fi."""
+    last_time = time.time()
     try:
-        if hasattr(psutil, "sensors_temperatures"):
-            temps = psutil.sensors_temperatures()
-            if not temps: return None
-            # Loop through all hardware sensors to find active CPU temps
-            for name, entries in temps.items():
-                for entry in entries:
-                    if entry.current and entry.current > 0:
-                        return int(entry.current)
+        last_io = psutil.net_io_counters()
     except Exception:
-        pass
-    return None
-
-# Globals for network bandwidth tracking
-LAST_NET_IO = None
-LAST_NET_TIME = None
-
-def get_network_speed_mbps():
-    global LAST_NET_IO, LAST_NET_TIME
-    try:
-        current_io = psutil.net_io_counters()
-        current_time = time.time()
-        
-        if LAST_NET_IO is None or LAST_NET_TIME is None:
-            LAST_NET_IO = current_io
-            LAST_NET_TIME = current_time
-            return 0.0
+        last_io = None
+    
+    while True:
+        try:
+            cpu = int(psutil.cpu_percent(interval=None))
+            ram = int(psutil.virtual_memory().percent)
             
-        elapsed = current_time - LAST_NET_TIME
-        if elapsed <= 0: return 0.0
-        
-        bytes_sent = current_io.bytes_sent - LAST_NET_IO.bytes_sent
-        bytes_recv = current_io.bytes_recv - LAST_NET_IO.bytes_recv
-        
-        LAST_NET_IO = current_io
-        LAST_NET_TIME = current_time
-        
-        # Convert total bytes to Megabits per second (Mbps)
-        return ((bytes_sent + bytes_recv) * 8 / 1_000_000) / elapsed
-    except Exception:
-        return 0.0
+            stats = psutil.net_if_stats()
+            up_ifaces = [iface for iface, s in stats.items() if s.isup and iface != 'lo' and not iface.startswith('Loopback')]
+            
+            # FIXED: OS Priority Hierarchy (Ethernet > USB Ethernet > Wi-Fi)
+            eth_iface = next((i for i in up_ifaces if 'ethernet' in i.lower() or 'eth' in i.lower()), None)
+            usb_iface = next((i for i in up_ifaces if 'usb' in i.lower()), None)
+            wifi_iface = next((i for i in up_ifaces if 'wi-fi' in i.lower() or 'wireless' in i.lower() or 'wlan' in i.lower()), None)
+            
+            if eth_iface:
+                active_iface = eth_iface
+                iface_type = "Ethernet"
+            elif usb_iface:
+                active_iface = usb_iface
+                iface_type = "USB Eth"
+            elif wifi_iface:
+                active_iface = wifi_iface
+                iface_type = "Wi-Fi"
+            elif up_ifaces:
+                active_iface = up_ifaces[0]
+                iface_type = "Network"
+            else:
+                active_iface = None
+                iface_type = "Offline"
+
+            dl_mbps = ul_mbps = total_mbps = dl_mb = ul_mb = 0.0
+            link_speed = 0
+            
+            # Sum total internet traffic system-wide (Like Windows Task Manager)
+            current_io = psutil.net_io_counters()
+            current_time = time.time()
+            
+            if last_io and current_io:
+                elapsed = current_time - last_time
+                if elapsed > 0:
+                    dl_mbps = ((current_io.bytes_recv - last_io.bytes_recv) * 8 / 1_000_000) / elapsed
+                    ul_mbps = ((current_io.bytes_sent - last_io.bytes_sent) * 8 / 1_000_000) / elapsed
+                    total_mbps = dl_mbps + ul_mbps
+                    
+                dl_mb = current_io.bytes_recv / (1024 * 1024)
+                ul_mb = current_io.bytes_sent / (1024 * 1024)
+            
+            last_io = current_io
+            last_time = current_time
+            
+            if active_iface and active_iface in stats:
+                link_speed = stats[active_iface].speed
+
+            with _telemetry_lock:
+                TELEMETRY_DATA.update({
+                    "cpu": cpu, "ram": ram, "net_type": iface_type,
+                    "dl_mbps": dl_mbps, "ul_mbps": ul_mbps, "total_mbps": total_mbps,
+                    "iface_name": active_iface or "N/A", "link_speed": link_speed,
+                    "total_dl_mb": dl_mb, "total_ul_mb": ul_mb
+                })
+        except Exception as e:
+            logging.debug(f"Telemetry Worker Error: {e}")
+            
+        time.sleep(1)
+
+threading.Thread(target=_telemetry_worker, daemon=True).start()
 
 
 try:
@@ -191,7 +234,6 @@ gui_log_callback = None
 SERVER_TEST_MODE = False
 SERVER_TEST_DATE = "2026-08-30"
 
-# --- PERSISTENT CUSTOM DEVICE NAMES ---
 CUSTOM_DEVICE_NAMES = {}
 DEVICE_NAMES_FILE = os.path.join(CONFIG_DIR, 'device_names.json')
 
@@ -213,7 +255,6 @@ _db_cache_lock = threading.Lock()
 _db_cache_last_failure = 0.0
 DB_SESSIONS_RETRY_COOLDOWN = 5  
 
-# --- METRICS & TRAFFIC TRACKING ---
 NETWORK_LATENCY = {"local_ms": 0, "cloud_ms": 0, "local_status": "OFFLINE", "cloud_status": "OFFLINE"}
 network_latency_lock = threading.Lock()
 
@@ -835,9 +876,9 @@ def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_h
 class NetworkTelemetryWindow(ttk.Toplevel):
     def __init__(self, parent, hub_instance):
         super().__init__(parent)
-        self.title("Live Network & Traffic Telemetry")
-        if MATPLOTLIB_AVAILABLE: self.geometry("900x650")
-        else: self.geometry("850x380")
+        self.title("Live API Traffic Analytics")
+        if MATPLOTLIB_AVAILABLE: self.geometry("900x450")
+        else: self.geometry("500x200")
         self.resizable(False, False)
         self.hub = hub_instance
         self.attributes('-topmost', True)
@@ -850,81 +891,29 @@ class NetworkTelemetryWindow(ttk.Toplevel):
         main_frame = ttk.Frame(self, padding=25)
         main_frame.pack(fill=BOTH, expand=True)
         
-        ttk.Label(main_frame, text="📡 Real-Time Hub Telemetry", font="-size 16 -weight bold", bootstyle=PRIMARY).pack(anchor=CENTER, pady=(0, 5))
-        grid = ttk.Frame(main_frame)
-        grid.pack(fill=X)
-        
-        local_card = ttk.Labelframe(grid, text=" Local Ping (LAN) ", padding=15)
-        local_card.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
-        self.meter_local = ttk.Meter(local_card, metersize=180, padding=10, amounttotal=1000, amountused=0, metertype="semi", subtext="PING ms", interactive=False, stripethickness=10, meterthickness=15, bootstyle=SUCCESS)
-        self.meter_local.pack(pady=(10,0))
-        self.lbl_local_status = ttk.Label(local_card, text="Status: OFFLINE", font="-weight bold", bootstyle=SECONDARY)
-        self.lbl_local_status.pack(pady=10)
-
-        proc_card = ttk.Labelframe(grid, text=" Server API Speed ", padding=15)
-        proc_card.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
-        self.meter_proc = ttk.Meter(
-            proc_card, metersize=180, padding=10, amounttotal=500, amountused=0, 
-            metertype="semi", subtext="AVG ms", interactive=False, 
-            stripethickness=10, meterthickness=15, bootstyle=INFO, amountformat="{:.0f} ms"
-        )
-        self.meter_proc.pack(pady=(10,0))
-        self.lbl_proc_status = ttk.Label(proc_card, text="Throughput: 0 req", font="-weight bold", bootstyle=INFO)
-        self.lbl_proc_status.pack(pady=10)
-
-        cloud_card = ttk.Labelframe(grid, text=" Cloudflare Ping (WAN) ", padding=15)
-        cloud_card.pack(side=LEFT, fill=BOTH, expand=True, padx=5)
-        self.meter_cloud = ttk.Meter(cloud_card, metersize=180, padding=10, amounttotal=1000, amountused=0, metertype="semi", subtext="PING ms", interactive=False, stripethickness=10, meterthickness=15, bootstyle=SUCCESS)
-        self.meter_cloud.pack(pady=(10,0))
-        self.lbl_cloud_status = ttk.Label(cloud_card, text="Status: OFFLINE", font="-weight bold", bootstyle=SECONDARY)
-        self.lbl_cloud_status.pack(pady=10)
+        ttk.Label(main_frame, text="📈 Live API Traffic Graph", font="-size 16 -weight bold", bootstyle=PRIMARY).pack(anchor=CENTER, pady=(0, 15))
 
         if MATPLOTLIB_AVAILABLE:
-            chart_frame = ttk.Labelframe(main_frame, text=" Live API Traffic (Requests / Sec) ", padding=10)
-            chart_frame.pack(fill=BOTH, expand=True, pady=(15, 0))
+            chart_frame = ttk.Frame(main_frame)
+            chart_frame.pack(fill=BOTH, expand=True, pady=(0, 15))
             
-            self.fig = Figure(figsize=(8, 2), dpi=100, facecolor='#222222')
+            self.fig = Figure(figsize=(8, 3), dpi=100, facecolor=self.hub.CARD_BG)
             self.ax = self.fig.add_subplot(111)
-            self.ax.set_facecolor('#222222'); self.ax.tick_params(colors='white')
+            self.ax.set_facecolor(self.hub.CARD_BG); self.ax.tick_params(colors='white')
             for spine in self.ax.spines.values(): spine.set_color('#555555')
                 
-            self.line, = self.ax.plot([], [], color='#4CD37E', linewidth=2)
+            self.line, = self.ax.plot([], [], color='#4CD37E', linewidth=2, label="Req / Sec")
+            self.ax.legend(loc="upper right", facecolor=self.hub.CARD_BG, edgecolor="#555555", labelcolor="white")
             self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
             self.canvas.get_tk_widget().pack(fill=BOTH, expand=True)
         else:
-            ttk.Label(main_frame, text="(Install 'matplotlib' to view Live Traffic Graph)", font="-size 9 -slant italic", foreground="#888").pack(pady=10)
+            ttk.Label(main_frame, text="(Install 'matplotlib' to view Live Traffic Graph)", font="-size 10 -slant italic", foreground="#888").pack(pady=30)
         
-        ttk.Button(main_frame, text="Close Window", bootstyle=SECONDARY, command=self.destroy).pack(pady=(15,0))
+        ttk.Button(main_frame, text="Close Window", bootstyle=SECONDARY, command=self.destroy).pack(pady=(10,0))
 
     def refresh_meters(self):
         if not self.winfo_exists(): return
             
-        with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
-        with metrics_lock: snap_metrics = dict(SERVER_METRICS)
-
-        loc_ms = snap_net["local_ms"]
-        self.meter_local.configure(amountused=min(loc_ms, 1000))
-        if snap_net["local_status"] == "ONLINE":
-            self.meter_local.configure(bootstyle=SUCCESS if loc_ms < 150 else WARNING)
-            self.lbl_local_status.configure(text="Status: LIVE", bootstyle=SUCCESS)
-        else: 
-            self.meter_local.configure(amountused=0, bootstyle=SECONDARY)
-            self.lbl_local_status.configure(text="Status: OFFLINE", bootstyle=DANGER)
-
-        proc_ms = int(snap_metrics["avg_process_ms"])
-        self.meter_proc.configure(amountused=min(proc_ms, 500))
-        self.meter_proc.configure(bootstyle=SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER))
-        self.lbl_proc_status.configure(text=f"Total: {snap_metrics['req_count']} req")
-
-        cf_ms = snap_net["cloud_ms"]
-        self.meter_cloud.configure(amountused=min(cf_ms, 1000))
-        if snap_net["cloud_status"] == "ONLINE":
-            self.meter_cloud.configure(bootstyle=SUCCESS if cf_ms < 300 else WARNING)
-            self.lbl_cloud_status.configure(text="Status: SECURE", bootstyle=SUCCESS)
-        else: 
-            self.meter_cloud.configure(amountused=0, bootstyle=SECONDARY)
-            self.lbl_cloud_status.configure(text="Status: OFFLINE", bootstyle=DANGER)
-
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'line'):
             y_data = list(TRAFFIC_HISTORY); x_data = list(range(len(y_data)))
             self.line.set_data(x_data, y_data); self.ax.set_xlim(0, 59); self.ax.set_ylim(0, max(10, max(y_data) + 5)); self.canvas.draw()
@@ -980,11 +969,19 @@ class ServerHub(ttk.Window):
         self.cf_process = None
         self._cf_connecting = False  
         
+        # BATCH LOGGING BUFFER (Zero-Freeze GUI)
+        self.log_lock = threading.Lock()
+        self.log_buffer_flask = []
+        self.log_buffer_network = []
+        self.log_buffer_cf = []
+        
         self.gui_queue = queue.Queue()
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         
         self.build_ui()
+        
+        self.flush_log_buffers()
         self.process_gui_queue()
         self.refresh_stats()
         self.refresh_hw_meters()
@@ -1023,7 +1020,7 @@ class ServerHub(ttk.Window):
                 except Exception as e:
                     c_ms, c_stat = 0, "OFFLINE"
                     if getattr(self, "_last_ping_err", "") != str(e): 
-                        self._append_log(self.log_cf, f"[PING ERROR] {str(e)[:100]}...")
+                        self._append_log('cf', f"[PING ERROR] {str(e)[:100]}...")
                         self._last_ping_err = str(e)
             else: 
                 c_ms, c_stat = 0, "OFFLINE"
@@ -1032,7 +1029,51 @@ class ServerHub(ttk.Window):
                 NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
                 
             time.sleep(3.0)
+
+    # --- BATCH LOGGING SYSTEM ---
+    def _append_log(self, widget_id, message, tag=None):
+        """Thread-safe append. Pushes directly to buffers instead of triggering heavy Tkinter inserts."""
+        segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
+        
+        with self.log_lock:
+            if widget_id == 'flask': self.log_buffer_flask.append(segments)
+            elif widget_id == 'network': self.log_buffer_network.append(segments)
+            elif widget_id == 'cf': self.log_buffer_cf.append(segments)
+
+    def log_flask_event(self, message): 
+        self._append_log('flask', message)
+
+    def flush_log_buffers(self):
+        """Processes all accumulated logs at once every 250ms. Guarantees GUI immunity to high-TPS freezing."""
+        with self.log_lock:
+            flask_logs = list(self.log_buffer_flask)
+            net_logs = list(self.log_buffer_network)
+            cf_logs = list(self.log_buffer_cf)
+            self.log_buffer_flask.clear()
+            self.log_buffer_network.clear()
+            self.log_buffer_cf.clear()
+
+        if flask_logs: self._write_logs_to_widget(self.log_flask.text, flask_logs)
+        if net_logs: self._write_logs_to_widget(self.log_network.text, net_logs)
+        if cf_logs and hasattr(self, 'cf_log_window') and self.cf_log_window: 
+            self._write_logs_to_widget(self.log_cf.text, cf_logs)
             
+        self.after(250, self.flush_log_buffers)
+
+    def _write_logs_to_widget(self, text_widget, log_batches):
+        text_widget.configure(state=NORMAL)
+        for segments in log_batches:
+            for txt, tg in segments: 
+                if tg: text_widget.insert(END, txt, tg)
+                else: text_widget.insert(END, txt)
+            text_widget.insert(END, "\n")
+            
+        text_widget.see(END)
+        lc = int(text_widget.index('end-1c').split('.')[0])
+        if lc > MAX_LOG_LINES: 
+            text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
+        text_widget.configure(state=DISABLED)
+
     def process_gui_queue(self):
         for _ in range(100):
             try: 
@@ -1042,37 +1083,20 @@ class ServerHub(ttk.Window):
                 break
         self.after(30, self.process_gui_queue)
 
-    def _append_log(self, widget, message, tag=None):
-        segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
-        
-        def append():
-            widget.text.configure(state=NORMAL)
-            for txt, tg in segments: 
-                if tg: widget.text.insert(END, txt, tg)
-                else: widget.text.insert(END, txt)
-            widget.text.insert(END, "\n"); widget.text.see(END)
-            
-            lc = int(widget.text.index('end-1c').split('.')[0])
-            if lc > MAX_LOG_LINES: widget.text.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
-            widget.text.configure(state=DISABLED)
-            
-        self.gui_queue.put(append)
-
-    def log_flask_event(self, message): 
-        self._append_log(self.log_flask, message)
-
     def clear_system_logs(self):
+        with self.log_lock: self.log_buffer_flask.clear()
         self.log_flask.text.configure(state=NORMAL); self.log_flask.text.delete('1.0', END); self.log_flask.text.configure(state=DISABLED)
-        self._append_log(self.log_flask, "[INFO] Operator cleared system logs.")
+        self._append_log('flask', "[INFO] Operator cleared system logs.")
 
     def clear_network_logs(self):
+        with self.log_lock: self.log_buffer_network.clear()
         self.log_network.text.configure(state=NORMAL); self.log_network.text.delete('1.0', END); self.log_network.text.configure(state=DISABLED)
-        self._append_log(self.log_network, "[INFO] Operator cleared network logs.")
+        self._append_log('network', "[INFO] Operator cleared network logs.")
 
     def copy_to_clipboard(self, text):
         if not text or text == "Offline": return
         self.clipboard_clear(); self.clipboard_append(text); self.update()
-        self._append_log(self.log_network, f"[CLIPBOARD] Copied: {text}")
+        self._append_log('network', f"[CLIPBOARD] Copied: {text}")
 
     def open_browser(self, url): 
         if url != "Offline": webbrowser.open(url)
@@ -1214,7 +1238,7 @@ class ServerHub(ttk.Window):
         bot_hdr = ttk.Frame(left_hdr)
         bot_hdr.pack(fill=X, pady=(12, 0))
         
-        # Enhanced Badges for Header (Replaces plain text from Image 2)
+        # Enhanced Badges for Header
         self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
         self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
         self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
@@ -1225,7 +1249,7 @@ class ServerHub(ttk.Window):
         actions_f = ttk.Frame(right_hdr)
         actions_f.pack(side=RIGHT, padx=(15, 0))
         ttk.Button(actions_f, text="⟳ Refresh Data", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 4))
-        ttk.Button(actions_f, text="🎛️ Speedometers", bootstyle="outline-info", command=self.open_telemetry_window).pack(side=TOP, fill=X)
+        ttk.Button(actions_f, text="📈 Live Traffic Graph", bootstyle="outline-info", command=self.open_telemetry_window).pack(side=TOP, fill=X)
         
         hw_f = ttk.Frame(right_hdr)
         hw_f.pack(side=RIGHT)
@@ -1236,9 +1260,11 @@ class ServerHub(ttk.Window):
         self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_ram.pack(side=LEFT, padx=5)
         
-        # Dual-Purpose Smart Meter (Temp / Network Speed Fallback)
-        self.mini_meter_hw = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SECONDARY, subtext="HW", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f}")
-        self.mini_meter_hw.pack(side=LEFT, padx=5)
+        # Smart Dedicated Network / Internet Speedometer
+        # Note: Fixed amountformat error by removing it from .configure() inside refresh_hw_meters.
+        self.mini_meter_net = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.1f}")
+        self.mini_meter_net.pack(side=LEFT, padx=5)
+        self.net_tooltip = ToolTip(self.mini_meter_net, text="Checking connection...")
         
         self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f} ms")
         self.mini_meter_api.pack(side=LEFT, padx=5)
@@ -1314,8 +1340,8 @@ class ServerHub(ttk.Window):
         footer.pack(fill=X, pady=(5, 0))
         ttk.Label(footer, text="Engineered for Event Resilience • Powered by EllowDigital", font="-size 9", foreground="#666").pack(side=RIGHT)
         
-        self._append_log(self.log_network, f"System Boot: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self._append_log(self.log_network, f"Local Network IP Address Detected: {self.local_ip}")
+        self._append_log('network', f"System Boot: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        self._append_log('network', f"Local Network IP Address Detected: {self.local_ip}")
 
     def on_close(self):
         try:
@@ -1378,40 +1404,84 @@ class ServerHub(ttk.Window):
         if SERVER_TEST_MODE:
             self.chk_test.configure(text="Testing Mode ON", bootstyle="danger-round-toggle")
             self.cb_test_date.configure(state="normal")
-            self._append_log(self.log_network, f"[WARNING] Testing Mode ON. Server date overridden to {self.test_date.get()}.")
+            self._append_log('network', f"[WARNING] Testing Mode ON. Server date overridden to {self.test_date.get()}.")
         else:
             self.chk_test.configure(text="Testing Mode OFF", bootstyle="warning-round-toggle")
             self.cb_test_date.configure(state=DISABLED)
-            self._append_log(self.log_network, "[INFO] Testing Mode OFF. Real system date restored.")
+            self._append_log('network', "[INFO] Testing Mode OFF. Real system date restored.")
         self.refresh_stats()
 
     def on_test_date_changed(self):
         global SERVER_TEST_DATE; SERVER_TEST_DATE = self.test_date.get()
-        self._append_log(self.log_network, f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}"); self.refresh_stats()
+        self._append_log('network', f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}")
+        self.refresh_stats()
 
     def refresh_hw_meters(self):
-        try:
-            c = int(psutil.cpu_percent()); r = int(psutil.virtual_memory().percent)
-            self.mini_meter_cpu.configure(amountused=c, bootstyle=SUCCESS if c < 60 else (WARNING if c < 85 else DANGER))
-            self.mini_meter_ram.configure(amountused=r, bootstyle=SUCCESS if r < 70 else (WARNING if r < 90 else DANGER))
-        except Exception: pass
+        with _telemetry_lock:
+            snap_telemetry = dict(TELEMETRY_DATA)
+
+        # 1. Update CPU & RAM
+        c, r = snap_telemetry.get("cpu", 0), snap_telemetry.get("ram", 0)
+        self.mini_meter_cpu.configure(amountused=c, bootstyle=SUCCESS if c < 60 else (WARNING if c < 85 else DANGER))
+        self.mini_meter_ram.configure(amountused=r, bootstyle=SUCCESS if r < 70 else (WARNING if r < 90 else DANGER))
         
-        # SMART METER: Temperature or Network Speed Fallback
-        try:
-            t = get_system_temp()
-            if t is not None:
-                self.mini_meter_hw.configure(amountused=min(t, 100), amountformat="{:.0f}°C", subtext="TEMP", bootstyle=SUCCESS if t < 60 else (WARNING if t < 80 else DANGER))
+        # 2. Update Fast Dedicated Network Speedometer & Tooltip
+        net_type = snap_telemetry.get("net_type", "Disconnected")
+        
+        if net_type == "Disconnected" or net_type == "Offline":
+            self.mini_meter_net.amountusedvar.set(0)
+            if hasattr(self.mini_meter_net, 'subtextvar'):
+                self.mini_meter_net.subtextvar.set("OFFLINE")
             else:
-                mbps = get_network_speed_mbps()
-                self.mini_meter_hw.configure(amountused=min(mbps, 100), amountformat="{:.1f}", subtext="Mbps", bootstyle=INFO if mbps > 0.5 else SECONDARY)
-        except Exception: pass
-        
+                self.mini_meter_net.configure(subtext="OFFLINE")
+            self.mini_meter_net.configure(bootstyle=DANGER)
+            self.net_tooltip.text = "Internet Disconnected\nNo active interface found."
+        else:
+            mbps = snap_telemetry.get("total_mbps", 0.0)
+            dl_mbps = snap_telemetry.get("dl_mbps", 0.0)
+            ul_mbps = snap_telemetry.get("ul_mbps", 0.0)
+            dl_mb = snap_telemetry.get("total_dl_mb", 0.0)
+            ul_mb = snap_telemetry.get("total_ul_mb", 0.0)
+            
+            # Format Rich Tooltip
+            tt_text = (
+                f"Status: Connected\n"
+                f"Connection Type: {net_type}\n"
+                f"Interface Name: {snap_telemetry.get('iface_name', 'N/A')}\n"
+                f"Link Speed: {snap_telemetry.get('link_speed', 0)} Mbps\n\n"
+                f"Live Download: {dl_mbps:.2f} Mbps\n"
+                f"Live Upload: {ul_mbps:.2f} Mbps\n"
+                f"Total Downloaded: {dl_mb:.1f} MB\n"
+                f"Total Uploaded: {ul_mb:.1f} MB"
+            )
+            
+            # Dynamic Cap adjusting so meter doesn't overfill visually
+            cap = 100
+            if mbps > 100: cap = 1000
+            if mbps > 1000: cap = 10000
+            
+            self.mini_meter_net.amounttotal = cap
+            self.mini_meter_net.amountusedvar.set(int(mbps) if mbps > 1 else round(mbps, 1))
+            
+            # FIXED: Dynamically alter text using exact underlying stringvar (Zero Lag / No restart required)
+            new_subtext = net_type.upper()[:7]
+            if hasattr(self.mini_meter_net, 'subtextvar'):
+                self.mini_meter_net.subtextvar.set(new_subtext)
+            else:
+                self.mini_meter_net.configure(subtext=new_subtext)
+                
+            self.mini_meter_net.configure(bootstyle=SUCCESS if mbps > 1.0 else INFO)
+            self.net_tooltip.text = tt_text
+
+        # 3. Update API Latency
         try:
             with metrics_lock: snap_metrics = dict(SERVER_METRICS)
             proc_ms = int(snap_metrics["avg_process_ms"])
-            self.mini_meter_api.configure(amountused=min(proc_ms, 500), bootstyle=SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER))
+            self.mini_meter_api.amountusedvar.set(min(proc_ms, 500))
+            self.mini_meter_api.configure(bootstyle=SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER))
         except Exception: pass
 
+        # 4. Update External Ping Tests
         with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
         loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
         
@@ -1425,6 +1495,7 @@ class ServerHub(ttk.Window):
         else:
             self.lbl_hdr_cloud_ping.configure(text="WAN Ping: DOWN", bootstyle=SECONDARY)
 
+        # Re-schedule non-blocking update
         self.after(1000, self.refresh_hw_meters)
 
     def refresh_stats(self):
@@ -1470,16 +1541,16 @@ class ServerHub(ttk.Window):
 
     def start_flask(self):
         self.btn_start_flask.configure(state=DISABLED)
-        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
+        self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
         start_db_writers()
-        self._append_log(self.log_flask, f"[SYSTEM] {DB_WRITER_THREADS} DB writer threads ready.")
+        self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} DB writer threads ready.")
         try:
             self.http_thread = WaitressHttpThread(app, '0.0.0.0', HTTP_PORT)
             self.https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
             self.http_thread.start()
             self.https_thread.start()
         except Exception as e:
-            self._append_log(self.log_flask, f"[ERROR] Start failed: {e}")
+            self._append_log('flask', f"[ERROR] Start failed: {e}")
             if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
             self.https_thread = None; stop_db_writers(); self.btn_start_flask.configure(state=NORMAL)
             Messagebox.show_error(f"Engine failed:\n{e}", "Failed", parent=self); return
@@ -1487,8 +1558,8 @@ class ServerHub(ttk.Window):
         self.btn_stop_flask.configure(state=NORMAL); self.btn_start_cf.configure(state=NORMAL)
         self.update_qr(self.lbl_flask_qr, self.https_url)
         self.lbl_flask_link.configure(text=self.https_url, foreground="#4D9CE6")
-        self._append_log(self.log_flask, f"[SYSTEM] Waitress HTTP listening: {self.http_url}")
-        self._append_log(self.log_flask, f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
+        self._append_log('flask', f"[SYSTEM] Waitress HTTP listening: {self.http_url}")
+        self._append_log('flask', f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
         
     def stop_flask(self):
         if self.btn_stop_cf['state'] == NORMAL: 
@@ -1510,7 +1581,7 @@ class ServerHub(ttk.Window):
             self.https_thread.shutdown()
             self.https_thread = None
             
-        self._append_log(self.log_flask, f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
+        self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
 
     def _animate_cf_connecting(self, tick=0):
         if not self.winfo_exists() or not self._cf_connecting: 
@@ -1524,13 +1595,13 @@ class ServerHub(ttk.Window):
 
     def start_cf(self):
         if not self.http_thread: 
-            return self._append_log(self.log_cf, "[ERROR] Start Local Engine FIRST!")
+            return self._append_log('cf', "[ERROR] Start Local Engine FIRST!")
             
         self.btn_start_cf.configure(state=DISABLED)
         self.btn_stop_cf.configure(state=NORMAL)
         self._cf_connecting = True
         self._animate_cf_connecting()
-        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
+        self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
 
         def _run_cf():
             try:
@@ -1538,7 +1609,7 @@ class ServerHub(ttk.Window):
                 url_found = False
                 for line in self.cf_process.stdout:
                     cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
-                    self._append_log(self.log_cf, cl)
+                    self._append_log('cf', cl)
                     
                     if not url_found:
                         m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
@@ -1547,19 +1618,19 @@ class ServerHub(ttk.Window):
                             self.cloudflare_url = tunnel_url
                             url_found = True
                             
-                            self._append_log(self.log_cf, "[INFO] Waiting 30s for DNS propagation...")
+                            self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             time.sleep(30)
                             
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
                             self.gui_queue.put(self._mark_cf_live)
-                            self._append_log(self.log_cf, f"[SUCCESS] Tunnel active: {self.cloudflare_url}")
+                            self._append_log('cf', f"[SUCCESS] Tunnel active: {self.cloudflare_url}")
             except FileNotFoundError:
                 self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, "[ERROR] 'cloudflared' not found in PATH.")
+                self._append_log('cf', "[ERROR] 'cloudflared' not found in PATH.")
             except Exception as e: 
                 self.gui_queue.put(self.stop_cf)
-                self._append_log(self.log_cf, f"[ERROR] Tunnel failed: {e}")
+                self._append_log('cf', f"[ERROR] Tunnel failed: {e}")
                 
         threading.Thread(target=_run_cf, daemon=True).start()
         
@@ -1583,7 +1654,7 @@ class ServerHub(ttk.Window):
         self.cloudflare_url = "Offline"
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
-        self._append_log(self.log_cf, f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
+        self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
 
 
 if __name__ == "__main__":
