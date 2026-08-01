@@ -1,10 +1,13 @@
 import os
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 import time
 import threading
 import queue
 import re
 import uuid
+import platform
 import requests
 import urllib3
 import tkinter as tk
@@ -18,14 +21,35 @@ try:
 except ImportError:
     HAS_INDIAPINS = False
 
+# Custom tone generator for Windows (bypasses default OS theme sounds)
+try:
+    if platform.system() == "Windows":
+        import winsound
+        HAS_WINSOUND = True
+    else:
+        HAS_WINSOUND = False
+except ImportError:
+    HAS_WINSOUND = False
+
 # Suppress InsecureRequestWarning for adhoc self-signed HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
-# 24/7 STABILITY: GLOBAL CRASH HANDLER
+# 24/7 STABILITY: GLOBAL CRASH HANDLER & LOGGING
 # ==============================================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BASE_DIR, 'logs')
+CONFIG_DIR = os.path.join(BASE_DIR, 'config')
+os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(CONFIG_DIR, exist_ok=True)
+
+LOG_FILE = os.path.join(LOG_DIR, 'kiosk_registration.log')
+_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding='utf-8')
+_file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
+logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
+
 def global_exception_handler(*args):
-    print(f"Uncaught GUI Exception intercepted: {args}")
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
 tk.Tk.report_callback_exception = global_exception_handler
 
@@ -58,25 +82,19 @@ POPULAR_CITIES = [
 # ==============================================================================
 # CONFIGURATION & BACKUP MANAGER
 # ==============================================================================
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_DIR = os.path.join(BASE_DIR, 'config')
-LOG_DIR = os.path.join(BASE_DIR, 'logs')
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'register.json')
 BACKUP_FILE = os.path.join(LOG_DIR, 'unsynced_registrations.json')
 
 def load_config():
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    os.makedirs(LOG_DIR, exist_ok=True)
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
                 return json.load(f)
         except Exception:
             pass
-    return {"server_url": "https://127.0.0.1:5000", "device_name": "Main Desktop Kiosk"}
+    return {"server_url": "http://127.0.0.1:5000", "device_name": "Main Desktop Kiosk"}
 
 def save_config(url, name):
-    os.makedirs(CONFIG_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w') as f:
         json.dump({"server_url": url, "device_name": name}, f, indent=4)
 
@@ -177,9 +195,15 @@ class OfflineKioskApp(ttk.Window):
         self.config = load_config()
         self.server_url = self.config["server_url"].rstrip('/')
         self.device_name = self.config["device_name"]
+        self.sound_enabled = True
         
-        self.http_session = requests.Session()
-        self.http_session.headers.update({"User-Agent": "EventHub-Kiosk/1.0"})
+        # Isolated Network Pools to prevent UI freezing
+        self.api_session = requests.Session()
+        self.ping_session = requests.Session()
+        self.sync_session = requests.Session()
+        
+        for session in [self.api_session, self.ping_session, self.sync_session]:
+            session.headers.update({"User-Agent": "EventHub-Kiosk/1.0", "Connection": "close"})
         
         self.gui_queue = queue.Queue()
         self.is_pinging = True
@@ -190,6 +214,8 @@ class OfflineKioskApp(ttk.Window):
         self.EMAIL_RE = re.compile(r"^[\w.\-+]+@[\w.\-]+\.\w{2,}$")
         self._mobile_check_timer = None
 
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
         self.build_ui()
         self.setup_reactive_logic()
         self.bind_shortcuts()
@@ -208,6 +234,15 @@ class OfflineKioskApp(ttk.Window):
         self.bind("<Alt-c>", lambda e: self.reset_form())
         self.bind("<Alt-C>", lambda e: self.reset_form())
 
+    def on_close(self):
+        self.is_pinging = False
+        try:
+            self.api_session.close()
+            self.ping_session.close()
+            self.sync_session.close()
+        except Exception: pass
+        self.destroy()
+
     # --- UI BUILDING ---
     def build_ui(self):
         header_frame = ttk.Frame(self, padding=(15, 15, 15, 5))
@@ -218,6 +253,9 @@ class OfflineKioskApp(ttk.Window):
 
         control_frame = ttk.Frame(header_frame)
         control_frame.pack(side=RIGHT)
+
+        self.btn_sound = ttk.Button(control_frame, text="🔊 Sound", bootstyle="outline-info", command=self.toggle_sound)
+        self.btn_sound.pack(side=LEFT, padx=(0, 5))
 
         self.btn_settings = ttk.Button(control_frame, text="⚙️ Settings", bootstyle=SECONDARY, command=self.open_settings)
         self.btn_settings.pack(side=LEFT, padx=(0, 15))
@@ -370,6 +408,37 @@ class OfflineKioskApp(ttk.Window):
         err_lbl.pack(anchor=W)
         self.errors[name] = err_lbl
 
+    # --- ADVANCED HARDWARE SOUNDS ---
+    def toggle_sound(self):
+        self.sound_enabled = not self.sound_enabled
+        self.btn_sound.configure(
+            text="🔊 Sound" if self.sound_enabled else "🔇 Muted", 
+            bootstyle="outline-info" if self.sound_enabled else "outline-secondary"
+        )
+
+    def play_sound(self, status):
+        if not self.sound_enabled:
+            return
+        def _play():
+            if HAS_WINSOUND:
+                try:
+                    if status == "SUCCESS":
+                        winsound.Beep(2000, 100)  
+                    elif status == "DUPLICATE":
+                        winsound.Beep(1000, 100) 
+                        time.sleep(0.05)
+                        winsound.Beep(1000, 100)
+                    else:
+                        winsound.Beep(200, 600)
+                except Exception:
+                    self.bell() 
+            else:
+                self.bell()
+                if status != "SUCCESS":
+                    time.sleep(0.2)
+                    self.bell()
+        threading.Thread(target=_play, daemon=True).start()
+
     # --- LIVE VALIDATION & REACTIVE LOGIC ---
     def setup_reactive_logic(self):
         self.vars['attendee_type'].trace_add('write', self.on_type_change)
@@ -377,7 +446,6 @@ class OfflineKioskApp(ttk.Window):
         self.vars['mobile'].trace_add('write', self.on_mobile_change)
         self.vars['pincode'].trace_add('write', self.on_pincode_change)
 
-        # LIVE VALIDATION: Instantly clears red field errors when text changes
         for field, var in self.vars.items():
             if field not in ['auto_clear', 'day_1', 'day_2', 'day_3']:
                 var.trace_add('write', lambda n, i, m, f=field: self.clear_single_error(f))
@@ -431,7 +499,7 @@ class OfflineKioskApp(ttk.Window):
 
     def _check_mobile_status(self, mobile_num):
         try:
-            res = self.http_session.get(f"{self.server_url}/api/check_mobile", params={"mobile": mobile_num}, timeout=3, verify=False)
+            res = self.api_session.get(f"{self.server_url}/api/check_mobile", params={"mobile": mobile_num}, timeout=3, verify=False)
             if res.status_code == 200:
                 data = res.json()
                 if data.get('status') in ['already_registered', 'registered', 'exists']:
@@ -474,7 +542,7 @@ class OfflineKioskApp(ttk.Window):
         ttk.Label(modal, text="Hub Connection URL:", font="-weight bold").pack(anchor=W, padx=20, pady=(20, 5))
         url_var = tk.StringVar(value=self.server_url)
         ttk.Entry(modal, textvariable=url_var).pack(fill=X, padx=20, ipady=4)
-        ttk.Label(modal, text="Example: https://192.168.137.1:5000", font="-size 8", foreground="gray").pack(anchor=W, padx=20)
+        ttk.Label(modal, text="Example: http://192.168.137.1:5000", font="-size 8", foreground="gray").pack(anchor=W, padx=20)
 
         ttk.Label(modal, text="Kiosk Device Name:", font="-weight bold").pack(anchor=W, padx=20, pady=(20, 5))
         name_var = tk.StringVar(value=self.device_name)
@@ -499,7 +567,7 @@ class OfflineKioskApp(ttk.Window):
             start_time = time.time()
             try:
                 url = f"{self.server_url}/api/status?device_name={requests.utils.quote(self.device_name)}"
-                res = self.http_session.get(url, timeout=2, verify=False)
+                res = self.ping_session.get(url, timeout=2, verify=False)
                 res.raise_for_status()
                 
                 duration_ms = int((time.time() - start_time) * 1000)
@@ -519,8 +587,9 @@ class OfflineKioskApp(ttk.Window):
             backups = backup_mgr.load()
             if backups:
                 for b in list(backups):
+                    if not self.is_pinging: break
                     try:
-                        res = self.http_session.post(f"{self.server_url}/api/register", json=b, timeout=5, verify=False)
+                        res = self.sync_session.post(f"{self.server_url}/api/register", json=b, timeout=5, verify=False)
                         if res.status_code == 200:
                             backup_mgr.remove(b['_backup_id'])
                     except Exception:
@@ -534,6 +603,7 @@ class OfflineKioskApp(ttk.Window):
         self.after(200, lambda: self.net_canvas.coords(self.net_dot, 2, 2, 10, 10))
 
     def process_gui_queue(self):
+        if not self.winfo_exists(): return
         for _ in range(50):
             try:
                 task = self.gui_queue.get_nowait()
@@ -544,7 +614,7 @@ class OfflineKioskApp(ttk.Window):
 
     # --- ANIMATED SUBMIT LOADER ---
     def animate_submit_button(self, count=0):
-        if self.is_submitting:
+        if self.is_submitting and self.winfo_exists():
             dots = "." * ((count % 3) + 1)
             self.btn_submit.configure(text=f"⏳ Registering{dots}")
             self.after(400, lambda: self.animate_submit_button(count + 1))
@@ -621,7 +691,7 @@ class OfflineKioskApp(ttk.Window):
     def submit_form(self, event=None):
         if self.is_submitting: return
         if not self.validate_form():
-            self.bell()
+            self.play_sound("ERROR")
             return
             
         self.is_submitting = True
@@ -656,9 +726,9 @@ class OfflineKioskApp(ttk.Window):
 
     def _post_registration_infinite_loop(self, payload):
         attempt = 1
-        while self.is_submitting:
+        while self.is_submitting and self.is_pinging:
             try:
-                res = self.http_session.post(f"{self.server_url}/api/register", json=payload, timeout=5, verify=False)
+                res = self.api_session.post(f"{self.server_url}/api/register", json=payload, timeout=5, verify=False)
                 res.raise_for_status()
                 data = res.json()
                 
@@ -682,13 +752,17 @@ class OfflineKioskApp(ttk.Window):
 
     def handle_submit_error(self, message):
         self.is_submitting = False
+        self.play_sound("ERROR")
         messagebox.showerror("Registration Failed", message)
         self.btn_submit.configure(state=NORMAL, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS)
-        self.bell()
 
     # --- SUCCESS MODAL ---
     def show_success_modal(self, aid, is_duplicate=False):
-        self.bell()
+        if is_duplicate:
+            self.play_sound("DUPLICATE")
+        else:
+            self.play_sound("SUCCESS")
+            
         modal = tk.Toplevel(self)
         modal.geometry("450x350")
         modal.resizable(False, False)

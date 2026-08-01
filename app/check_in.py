@@ -7,6 +7,7 @@ import socket
 import platform
 import time
 import queue
+import collections
 import requests
 import urllib3
 from datetime import datetime
@@ -17,7 +18,7 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk, ImageOps
 
-# Attempt to load Windows sound, otherwise fallback to basic UI bell
+# Custom tone generator for Windows (bypasses default OS theme sounds)
 try:
     if platform.system() == "Windows":
         import winsound
@@ -32,7 +33,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==============================================================================
 # 24/7 STABILITY: GLOBAL CRASH HANDLER
-# Prevents the application from force-closing if a background thread throws a UI error
 # ==============================================================================
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
@@ -43,7 +43,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'checkin.json')
 DEFAULT_PHOTO_DIR = 'attendee_photos'
 
-# Setup rotating logs for the display terminal to prevent disk bloat over 3 days
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, 'gate_display.log')
@@ -51,14 +50,12 @@ _file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3,
 _file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
 
-
-# Native Theme Bootstyles mapped to categories
 CATEGORY_STYLES = {
-    "business": "warning",    # Yellow/Gold
-    "general": "primary",     # Blue
-    "media": "danger",        # Red
-    "exhibitor": "info",      # Cyan/Light Blue
-    "default": "secondary"    # Grey
+    "business": "warning",    
+    "general": "primary",     
+    "media": "danger",        
+    "exhibitor": "info",      
+    "default": "secondary"    
 }
 
 # ==============================================================================
@@ -67,7 +64,7 @@ CATEGORY_STYLES = {
 class ConfigManager:
     def __init__(self):
         self.config = {
-            "hub_url": "https://127.0.0.1:5000",
+            "hub_url": "http://127.0.0.1:5000",
             "device_name": "Gate_Display_1",
             "poll_interval_ms": 500,
             "photo_directory": DEFAULT_PHOTO_DIR
@@ -172,7 +169,6 @@ class GateDisplay(ttk.Window):
         self.geometry("1400x850")
         self.minsize(1200, 700)
         
-        # Center Window on startup
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         self.geometry(f"+{(sw - 1400) // 2}+{(sh - 850) // 2 - 20}")
@@ -180,21 +176,23 @@ class GateDisplay(ttk.Window):
         self.current_theme = "darkly"
         self.config_manager = ConfigManager()
         
-        # High Concurrency UI Queues
         self.gui_queue = queue.Queue()
         self.scan_queue = queue.Queue()  
         
-        self.is_polling = True
+        self.is_polling = False
         self.sound_enabled = True
         self.stats = {"Success": 0, "Duplicate": 0, "Wrong Day": 0, "Errors": 0}
         self.recent_scans = []
         
-        # Image Cache to prevent memory leaks
         self.current_photo = None
         self._placeholder_img_cache = {}
+        self._last_scan_time = 0.0
+        
+        # Deduplication cache to prevent 3x ghost thread events
+        self._processed_sigs = collections.deque(maxlen=20) 
 
-        self.http_session = requests.Session()
-        self.http_session.headers.update({"User-Agent": "EventHub-GateDisplay/1.0"})
+        self.stream_session = None
+        self.api_session = None
 
         self.build_ui()
         self.process_queues()
@@ -214,7 +212,6 @@ class GateDisplay(ttk.Window):
             self.set_placeholder_photo()
 
     def build_ui(self):
-        # --- TOP NAVBAR ---
         self.nav = ttk.Frame(self, padding=15)
         self.nav.pack(fill=X)
         
@@ -236,23 +233,19 @@ class GateDisplay(ttk.Window):
         
         ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=5)
         
-        # UI FIX: Clean Live Latency Pill
         self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(12, 6))
         self.net_pill.pack(side=LEFT, padx=20)
         
         self.lbl_hub_status = ttk.Label(self.net_pill, text="● Connecting...", font="-weight bold -size 11", bootstyle=WARNING)
         self.lbl_hub_status.pack(side=LEFT)
 
-        # --- DYNAMIC TEST MODE BANNER ---
         self.test_banner = ttk.Frame(self, bootstyle=DANGER)
         self.lbl_test_mode = ttk.Label(self.test_banner, text="⚠️ TEST MODE ACTIVE", font="-weight bold -size 12", bootstyle="inverse-danger")
         self.lbl_test_mode.pack(pady=8)
         
-        # --- MAIN CONTENT GRID ---
         self.content = ttk.Frame(self, padding=25)
         self.content.pack(fill=BOTH, expand=True)
 
-        # LEFT PANEL (Visual Display)
         left_panel = ttk.Frame(self.content)
         left_panel.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 25))
 
@@ -262,7 +255,6 @@ class GateDisplay(ttk.Window):
         profile_frame = ttk.Frame(left_panel)
         profile_frame.pack(fill=BOTH, expand=True)
 
-        # Photo Container (Slightly smaller for better text wrapping room)
         photo_container = ttk.Frame(profile_frame, width=340)
         photo_container.pack(side=LEFT, fill=Y, padx=(0, 30))
         photo_container.pack_propagate(False) 
@@ -277,15 +269,13 @@ class GateDisplay(ttk.Window):
         self.lbl_attendee_id.pack(pady=15)
         self.set_placeholder_photo()
 
-        # Attendee Details Container
         details = ttk.Frame(profile_frame)
         details.pack(side=LEFT, fill=BOTH, expand=True)
         
-        # 🟢 FIX: Name and Badge grid layout prevents overlapping
         header_frame = ttk.Frame(details)
         header_frame.pack(fill=X, pady=(10, 0))
-        header_frame.columnconfigure(0, weight=1) # Name gets all available space
-        header_frame.columnconfigure(1, weight=0) # Badge stays anchored right
+        header_frame.columnconfigure(0, weight=1) 
+        header_frame.columnconfigure(1, weight=0) 
         
         self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 36 -weight bold", bootstyle=DEFAULT, wraplength=550)
         self.lbl_name.grid(row=0, column=0, sticky=NW, pady=(0, 5))
@@ -296,7 +286,6 @@ class GateDisplay(ttk.Window):
         self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 16", bootstyle=INFO, wraplength=550)
         self.lbl_company.pack(anchor=W, pady=(5, 30))
 
-        # 🟢 FIX: Details Grid column sizing & wrapping
         grid = ttk.Frame(details)
         grid.pack(fill=BOTH, expand=True)
         grid.columnconfigure(0, weight=1, minsize=200)
@@ -313,7 +302,6 @@ class GateDisplay(ttk.Window):
             f = ttk.Frame(grid, padding=10)
             f.grid(row=r, column=c, sticky=NSEW, padx=5, pady=5)
             ttk.Label(f, text=f"{label.upper()}", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-            # Wraplength ensures things like "Lucknow, Uttar Pradesh" won't explode the layout
             val = ttk.Label(f, text="---", font="-size 15 -weight bold", wraplength=260)
             val.pack(anchor=W, pady=(4,0))
             self.fields[key] = val
@@ -321,7 +309,6 @@ class GateDisplay(ttk.Window):
         self.bottom_banner = ttk.Label(left_panel, text="READY FOR OPERATIONS", font="-size 16 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
         self.bottom_banner.pack(fill=X, side=BOTTOM, ipady=18)
 
-        # RIGHT PANEL (Sidebar Tools)
         right_panel = ttk.Frame(self.content, width=420)
         right_panel.pack(side=RIGHT, fill=Y)
         right_panel.pack_propagate(False)
@@ -389,24 +376,38 @@ class GateDisplay(ttk.Window):
             bootstyle="outline-info" if self.sound_enabled else "outline-secondary"
         )
 
-    def play_sound(self, status):
+    def play_sound(self, status, message=""):
         if not self.sound_enabled:
             return
         
         def _play():
             if HAS_WINSOUND:
-                if status == "SUCCESS": winsound.MessageBeep(winsound.MB_OK)
-                elif status == "DUPLICATE": winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-                else: winsound.MessageBeep(winsound.MB_ICONHAND)
+                try:
+                    if status == "SUCCESS":
+                        winsound.Beep(2000, 100)  
+                    elif status == "DUPLICATE":
+                        winsound.Beep(1000, 100) 
+                        time.sleep(0.05)
+                        winsound.Beep(1000, 100)
+                    else:
+                        if "Denied" in message:
+                            winsound.Beep(400, 150)
+                            winsound.Beep(300, 300)
+                        else:
+                            winsound.Beep(200, 600)
+                except Exception:
+                    self.bell() 
             else:
                 self.bell()
+                if status != "SUCCESS":
+                    time.sleep(0.2)
+                    self.bell()
+                    
         threading.Thread(target=_play, daemon=True).start()
 
-    # --- ASYNCHRONOUS PHOTO LOADING (Leak-Proof) ---
     def set_placeholder_photo(self):
         bg_color = '#e9ecef' if self.current_theme == "flatly" else '#222222'
         
-        # 🟢 FIX: Reduced canvas to 320x320 for better layout breathing room
         if bg_color not in self._placeholder_img_cache:
             img = Image.new('RGB', (320, 320), color=bg_color)
             self._placeholder_img_cache[bg_color] = ImageTk.PhotoImage(img)
@@ -425,7 +426,6 @@ class GateDisplay(ttk.Window):
                 if os.path.exists(path):
                     try:
                         img = Image.open(path)
-                        # 🟢 FIX: Reduced to 320x320
                         img = ImageOps.fit(img, (320, 320), Image.Resampling.LANCZOS)
                         photo_image = ImageTk.PhotoImage(img)
                         self.gui_queue.put(lambda p=photo_image: self.update_photo_ui(p))
@@ -443,7 +443,6 @@ class GateDisplay(ttk.Window):
         self.current_photo = photo_image  
         self.lbl_photo.configure(image=self.current_photo)
 
-    # --- BATCH QUEUE PROCESSORS (Zero Freeze Fix) ---
     def process_queues(self):
         for _ in range(50):
             try: self.gui_queue.get_nowait()()
@@ -463,7 +462,17 @@ class GateDisplay(ttk.Window):
         attendee = event_data.get("attendee")
         scanner_dev = event_data.get("device", "Unknown Scanner")
         
-        raw_ts = event_data.get("timestamp")
+        raw_ts = event_data.get("timestamp", "")
+        
+        # --- EVENT DEDUPLICATION (Fixes Ghost Thread 3x Bug) ---
+        aid = attendee.get("attendee_id", "unknown") if attendee else "none"
+        event_sig = f"{raw_ts}_{aid}_{status_type}"
+        
+        if event_sig in self._processed_sigs:
+            return # Ignore duplicate broadcast from ghost threads!
+            
+        self._processed_sigs.append(event_sig)
+
         time_str = datetime.now().strftime("%I:%M %p")
         if raw_ts:
             try:
@@ -481,7 +490,8 @@ class GateDisplay(ttk.Window):
         
         self.status_banner.configure(text=cfg["banner"], bootstyle=f"inverse-{c_style}")
         self.bottom_banner.configure(text=cfg["bottom"], bootstyle=f"inverse-{c_style}")
-        self.play_sound(status_type)
+        
+        self.play_sound(status_type, message)
 
         if attendee:
             category_raw = str(attendee.get("attendee_type", "")).lower()
@@ -543,9 +553,22 @@ class GateDisplay(ttk.Window):
             old = self.recent_scans.pop()
             old.destroy()
 
-    # --- ROBUST NETWORK POLLING & THREADING ---
     def start_threads(self):
+        self.is_polling = False
+        try:
+            if self.stream_session: self.stream_session.close()
+            if self.api_session: self.api_session.close()
+        except Exception: pass
+        
+        # Fresh isolated network pools
+        self.stream_session = requests.Session()
+        self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/1.0", "Connection": "keep-alive"})
+        
+        self.api_session = requests.Session()
+        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/1.0", "Connection": "close"})
+
         self.is_polling = True
+        
         self.stream_thread = threading.Thread(target=self.listen_to_server_stream, daemon=True)
         self.stream_thread.start()
         
@@ -560,7 +583,7 @@ class GateDisplay(ttk.Window):
             
             start_t = time.time()
             try:
-                resp = self.http_session.get(url, timeout=3, verify=False)
+                resp = self.api_session.get(url, timeout=3, verify=False)
                 latency = int((time.time() - start_t) * 1000)
                 
                 if resp.status_code == 200:
@@ -591,11 +614,11 @@ class GateDisplay(ttk.Window):
 
     def listen_to_server_stream(self):
         while self.is_polling:
-            hub_url = self.config_manager.config.get('hub_url', '')
+            hub_url = self.config_manager.config.get('hub_url', '').rstrip('/')
             url = f"{hub_url}/api/stream-scans"
             
             try:
-                with self.http_session.get(url, stream=True, timeout=(5, 20), verify=False) as response:
+                with self.stream_session.get(url, stream=True, timeout=(5, 20), verify=False) as response:
                     if response.status_code == 200:
                         for line in response.iter_lines():
                             if not self.is_polling: break
@@ -612,47 +635,43 @@ class GateDisplay(ttk.Window):
     def update_net_pill(self, text, style_name):
         self.lbl_hub_status.configure(text=text, bootstyle=style_name)
 
-    def process_queues(self):
-        for _ in range(50):
-            try: self.gui_queue.get_nowait()()
-            except queue.Empty: break
-
-        for _ in range(5):
-            try:
-                event_data = self.scan_queue.get_nowait()
-                self.update_ui_with_event(event_data)
-            except queue.Empty: break
-
-        self.after(30, self.process_queues)
-
     def manual_scan(self, lookup_type):
+        current_time = time.time()
+        if current_time - getattr(self, '_last_scan_time', 0) < 1.5:
+            return 
+        self._last_scan_time = current_time
+
         val = self.ent_phone.get() if lookup_type == 'phone' else self.ent_id.get()
         if "e.g." in val or not val.strip(): return
         
-        url = f"{self.config_manager.config['hub_url']}/api/checkin"
+        url = f"{self.config_manager.config['hub_url'].rstrip('/')}/api/checkin"
         payload = {
             "attendee_id": val.strip(),
             "search_type": lookup_type,
             "device_name": self.config_manager.config["device_name"]
         }
         
-        def _post_with_retries():
-            for attempt in range(3):
-                try:
-                    self.http_session.post(url, json=payload, timeout=4, verify=False)
-                    return 
-                except Exception:
-                    if attempt < 2: time.sleep(1 + attempt) 
-                    else:
-                        self.scan_queue.put({
-                            "status": "ERROR", 
-                            "message": "Network failure connecting to Hub.", 
-                            "attendee": None,
-                            "timestamp": datetime.now().isoformat(),
-                            "device": self.config_manager.config["device_name"]
-                        })
+        def _post_action():
+            try:
+                res = self.api_session.post(url, json=payload, timeout=5, verify=False)
+                if res.status_code not in [200, 400, 403, 404]:
+                    self.scan_queue.put({
+                        "status": "ERROR", 
+                        "message": f"Server reported {res.status_code}",
+                        "attendee": None,
+                        "timestamp": datetime.now().isoformat(),
+                        "device": self.config_manager.config["device_name"]
+                    })
+            except Exception:
+                self.scan_queue.put({
+                    "status": "ERROR", 
+                    "message": "Network timeout connecting to Hub.", 
+                    "attendee": None,
+                    "timestamp": datetime.now().isoformat(),
+                    "device": self.config_manager.config["device_name"]
+                })
 
-        threading.Thread(target=_post_with_retries, daemon=True).start()
+        threading.Thread(target=_post_action, daemon=True).start()
         
         def reset_inputs():
             for entry in (self.ent_id, self.ent_phone):
@@ -667,7 +686,6 @@ class GateDisplay(ttk.Window):
 
     def on_settings_saved(self):
         self.lbl_subtitle.config(text=f"{self.config_manager.config['device_name']} • TDE UP 2026")
-        self.is_polling = False
         time.sleep(0.5)
         self.start_threads()
 

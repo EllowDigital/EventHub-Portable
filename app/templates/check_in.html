@@ -719,6 +719,11 @@
     let isSyncing = false;
     let camerasList = [];
 
+    // --- HARDWARE DEBOUNCE TRACKERS ---
+    let lastScannedId = "";
+    let lastScanTime = 0;
+    const DEBOUNCE_MS = 4000; // 4 second lockout for the exact same QR code
+
     const scanConfig = {
       fps: 30,
       qrbox: { width: 250, height: 250 },
@@ -926,6 +931,8 @@
     }
 
     function submitManual(type) {
+      if (isProcessing) return;
+
       let val = type === "id"
           ? document.getElementById("manual-id").value.trim()
           : document.getElementById("manual-phone").value.trim();
@@ -934,6 +941,14 @@
         return showToast("Invalid Format.", "ERROR");
       if (type === "phone" && val.length !== 10)
         return showToast("Phone must be exactly 10 digits", "ERROR");
+
+      // Prevent double tap
+      const now = Date.now();
+      if (val === lastScannedId && (now - lastScanTime < 1500)) {
+          return;
+      }
+      lastScannedId = val;
+      lastScanTime = now;
         
       processCheckin(val, type);
       document.getElementById("manual-id").value = "";
@@ -1125,11 +1140,21 @@
 
     function onScanSuccess(decoded) {
       if (isProcessing) return;
+      
       let id = decoded.trim();
       try {
         const p = JSON.parse(id);
         if (typeof p === "object" && p !== null) id = p.attendeeId || p.id || id;
       } catch (e) { }
+
+      // HARDWARE DEBOUNCE: Prevent rapid-fire duplicate requests to the server
+      const now = Date.now();
+      if (id === lastScannedId && (now - lastScanTime < DEBOUNCE_MS)) {
+        return; 
+      }
+      lastScannedId = id;
+      lastScanTime = now;
+
       processCheckin(id, "id");
     }
 
