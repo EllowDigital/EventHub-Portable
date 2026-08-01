@@ -1,30 +1,64 @@
-==============================================================
-EVENT HUB (server_hub.py) - NETWORK & FIREWALL CHEAT SHEET
-==============================================================
+============================================================
+EVENT HUB (server_hub.py) - EVENT DAY QUICK HANDBOOK
+============================================================
 
-1. BYPASS ISP BLOCKS (FIX ".trycloudflare.com" NOT LOADING)
-If your PC blocks Cloudflare URLs (common with Jio/mobile tethering), change Windows DNS manually. Do not use the modern Windows 10/11 Settings app, as it breaks USB tethering.
-* Press [Win + R], type `ncpa.cpl`, and press Enter.
-* Right-click your active internet adapter (e.g., USB Tethering/Wi-Fi) -> Properties.
-* Double-click "Internet Protocol Version 4 (TCP/IPv4)".
-* Select "Use the following DNS server addresses" and enter:
-   - Preferred: 1.1.1.1
-   - Alternate: 1.0.0.1
-* Click OK twice.
+[1] STARTUP SEQUENCE
+1. Connect Phone A -> Laptop A (USB Tether).
+2. Connect RJ45 LAN (or Gigabit Switch) to all laptops.
+3. Turn Mobile Hotspot ON.
+4. Connect all scanner phones to hotspot.
+5. Start server_hub.py -> Start Engine.
+6. Start Cloudflare Gateway/Tunnel (if internet is up) & share link.
 
-2. DEEP NETWORK & DNS FLUSH (RUN AS ADMIN IN COMMAND PROMPT)
-If the dashboard speedometer is stuck on "Offline", the network is glitching, or the old ISP block is cached, run these in Command Prompt (Admin):
-* `ipconfig /flushdns`      (Clears Windows DNS cache)
-* `ipconfig /release`       (Drops current IP)
-* `ipconfig /renew`         (Requests a fresh IP from the router)
-* `netsh winsock reset`     (Deeply resets network adapters -> REQUIRES PC RESTART)
-* CHROME BROWSER CACHE: Go to `chrome://net-internals/#dns` and click "Clear host cache".
+[2] WHICH URL TO USE?
+- Android/Windows PCs : http://Laptop_IP:5000
+- iPhone/iPad Cameras : https://Laptop_IP:5001
+- Remote Staff        : Cloudflare Gateway/Tunnel Public URL
 
-3. OPEN FIREWALL PORTS (FOR LOCAL LAN SCANNERS/KIOSKS)
-To ensure mobile scanners on your local Wi-Fi can reach the Waitress engine (Port 5000) and HTTPS Cheroot engine (Port 5001), run this exactly in PowerShell (Admin):
-* `New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001`[cite: 2]
+[3] IF INTERNET STOPS
+- Local hotspot & LAN : WORKING NORMALLY.
+- Androids & Laptops  : Keep using http://Laptop_IP:5000.
+- Cloudflare Remote   : DOWN until internet returns.
 
-4. CLOUDFLARED TUNNEL RESETS (RUN AS ADMIN IN COMMAND PROMPT)
-If the tunnel hangs, throws authentication errors, or you need to clear an old token configuration:
-* `cloudflared service uninstall` (Wipes the background service/configs)
-* `cloudflared update`            (Forces an update to the latest tunnel protocols)
+[4] NETWORK LAYOUT
+- USB Tether : Internet backbone.
+- RJ45 LAN   : Fast wired registration PCs.
+- Hotspot    : Up to 8 scanner phones.
+- Server     : Easily supports all event devices.
+
+[5] FIREWALL (FIRST TIME ONLY)
+Allow Windows Firewall ports:
+- 5000 (HTTP)
+- 5001 (HTTPS)
+- 3306 (Only for remote MySQL admin access)
+
+[6] FIX: CLOUDFLARE WON'T OPEN
+Change PC DNS to:
+- Preferred : 1.1.1.1
+- Alternate : 1.0.0.1
+
+[7] FIX: NETWORK SHOWS OFFLINE
+Run Command Prompt as Administrator:
+> ipconfig /flushdns
+> ipconfig /release
+> ipconfig /renew
+> netsh winsock reset
+*Restart the PC after running winsock reset.*
+
+[8] LAN SETUP (OPTIONAL)
+- Server Laptop IP  : 192.168.10.1 (Mask: 255.255.255.0)
+- Client Laptop IPs : 192.168.10.2, 192.168.10.3 (Mask: 255.255.255.0)
+- Client Target URL : http://192.168.10.1:5000
+
+[9] DATABASE
+- Normal staff NEVER connect to MySQL directly.
+- All registration/check-in apps route through server_hub.py automatically.
+- Only administrators should use MySQL directly.
+
+[10] EVENT DAY REMINDERS
+[!] Start devices in the correct order.
+[!] Android & Windows = HTTP (5000)
+[!] iPhone/iPad Cam   = HTTPS (5001)
+[!] Remote users      = Cloudflare Gateway/Tunnel
+[!] No Internet?      = Local event continues normally.
+[!] DO NOT CLOSE server_hub.py during the event!
