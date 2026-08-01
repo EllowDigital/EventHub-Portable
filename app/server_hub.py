@@ -850,29 +850,6 @@ class NetworkTelemetryWindow(ttk.Toplevel):
         self.after(1000, self.refresh_meters)
 
 
-class CloudflareLogWindow(ttk.Toplevel):
-    def __init__(self, parent, hub):
-        super().__init__(parent)
-        self.hub = hub
-        self.title("Cloudflare Tunnel — Live Logs")
-        self.geometry("640x440")
-        self.minsize(420, 280)
-        self.protocol("WM_DELETE_WINDOW", self.hide)
-        
-        outer = ttk.Frame(self, padding=10)
-        outer.pack(fill=BOTH, expand=True)
-        self.log_box = hub._create_log_box(outer, "☁️ Cloudflare Tunnel Status", lambda: None)
-        ttk.Button(outer, text="Close", bootstyle="secondary-outline", command=self.hide).pack(pady=(8, 0), anchor=E)
-        self.withdraw()  
-
-    def show(self):
-        self.deiconify(); self.lift(); self.focus_force(); self.update_idletasks()
-        self.geometry(f"+{max(self.hub.winfo_x() + (self.hub.winfo_width() // 2) - (self.winfo_width() // 2), 0)}+{max(self.hub.winfo_y() + (self.hub.winfo_height() // 2) - (self.winfo_height() // 2), 0)}")
-
-    def hide(self): 
-        self.withdraw()
-
-
 class ServerHub(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.3 (Hardened + Responsive UI)")
@@ -989,7 +966,7 @@ class ServerHub(ttk.Window):
 
         if flask_logs: self._write_logs_to_widget(self.log_flask.text, flask_logs)
         if net_logs: self._write_logs_to_widget(self.log_network.text, net_logs)
-        if cf_logs and hasattr(self, 'cf_log_window') and self.cf_log_window: 
+        if cf_logs and hasattr(self, 'log_cf') and self.log_cf: 
             self._write_logs_to_widget(self.log_cf.text, cf_logs)
             
         self.after(250, self.flush_log_buffers)
@@ -1028,6 +1005,11 @@ class ServerHub(ttk.Window):
         self.log_network.text.configure(state=NORMAL); self.log_network.text.delete('1.0', END); self.log_network.text.configure(state=DISABLED)
         self._append_log('network', "[INFO] Operator cleared network logs.")
 
+    def clear_cf_logs(self):
+        with self.log_lock: self.log_buffer_cf.clear()
+        self.log_cf.text.configure(state=NORMAL); self.log_cf.text.delete('1.0', END); self.log_cf.text.configure(state=DISABLED)
+        self._append_log('cf', "[INFO] Operator cleared Cloudflare logs.")
+
     def copy_to_clipboard(self, text):
         if not text or text == "Offline": return
         self.clipboard_clear(); self.clipboard_append(text); self.update()
@@ -1064,6 +1046,30 @@ class ServerHub(ttk.Window):
         lbl = ttk.Label(frame, text=initial_text, bootstyle=bootstyle, font="-size 9 -weight bold", background=self.CARD_BG)
         lbl.pack(anchor=CENTER)
         return lbl
+
+    def _create_log_box(self, parent, title, clear_cmd, side=LEFT, padx=6):
+        frame = ttk.Frame(parent, style="Soft.TFrame")
+        frame.pack(side=side, fill=BOTH, expand=True, padx=padx, pady=2)
+        
+        hdr = ttk.Frame(frame)
+        hdr.pack(fill=X)
+        
+        ttk.Label(hdr, text=title if title else "Live Log Feed", style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
+        if clear_cmd: ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
+            
+        log_box = ScrolledText(frame, font=("Consolas", 10))
+        log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
+        log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
+        
+        log_box.text.tag_configure("log_default", foreground="#D4D4D4")
+        log_box.text.tag_configure("log_dim", foreground="#6A7178")
+        log_box.text.tag_configure("log_success", foreground="#4CD37E")
+        log_box.text.tag_configure("log_warning", foreground="#FFB454")
+        log_box.text.tag_configure("log_error", foreground="#FF6B6B")
+        log_box.text.tag_configure("log_info", foreground="#5DADE2")
+        log_box.text.tag_configure("log_register", foreground="#6EC6FF", font=("Consolas", 10, "bold"))
+        log_box.text.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 10, "bold"))
+        return log_box
 
     def build_ui(self):
         self._configure_custom_styles()
@@ -1122,10 +1128,6 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.pack(fill=X, pady=3)
         self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ Stop Tunnel", bootstyle=DANGER, state=DISABLED, command=self.stop_cf)
         self.btn_stop_cf.pack(fill=X, pady=3)
-        
-        self.cf_log_window, self.log_cf = CloudflareLogWindow(self, self), None
-        self.log_cf = self.cf_log_window.log_box
-        ttk.Button(cf_frame, text="📜 View Tunnel Logs", bootstyle="outline-secondary", command=self.cf_log_window.show).pack(fill=X, pady=(3, 0))
         
         ttk.Label(cf_frame, text="Public Tunnel QR:", font="-size 8 -weight bold", foreground="#888").pack(pady=(10, 2))
         self.lbl_cf_qr = ttk.Label(cf_frame)
@@ -1206,7 +1208,10 @@ class ServerHub(ttk.Window):
         devices_frame.pack(fill=X, expand=False, pady=(0, 15)) 
         self.style.configure("Treeview", rowheight=22)
         
-        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "last_seen", "signal"), show="headings", height=5)
+        tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
+        tree_scroll.pack(side=RIGHT, fill=Y)
+
+        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "last_seen", "signal"), show="headings", height=5, yscrollcommand=tree_scroll.set)
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
         self.tree_devices.heading("last_seen", text="Last Heartbeat")
@@ -1216,7 +1221,9 @@ class ServerHub(ttk.Window):
         self.tree_devices.column("ip", width=150, anchor=W)
         self.tree_devices.column("last_seen", width=120, anchor=CENTER)
         self.tree_devices.column("signal", width=110, anchor=CENTER)
-        self.tree_devices.pack(fill=X, padx=2, pady=2)
+        self.tree_devices.pack(side=LEFT, fill=BOTH, expand=True, padx=(2, 0), pady=2)
+        
+        tree_scroll.configure(command=self.tree_devices.yview)
         
         self.tree_devices.tag_configure("online", foreground="#3fd66f")
         self.tree_devices.tag_configure("stale", foreground="#ffbb33")
@@ -1246,11 +1253,25 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
         ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 5))
+        
         logs_frame = ttk.Frame(content)
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
         
         self.log_flask = self._create_log_box(logs_frame, "📟 System & API Logs", self.clear_system_logs)
-        self.log_network = self._create_log_box(logs_frame, "🌐 Device & Routing", self.clear_network_logs)
+        
+        right_logs_wrapper = ttk.Frame(logs_frame)
+        right_logs_wrapper.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
+        
+        self.log_tabs = ttk.Notebook(right_logs_wrapper, bootstyle="info")
+        self.log_tabs.pack(fill=BOTH, expand=True)
+        
+        tab_net = ttk.Frame(self.log_tabs)
+        self.log_tabs.add(tab_net, text="🌐 Device & Routing")
+        self.log_network = self._create_log_box(tab_net, "Network Events", self.clear_network_logs, side=TOP, padx=0)
+        
+        tab_cf = ttk.Frame(self.log_tabs)
+        self.log_tabs.add(tab_cf, text="☁️ Cloudflare Tunnel")
+        self.log_cf = self._create_log_box(tab_cf, "Tunnel Status", self.clear_cf_logs, side=TOP, padx=0)
         
         footer = ttk.Frame(content)
         footer.pack(fill=X, pady=(5, 0))
@@ -1284,27 +1305,6 @@ class ServerHub(ttk.Window):
         if not entry or entry["label"].cget("text") == str(new_value): return
         entry["label"].configure(text=str(new_value), style="CardFlash.TLabel")
         self.after(350, lambda: entry["label"].configure(style=entry["style"]) if entry["label"].winfo_exists() else None)
-
-    def _create_log_box(self, parent, title, clear_cmd):
-        frame = ttk.Frame(parent, style="Soft.TFrame")
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
-        hdr = ttk.Frame(frame)
-        hdr.pack(fill=X)
-        ttk.Label(hdr, text=title, style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
-        if clear_cmd: ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
-        log_box = ScrolledText(frame, font=("Consolas", 10))
-        log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
-        log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
-        
-        log_box.text.tag_configure("log_default", foreground="#D4D4D4")
-        log_box.text.tag_configure("log_dim", foreground="#6A7178")
-        log_box.text.tag_configure("log_success", foreground="#4CD37E")
-        log_box.text.tag_configure("log_warning", foreground="#FFB454")
-        log_box.text.tag_configure("log_error", foreground="#FF6B6B")
-        log_box.text.tag_configure("log_info", foreground="#5DADE2")
-        log_box.text.tag_configure("log_register", foreground="#6EC6FF", font=("Consolas", 10, "bold"))
-        log_box.text.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 10, "bold"))
-        return log_box
 
     def update_qr(self, label, data):
         if not label.winfo_exists(): return
