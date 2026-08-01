@@ -884,6 +884,8 @@ class NetworkTelemetryWindow(ttk.Toplevel):
         self.attributes('-topmost', True)
         self.update_idletasks()
         self.geometry(f"+{parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)}+{parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)}")
+        self._bg = None
+        self._y_max = 10
         self.build_ui()
         self.refresh_meters()
 
@@ -903,9 +905,13 @@ class NetworkTelemetryWindow(ttk.Toplevel):
             for spine in self.ax.spines.values(): spine.set_color('#555555')
                 
             self.line, = self.ax.plot([], [], color='#4CD37E', linewidth=2, label="Req / Sec")
+            self.ax.set_xlim(0, 59)
+            self.ax.set_ylim(0, self._y_max)
             self.ax.legend(loc="upper right", facecolor=self.hub.CARD_BG, edgecolor="#555555", labelcolor="white")
             self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
             self.canvas.get_tk_widget().pack(fill=BOTH, expand=True)
+            self.canvas.draw()
+            self._bg = self.canvas.copy_from_bbox(self.ax.bbox)
         else:
             ttk.Label(main_frame, text="(Install 'matplotlib' to view Live Traffic Graph)", font="-size 10 -slant italic", foreground="#888").pack(pady=30)
         
@@ -913,10 +919,22 @@ class NetworkTelemetryWindow(ttk.Toplevel):
 
     def refresh_meters(self):
         if not self.winfo_exists(): return
-            
+
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'line'):
-            y_data = list(TRAFFIC_HISTORY); x_data = list(range(len(y_data)))
-            self.line.set_data(x_data, y_data); self.ax.set_xlim(0, 59); self.ax.set_ylim(0, max(10, max(y_data) + 5)); self.canvas.draw()
+            y_data = list(TRAFFIC_HISTORY)
+            x_data = list(range(len(y_data)))
+            self.line.set_data(x_data, y_data)
+            peak_needed = max(10, max(y_data) + 5) if y_data else 10
+
+            if peak_needed > self._y_max or self._bg is None:
+                self._y_max = peak_needed
+                self.ax.set_ylim(0, self._y_max)
+                self.canvas.draw()
+                self._bg = self.canvas.copy_from_bbox(self.ax.bbox)
+            else:
+                self.canvas.restore_region(self._bg)
+                self.ax.draw_artist(self.line)
+                self.canvas.blit(self.ax.bbox)
 
         self.after(1000, self.refresh_meters)
 
@@ -976,6 +994,7 @@ class ServerHub(ttk.Window):
         self.log_buffer_cf = []
         
         self.gui_queue = queue.Queue()
+        self._meter_cache = {}
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         
@@ -1260,7 +1279,6 @@ class ServerHub(ttk.Window):
         self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_ram.pack(side=LEFT, padx=5)
         
-        # Smart Dedicated Network / Internet Speedometer
         # Note: Fixed amountformat error by removing it from .configure() inside refresh_hw_meters.
         self.mini_meter_net = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.1f}")
         self.mini_meter_net.pack(side=LEFT, padx=5)
@@ -1416,87 +1434,97 @@ class ServerHub(ttk.Window):
         self._append_log('network', f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}")
         self.refresh_stats()
 
+    def _meter_set_value(self, meter, value, cache_key):
+        if self._meter_cache.get(cache_key) != value:
+            meter.amountusedvar.set(value)
+            self._meter_cache[cache_key] = value
+
+    def _meter_set_style(self, meter, bootstyle, cache_key):
+        if self._meter_cache.get(cache_key) != bootstyle:
+            meter.configure(bootstyle=bootstyle)
+            self._meter_cache[cache_key] = bootstyle
+
+    def _meter_set_subtext(self, meter, text, cache_key):
+        if self._meter_cache.get(cache_key) != text:
+            meter.configure(subtext=text)
+            self._meter_cache[cache_key] = text
+
+    def _meter_set_total(self, meter, total, cache_key):
+        if self._meter_cache.get(cache_key) != total:
+            meter.configure(amounttotal=total)
+            self._meter_cache[cache_key] = total
+
     def refresh_hw_meters(self):
-        with _telemetry_lock:
-            snap_telemetry = dict(TELEMETRY_DATA)
-
-        # 1. Update CPU & RAM
-        c, r = snap_telemetry.get("cpu", 0), snap_telemetry.get("ram", 0)
-        self.mini_meter_cpu.configure(amountused=c, bootstyle=SUCCESS if c < 60 else (WARNING if c < 85 else DANGER))
-        self.mini_meter_ram.configure(amountused=r, bootstyle=SUCCESS if r < 70 else (WARNING if r < 90 else DANGER))
-        
-        # 2. Update Fast Dedicated Network Speedometer & Tooltip
-        net_type = snap_telemetry.get("net_type", "Disconnected")
-        
-        if net_type == "Disconnected" or net_type == "Offline":
-            self.mini_meter_net.amountusedvar.set(0)
-            if hasattr(self.mini_meter_net, 'subtextvar'):
-                self.mini_meter_net.subtextvar.set("OFFLINE")
-            else:
-                self.mini_meter_net.configure(subtext="OFFLINE")
-            self.mini_meter_net.configure(bootstyle=DANGER)
-            self.net_tooltip.text = "Internet Disconnected\nNo active interface found."
-        else:
-            mbps = snap_telemetry.get("total_mbps", 0.0)
-            dl_mbps = snap_telemetry.get("dl_mbps", 0.0)
-            ul_mbps = snap_telemetry.get("ul_mbps", 0.0)
-            dl_mb = snap_telemetry.get("total_dl_mb", 0.0)
-            ul_mb = snap_telemetry.get("total_ul_mb", 0.0)
-            
-            # Format Rich Tooltip
-            tt_text = (
-                f"Status: Connected\n"
-                f"Connection Type: {net_type}\n"
-                f"Interface Name: {snap_telemetry.get('iface_name', 'N/A')}\n"
-                f"Link Speed: {snap_telemetry.get('link_speed', 0)} Mbps\n\n"
-                f"Live Download: {dl_mbps:.2f} Mbps\n"
-                f"Live Upload: {ul_mbps:.2f} Mbps\n"
-                f"Total Downloaded: {dl_mb:.1f} MB\n"
-                f"Total Uploaded: {ul_mb:.1f} MB"
-            )
-            
-            # Dynamic Cap adjusting so meter doesn't overfill visually
-            cap = 100
-            if mbps > 100: cap = 1000
-            if mbps > 1000: cap = 10000
-            
-            self.mini_meter_net.amounttotal = cap
-            self.mini_meter_net.amountusedvar.set(int(mbps) if mbps > 1 else round(mbps, 1))
-            
-            # FIXED: Dynamically alter text using exact underlying stringvar (Zero Lag / No restart required)
-            new_subtext = net_type.upper()[:7]
-            if hasattr(self.mini_meter_net, 'subtextvar'):
-                self.mini_meter_net.subtextvar.set(new_subtext)
-            else:
-                self.mini_meter_net.configure(subtext=new_subtext)
-                
-            self.mini_meter_net.configure(bootstyle=SUCCESS if mbps > 1.0 else INFO)
-            self.net_tooltip.text = tt_text
-
-        # 3. Update API Latency
         try:
+            with _telemetry_lock:
+                snap_telemetry = dict(TELEMETRY_DATA)
+
+            # 1. Update CPU & RAM — value every tick, style only on tier change
+            c, r = snap_telemetry.get("cpu", 0), snap_telemetry.get("ram", 0)
+            self._meter_set_value(self.mini_meter_cpu, c, "cpu")
+            self._meter_set_style(self.mini_meter_cpu, SUCCESS if c < 60 else (WARNING if c < 85 else DANGER), "cpu_style")
+            self._meter_set_value(self.mini_meter_ram, r, "ram")
+            self._meter_set_style(self.mini_meter_ram, SUCCESS if r < 70 else (WARNING if r < 90 else DANGER), "ram_style")
+
+            # 2. Update Fast Dedicated Network Speedometer & Tooltip
+            net_type = snap_telemetry.get("net_type", "Disconnected")
+
+            if net_type == "Disconnected" or net_type == "Offline":
+                self._meter_set_value(self.mini_meter_net, 0, "net")
+                self._meter_set_subtext(self.mini_meter_net, "OFFLINE", "net_subtext")
+                self._meter_set_style(self.mini_meter_net, DANGER, "net_style")
+                self.net_tooltip.text = "Internet Disconnected\nNo active interface found."
+            else:
+                mbps = snap_telemetry.get("total_mbps", 0.0)
+                dl_mbps = snap_telemetry.get("dl_mbps", 0.0)
+                ul_mbps = snap_telemetry.get("ul_mbps", 0.0)
+                dl_mb = snap_telemetry.get("total_dl_mb", 0.0)
+                ul_mb = snap_telemetry.get("total_ul_mb", 0.0)
+
+                # Format Rich Tooltip
+                tt_text = (
+                    f"Status: Connected\n"
+                    f"Connection Type: {net_type}\n"
+                    f"Interface Name: {snap_telemetry.get('iface_name', 'N/A')}\n"
+                    f"Link Speed: {snap_telemetry.get('link_speed', 0)} Mbps\n\n"
+                    f"Live Download: {dl_mbps:.2f} Mbps\n"
+                    f"Live Upload: {ul_mbps:.2f} Mbps\n"
+                    f"Total Downloaded: {dl_mb:.1f} MB\n"
+                    f"Total Uploaded: {ul_mb:.1f} MB"
+                )
+                cap = 100
+                if mbps > 100: cap = 1000
+                if mbps > 1000: cap = 10000
+
+                self._meter_set_total(self.mini_meter_net, cap, "net_cap")
+                self._meter_set_value(self.mini_meter_net, int(round(mbps)), "net")
+                self._meter_set_subtext(self.mini_meter_net, net_type.upper()[:7], "net_subtext")
+                self._meter_set_style(self.mini_meter_net, SUCCESS if mbps > 1.0 else INFO, "net_style")
+                self.net_tooltip.text = tt_text
+
+            # 3. Update API Latency
             with metrics_lock: snap_metrics = dict(SERVER_METRICS)
             proc_ms = int(snap_metrics["avg_process_ms"])
-            self.mini_meter_api.amountusedvar.set(min(proc_ms, 500))
-            self.mini_meter_api.configure(bootstyle=SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER))
-        except Exception: pass
+            self._meter_set_value(self.mini_meter_api, min(proc_ms, 500), "api")
+            self._meter_set_style(self.mini_meter_api, SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER), "api_style")
 
-        # 4. Update External Ping Tests
-        with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
-        loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
-        
-        if snap_net["local_status"] == "ONLINE":
-            self.lbl_hdr_local_ping.configure(text=f"LAN Ping: {loc_ms} ms", bootstyle=SUCCESS if loc_ms < 150 else WARNING)
-        else:
-            self.lbl_hdr_local_ping.configure(text="LAN Ping: DOWN", bootstyle=DANGER)
-            
-        if snap_net["cloud_status"] == "ONLINE":
-            self.lbl_hdr_cloud_ping.configure(text=f"WAN Ping: {c_ms} ms", bootstyle=SUCCESS if c_ms < 300 else WARNING)
-        else:
-            self.lbl_hdr_cloud_ping.configure(text="WAN Ping: DOWN", bootstyle=SECONDARY)
+            # 4. Update External Ping Tests
+            with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
+            loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
 
-        # Re-schedule non-blocking update
-        self.after(1000, self.refresh_hw_meters)
+            if snap_net["local_status"] == "ONLINE":
+                self.lbl_hdr_local_ping.configure(text=f"LAN Ping: {loc_ms} ms", bootstyle=SUCCESS if loc_ms < 150 else WARNING)
+            else:
+                self.lbl_hdr_local_ping.configure(text="LAN Ping: DOWN", bootstyle=DANGER)
+
+            if snap_net["cloud_status"] == "ONLINE":
+                self.lbl_hdr_cloud_ping.configure(text=f"WAN Ping: {c_ms} ms", bootstyle=SUCCESS if c_ms < 300 else WARNING)
+            else:
+                self.lbl_hdr_cloud_ping.configure(text="WAN Ping: DOWN", bootstyle=SECONDARY)
+        except Exception as e:
+            logging.error(f"refresh_hw_meters: non-fatal error, loop continues: {e}")
+        finally:
+            self.after(1000, self.refresh_hw_meters)
 
     def refresh_stats(self):
         current_time = time.time()
