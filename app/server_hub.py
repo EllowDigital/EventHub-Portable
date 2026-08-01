@@ -30,7 +30,6 @@ from PIL import Image, ImageTk
 import webbrowser
 import psutil
 
-# --- MATPLOTLIB INTEGRATION ---
 try:
     import matplotlib
     matplotlib.use("TkAgg")
@@ -65,9 +64,6 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 
 
-# ==============================================================================
-# 24/7 STABILITY: GLOBAL CRASH HANDLER
-# ==============================================================================
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
@@ -83,35 +79,23 @@ def _configure_windows_platform():
         try:
             if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)):
                 dpi_awareness_set = True
-        except Exception as e: 
-            logging.debug(f"DPI Awareness Context failed: {e}")
-        
+        except Exception: pass
         if not dpi_awareness_set:
             try:
                 windll.shcore.SetProcessDpiAwareness(2)
                 dpi_awareness_set = True
-            except Exception as e: 
-                logging.debug(f"SetProcessDpiAwareness failed: {e}")
-                
+            except Exception: pass
         if not dpi_awareness_set:
-            try: 
-                windll.user32.SetProcessDPIAware()
-            except Exception as e: 
-                logging.debug(f"SetProcessDPIAware failed: {e}")
-
+            try: windll.user32.SetProcessDPIAware()
+            except Exception: pass
         try: windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
         except Exception: pass
-            
         try: windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
         except Exception: pass
-    except Exception: 
-        pass
+    except Exception: pass
 
 _configure_windows_platform()
 
-# ==============================================================================
-# NON-BLOCKING TELEMETRY ENGINE (PREVENTS GUI LAG & ENSURES LIVE DATA)
-# ==============================================================================
 TELEMETRY_DATA = {
     "cpu": 0, "ram": 0, "net_type": "Disconnected",
     "dl_mbps": 0.0, "ul_mbps": 0.0, "total_mbps": 0.0,
@@ -121,47 +105,30 @@ TELEMETRY_DATA = {
 _telemetry_lock = threading.Lock()
 
 def _telemetry_worker():
-    """Runs continuously in the background to fetch system metrics.
-       Uses OS routing priority to switch seamlessly between Ethernet/USB/Wi-Fi."""
     last_time = time.time()
-    try:
-        last_io = psutil.net_io_counters()
-    except Exception:
-        last_io = None
+    try: last_io = psutil.net_io_counters()
+    except Exception: last_io = None
     
     while True:
         try:
             cpu = int(psutil.cpu_percent(interval=None))
             ram = int(psutil.virtual_memory().percent)
-            
             stats = psutil.net_if_stats()
             up_ifaces = [iface for iface, s in stats.items() if s.isup and iface != 'lo' and not iface.startswith('Loopback')]
             
-            # FIXED: OS Priority Hierarchy (Ethernet > USB Ethernet > Wi-Fi)
             eth_iface = next((i for i in up_ifaces if 'ethernet' in i.lower() or 'eth' in i.lower()), None)
             usb_iface = next((i for i in up_ifaces if 'usb' in i.lower()), None)
             wifi_iface = next((i for i in up_ifaces if 'wi-fi' in i.lower() or 'wireless' in i.lower() or 'wlan' in i.lower()), None)
             
-            if eth_iface:
-                active_iface = eth_iface
-                iface_type = "Ethernet"
-            elif usb_iface:
-                active_iface = usb_iface
-                iface_type = "USB Eth"
-            elif wifi_iface:
-                active_iface = wifi_iface
-                iface_type = "Wi-Fi"
-            elif up_ifaces:
-                active_iface = up_ifaces[0]
-                iface_type = "Network"
-            else:
-                active_iface = None
-                iface_type = "Offline"
+            if eth_iface: active_iface, iface_type = eth_iface, "Ethernet"
+            elif usb_iface: active_iface, iface_type = usb_iface, "USB Eth"
+            elif wifi_iface: active_iface, iface_type = wifi_iface, "Wi-Fi"
+            elif up_ifaces: active_iface, iface_type = up_ifaces[0], "Network"
+            else: active_iface, iface_type = None, "Offline"
 
             dl_mbps = ul_mbps = total_mbps = dl_mb = ul_mb = 0.0
             link_speed = 0
             
-            # Sum total internet traffic system-wide (Like Windows Task Manager)
             current_io = psutil.net_io_counters()
             current_time = time.time()
             
@@ -171,13 +138,10 @@ def _telemetry_worker():
                     dl_mbps = ((current_io.bytes_recv - last_io.bytes_recv) * 8 / 1_000_000) / elapsed
                     ul_mbps = ((current_io.bytes_sent - last_io.bytes_sent) * 8 / 1_000_000) / elapsed
                     total_mbps = dl_mbps + ul_mbps
-                    
-                dl_mb = current_io.bytes_recv / (1024 * 1024)
-                ul_mb = current_io.bytes_sent / (1024 * 1024)
+                dl_mb = current_io.bytes_recv / 1048576
+                ul_mb = current_io.bytes_sent / 1048576
             
-            last_io = current_io
-            last_time = current_time
-            
+            last_io, last_time = current_io, current_time
             if active_iface and active_iface in stats:
                 link_speed = stats[active_iface].speed
 
@@ -190,17 +154,14 @@ def _telemetry_worker():
                 })
         except Exception as e:
             logging.debug(f"Telemetry Worker Error: {e}")
-            
         time.sleep(1)
 
 threading.Thread(target=_telemetry_worker, daemon=True).start()
-
 
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
 except ModuleNotFoundError:
     from schema import Attendee, OfflineKioskAttendee, get_database_sessions
-
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
@@ -212,7 +173,6 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001  
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-# --- EXTREME PERFORMANCE TUNING ---
 DB_WRITER_THREADS = 16            
 DB_JOB_QUEUE_MAXSIZE = 2000       
 DB_JOB_TIMEOUT = 10               
@@ -257,10 +217,8 @@ DB_SESSIONS_RETRY_COOLDOWN = 5
 
 NETWORK_LATENCY = {"local_ms": 0, "cloud_ms": 0, "local_status": "OFFLINE", "cloud_status": "OFFLINE"}
 network_latency_lock = threading.Lock()
-
 SERVER_METRICS = {"avg_process_ms": 0.0, "req_count": 0}
 metrics_lock = threading.Lock()
-
 TRAFFIC_HISTORY = collections.deque([0] * 60, maxlen=60)
 _current_sec_requests = 0
 traffic_lock = threading.Lock()
@@ -273,7 +231,6 @@ STATS_CACHE = {
 }
 stats_lock = threading.Lock()
 
-
 def get_cached_sessions():
     global DB_SESSIONS_CACHE, _db_cache_last_failure
     if DB_SESSIONS_CACHE is None:
@@ -284,11 +241,10 @@ def get_cached_sessions():
                 try: 
                     DB_SESSIONS_CACHE = get_database_sessions()
                 except Exception as e:
-                    logging.exception(f"DB failed — retry in {DB_SESSIONS_RETRY_COOLDOWN}s: {e}")
+                    logging.exception(f"DB failed: {e}")
                     _db_cache_last_failure = time.time()
                     return None
     return DB_SESSIONS_CACHE
-
 
 def _write_self_signed_cert(cert_path, key_path, local_ip):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -304,7 +260,6 @@ def _write_self_signed_cert(cert_path, key_path, local_ip):
 
     with open(key_path, "wb") as f: f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
     with open(cert_path, "wb") as f: f.write(cert.public_bytes(serialization.Encoding.PEM))
-
 
 def ensure_ssl_certificate(local_ip):
     if not CRYPTOGRAPHY_AVAILABLE: raise RuntimeError("Cryptography package required.")
@@ -322,20 +277,16 @@ def ensure_ssl_certificate(local_ip):
     if not reuse_existing:
         _write_self_signed_cert(cert_path, key_path, local_ip)
         with open(ip_marker_path, 'w') as f: f.write(local_ip)
-            
     return cert_path, key_path
-
 
 @app.before_request
 def _start_request_timer(): 
     request._start_time = time.perf_counter()
 
-
 @app.after_request
 def log_request(response):
     if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': 
         return response
-        
     try:
         global _current_sec_requests
         with traffic_lock:
@@ -356,9 +307,7 @@ def log_request(response):
             logging.warning(f"Slow req: {request.method} {request.path} took {duration_ms:.0f}ms")
     except Exception as e: 
         logging.debug(f"Request logging error: {e}")
-        
     return response
-
 
 def _status_log_tag(status_code):
     if status_code >= 500: return "log_error"
@@ -371,7 +320,6 @@ def _guess_log_tag(message):
     for prefix, tag in _LOG_PREFIX_TAGS:
         if message.startswith(prefix): return tag
     return "log_default"
-
 
 def log_event_clean(action_type, device_name, details, status_code):
     time_str = datetime.now().strftime('%H:%M:%S')
@@ -392,7 +340,6 @@ def log_event_clean(action_type, device_name, details, status_code):
     elif status_code >= 400: logging.warning(plain_msg)
     else: logging.info(plain_msg)
 
-
 def broadcast_scan(attendee, status, message, device_name, scan_time):
     att_dict = None
     if attendee:
@@ -410,7 +357,6 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             with scan_clients_lock:
                 if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
 
-
 def traffic_monitor_loop():
     global _current_sec_requests
     while True:
@@ -419,7 +365,6 @@ def traffic_monitor_loop():
             hits = _current_sec_requests
             _current_sec_requests = 0
         TRAFFIC_HISTORY.append(hits)
-
 
 def _compute_stats_snapshot():
     sessions = get_cached_sessions()
@@ -441,7 +386,6 @@ def _compute_stats_snapshot():
     finally: 
         session.close()
 
-
 def stats_refresher_loop():
     while True:
         try:
@@ -458,7 +402,6 @@ def stats_refresher_loop():
         except Exception as e:
             with stats_lock: STATS_CACHE["last_error"] = str(e)
         time.sleep(STATS_REFRESH_INTERVAL_SEC)
-
 
 @dataclass
 class DBJob:
@@ -477,7 +420,6 @@ def _submit_db_job(kind, payload):
     try: return job.future.result(timeout=DB_JOB_TIMEOUT)
     except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "Request took too long."}
     except Exception: return 500, {"status": "error", "message": "Internal error."}
-
 
 def _handle_checkin_job(payload):
     identifier, search_type = payload["identifier"], payload["search_type"]
@@ -551,7 +493,6 @@ def _handle_checkin_job(payload):
         try: session.close()
         except Exception: pass
 
-
 def _handle_register_job(payload):
     data, device_label = payload["data"], payload["device_label"]
     iso_timestamp, mobile_number = payload["iso_timestamp"], payload["mobile_number"]
@@ -621,7 +562,6 @@ def _handle_register_job(payload):
         try: session.close()
         except Exception: pass
 
-
 def db_writer_loop(worker_id):
     logging.info(f"DB writer #{worker_id} ready")
     while True:
@@ -641,23 +581,17 @@ def db_writer_loop(worker_id):
         finally: 
             DB_WRITE_QUEUE.task_done()
 
-
 def start_db_writers():
     for i in range(DB_WRITER_THREADS):
         t = threading.Thread(target=db_writer_loop, args=(i + 1,), daemon=True, name=f"DBWriter-{i+1}")
         t.start()
         _db_writer_threads.append(t)
 
-
 def stop_db_writers():
     for _ in range(len(_db_writer_threads)): 
         DB_WRITE_QUEUE.put(None)
     _db_writer_threads.clear()
 
-
-# ==============================================================================
-# FLASK ROUTING & ENDPOINTS
-# ==============================================================================
 @app.route('/')
 def index(): return render_template('index.html')
 @app.route('/scanner')
@@ -666,7 +600,6 @@ def scanner(): return render_template('check_in.html')
 def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
-
 
 @app.route('/api/status', methods=['GET'])
 def get_server_status():
@@ -687,7 +620,6 @@ def get_server_status():
             'ip': ip
         }
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
-
 
 @app.route('/api/device/rename', methods=['POST'])
 def rename_device():
@@ -711,7 +643,6 @@ def rename_device():
         
     return jsonify({"status": "success", "message": "Device renamed."}), 200
 
-
 @app.route('/api/network-data', methods=['GET'])
 def get_network_data():
     current_time = time.time()
@@ -732,7 +663,6 @@ def get_network_data():
         }
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
-
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
@@ -748,7 +678,6 @@ def stream_scans():
                 if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
     return Response(event_stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'})
 
-
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
     data = request.json or {}
@@ -761,7 +690,6 @@ def process_checkin():
     status_code, body = _submit_db_job("checkin", payload)
     return jsonify(body), status_code
 
-
 @app.route('/api/register', methods=['POST'])
 def process_registration():
     data = request.json or {}
@@ -773,7 +701,6 @@ def process_registration():
     }
     status_code, body = _submit_db_job("register", payload)
     return jsonify(body), status_code
-
 
 @app.route('/api/check_mobile', methods=['GET'])
 def check_mobile():
@@ -793,7 +720,6 @@ def check_mobile():
     finally:
         try: session.close()
         except Exception: pass
-
 
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
@@ -826,10 +752,6 @@ def get_all_attendees():
         try: session.close()
         except Exception: pass
 
-
-# ==============================================================================
-# SERVER THREADS & UTILS
-# ==============================================================================
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
@@ -839,7 +761,6 @@ class WaitressHttpThread(threading.Thread):
         try: self.server.run()
         except Exception: logging.exception("Waitress crashed")
     def shutdown(self): self.server.close()
-
 
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=150):
@@ -854,7 +775,6 @@ class HttpsFlaskThread(threading.Thread):
         except Exception: logging.exception("Cheroot crashed")
     def shutdown(self): self.server.stop()
 
-
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -865,14 +785,11 @@ def get_local_ip():
         try: return socket.gethostbyname(socket.gethostname())
         except Exception: return "127.0.0.1"
 
-
 def _hex_to_rgb(hex_color): return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
 def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
 def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
-# ==============================================================================
-# GUI INTERFACES (TELEMETRY, LOGS, HUB DASHBOARD)
-# ==============================================================================
+
 class NetworkTelemetryWindow(ttk.Toplevel):
     def __init__(self, parent, hub_instance):
         super().__init__(parent)
@@ -892,18 +809,15 @@ class NetworkTelemetryWindow(ttk.Toplevel):
     def build_ui(self):
         main_frame = ttk.Frame(self, padding=25)
         main_frame.pack(fill=BOTH, expand=True)
-        
         ttk.Label(main_frame, text="📈 Live API Traffic Graph", font="-size 16 -weight bold", bootstyle=PRIMARY).pack(anchor=CENTER, pady=(0, 15))
 
         if MATPLOTLIB_AVAILABLE:
             chart_frame = ttk.Frame(main_frame)
             chart_frame.pack(fill=BOTH, expand=True, pady=(0, 15))
-            
             self.fig = Figure(figsize=(8, 3), dpi=100, facecolor=self.hub.CARD_BG)
             self.ax = self.fig.add_subplot(111)
             self.ax.set_facecolor(self.hub.CARD_BG); self.ax.tick_params(colors='white')
             for spine in self.ax.spines.values(): spine.set_color('#555555')
-                
             self.line, = self.ax.plot([], [], color='#4CD37E', linewidth=2, label="Req / Sec")
             self.ax.set_xlim(0, 59)
             self.ax.set_ylim(0, self._y_max)
@@ -914,12 +828,10 @@ class NetworkTelemetryWindow(ttk.Toplevel):
             self._bg = self.canvas.copy_from_bbox(self.ax.bbox)
         else:
             ttk.Label(main_frame, text="(Install 'matplotlib' to view Live Traffic Graph)", font="-size 10 -slant italic", foreground="#888").pack(pady=30)
-        
         ttk.Button(main_frame, text="Close Window", bootstyle=SECONDARY, command=self.destroy).pack(pady=(10,0))
 
     def refresh_meters(self):
         if not self.winfo_exists(): return
-
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'line'):
             y_data = list(TRAFFIC_HISTORY)
             x_data = list(range(len(y_data)))
@@ -935,7 +847,6 @@ class NetworkTelemetryWindow(ttk.Toplevel):
                 self.canvas.restore_region(self._bg)
                 self.ax.draw_artist(self.line)
                 self.canvas.blit(self.ax.bbox)
-
         self.after(1000, self.refresh_meters)
 
 
@@ -965,7 +876,6 @@ class CloudflareLogWindow(ttk.Toplevel):
 class ServerHub(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.3 (Hardened + Responsive UI)")
-        
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         ww, wh = max(950, min(1600, int(sw * 0.92))), max(650, min(950, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
@@ -987,7 +897,6 @@ class ServerHub(ttk.Window):
         self.cf_process = None
         self._cf_connecting = False  
         
-        # BATCH LOGGING BUFFER (Zero-Freeze GUI)
         self.log_lock = threading.Lock()
         self.log_buffer_flask = []
         self.log_buffer_network = []
@@ -999,13 +908,14 @@ class ServerHub(ttk.Window):
         gui_log_callback = self.log_flask_event
         
         self.build_ui()
-        
         self.flush_log_buffers()
         self.process_gui_queue()
         self.refresh_stats()
         self.refresh_hw_meters()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
+        self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
         threading.Thread(target=traffic_monitor_loop, daemon=True).start()
@@ -1018,42 +928,47 @@ class ServerHub(ttk.Window):
         except Exception: pass
         finally: self._db_checked = True
 
+    def _ping_local(self, session):
+        start = time.time()
+        try:
+            session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
+            return int((time.time() - start) * 1000), "ONLINE"
+        except Exception:
+            return 0, "OFFLINE"
+
+    def _ping_cloud(self, session):
+        if self.cloudflare_url == "Offline":
+            return 0, "OFFLINE"
+        start = time.time()
+        try:
+            session.get(f"{self.cloudflare_url}/api/status", timeout=7, verify=False)
+            return int((time.time() - start) * 1000), "ONLINE"
+        except Exception as e:
+            if getattr(self, "_last_ping_err", "") != str(e): 
+                self._append_log('cf', f"[PING ERROR] {str(e)[:100]}...")
+                self._last_ping_err = str(e)
+            return 0, "OFFLINE"
+
     def network_ping_daemon(self):
         global NETWORK_LATENCY
         session = requests.Session()
         session.headers.update({"User-Agent": "EventHub-Agent/1.0"})
-        
         while True:
-            start_local = time.time()
-            try: 
-                session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
-                l_ms, l_stat = int((time.time() - start_local) * 1000), "ONLINE"
-            except Exception: 
-                l_ms, l_stat = 0, "OFFLINE"
-
-            if self.cloudflare_url != "Offline":
-                start_cf = time.time()
-                try: 
-                    session.get(f"{self.cloudflare_url}/api/status", timeout=7, verify=False)
-                    c_ms, c_stat = int((time.time() - start_cf) * 1000), "ONLINE"
-                except Exception as e:
-                    c_ms, c_stat = 0, "OFFLINE"
-                    if getattr(self, "_last_ping_err", "") != str(e): 
-                        self._append_log('cf', f"[PING ERROR] {str(e)[:100]}...")
-                        self._last_ping_err = str(e)
-            else: 
-                c_ms, c_stat = 0, "OFFLINE"
-
-            with network_latency_lock: 
-                NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
+            try:
+                future_local = self.ping_executor.submit(self._ping_local, session)
+                future_cloud = self.ping_executor.submit(self._ping_cloud, session)
                 
+                l_ms, l_stat = future_local.result()
+                c_ms, c_stat = future_cloud.result()
+
+                with network_latency_lock: 
+                    NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
+            except Exception as e:
+                logging.error(f"Ping Daemon Error: {e}")
             time.sleep(3.0)
 
-    # --- BATCH LOGGING SYSTEM ---
     def _append_log(self, widget_id, message, tag=None):
-        """Thread-safe append. Pushes directly to buffers instead of triggering heavy Tkinter inserts."""
         segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
-        
         with self.log_lock:
             if widget_id == 'flask': self.log_buffer_flask.append(segments)
             elif widget_id == 'network': self.log_buffer_network.append(segments)
@@ -1063,7 +978,7 @@ class ServerHub(ttk.Window):
         self._append_log('flask', message)
 
     def flush_log_buffers(self):
-        """Processes all accumulated logs at once every 250ms. Guarantees GUI immunity to high-TPS freezing."""
+        if not self.winfo_exists(): return
         with self.log_lock:
             flask_logs = list(self.log_buffer_flask)
             net_logs = list(self.log_buffer_network)
@@ -1080,13 +995,13 @@ class ServerHub(ttk.Window):
         self.after(250, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
+        if not text_widget.winfo_exists(): return
         text_widget.configure(state=NORMAL)
         for segments in log_batches:
             for txt, tg in segments: 
                 if tg: text_widget.insert(END, txt, tg)
                 else: text_widget.insert(END, txt)
             text_widget.insert(END, "\n")
-            
         text_widget.see(END)
         lc = int(text_widget.index('end-1c').split('.')[0])
         if lc > MAX_LOG_LINES: 
@@ -1094,6 +1009,7 @@ class ServerHub(ttk.Window):
         text_widget.configure(state=DISABLED)
 
     def process_gui_queue(self):
+        if not self.winfo_exists(): return
         for _ in range(100):
             try: 
                 task = self.gui_queue.get_nowait()
@@ -1131,10 +1047,8 @@ class ServerHub(ttk.Window):
         
         self.style.configure("Card.TFrame", background=self.CARD_BG, bordercolor=self.SOFT_BORDER, lightcolor=self.SOFT_BORDER, darkcolor=self.SOFT_BORDER, borderwidth=1, relief="solid")
         self.style.configure("CardTitle.TLabel", background=self.CARD_BG, foreground=_mix_hex(self.CARD_BG, colors.get("fg"), 0.55), font="-size 8 -weight bold")
-        
         for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"): 
             self.style.configure(f"CardValue.{key}.TLabel", background=self.CARD_BG, foreground=colors.get(key), font="-size 18 -weight bold")
-            
         self.style.configure("CardFlash.TLabel", background=self.CARD_BG, foreground="#FFFFFF", font="-size 18 -weight bold")
         self.style.configure("Soft.TFrame", background=colors.get("bg"), bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER, borderwidth=1, relief="solid")
         self.style.configure("TLabelframe", background=colors.get("bg"), bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER)
@@ -1176,7 +1090,6 @@ class ServerHub(ttk.Window):
 
         ttk.Label(sidebar, text="NETWORK & ROUTING", font="-size 13 -weight bold", bootstyle=INFO).pack(pady=(0, 15), anchor=W)
         
-        # --- FLASK ENGINE SECTION ---
         flask_frame = ttk.Labelframe(sidebar, text=" 🌐 High-Speed Engine ", padding=10)
         flask_frame.pack(fill=X, pady=5)
         self.btn_start_flask = ttk.Button(flask_frame, text="▶ Start Engine", bootstyle=SUCCESS, command=self.start_flask)
@@ -1203,8 +1116,6 @@ class ServerHub(ttk.Window):
         ttk.Button(flask_btn_row2, text="Web (Sec)", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
         ttk.Button(flask_btn_row2, text="Web (Local)", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-
-        # --- CLOUDFLARE TUNNEL SECTION ---
         cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=10)
         cf_frame.pack(fill=X, pady=15)
         self.btn_start_cf = ttk.Button(cf_frame, text="▶ Start Tunnel", bootstyle=PRIMARY, state=DISABLED, command=self.start_cf)
@@ -1230,8 +1141,6 @@ class ServerHub(ttk.Window):
         ttk.Button(cf_btn_row, text="Copy URL", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
         ttk.Button(cf_btn_row, text="Browser", bootstyle="secondary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-
-        # --- SIMULATOR SECTION ---
         test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=10)
         test_frame.pack(fill=X, pady=5)
         self.test_mode = ttk.BooleanVar(value=False)
@@ -1242,8 +1151,6 @@ class ServerHub(ttk.Window):
         self.cb_test_date.pack(fill=X, pady=(5, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
-
-        # --- MAIN CONTENT AREA ---
         content = ttk.Frame(self.root_container, padding=20)
         content.pack(side=LEFT, fill=BOTH, expand=True)
         
@@ -1256,8 +1163,6 @@ class ServerHub(ttk.Window):
         
         bot_hdr = ttk.Frame(left_hdr)
         bot_hdr.pack(fill=X, pady=(12, 0))
-        
-        # Enhanced Badges for Header
         self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
         self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
         self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
@@ -1275,24 +1180,18 @@ class ServerHub(ttk.Window):
         
         self.mini_meter_cpu = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_cpu.pack(side=LEFT, padx=5)
-        
         self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
         self.mini_meter_ram.pack(side=LEFT, padx=5)
-        
-        # Note: Fixed amountformat error by removing it from .configure() inside refresh_hw_meters.
         self.mini_meter_net = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.1f}")
         self.mini_meter_net.pack(side=LEFT, padx=5)
         self.net_tooltip = ToolTip(self.mini_meter_net, text="Checking connection...")
-        
         self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f} ms")
         self.mini_meter_api.pack(side=LEFT, padx=5)
         
         net_info_card = ttk.Labelframe(right_hdr, text=" Network Health ", padding=(10, 5))
         net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
-        
         self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN Ping: WAIT", font="-size 9 -weight bold", bootstyle=SUCCESS)
         self.lbl_hdr_local_ping.pack(anchor=W, pady=2)
-        
         self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN Ping: WAIT", font="-size 9 -weight bold", bootstyle=SUCCESS)
         self.lbl_hdr_cloud_ping.pack(anchor=W, pady=2)
 
@@ -1325,7 +1224,6 @@ class ServerHub(ttk.Window):
         self.tree_devices.tag_configure("empty", foreground="#888")
 
         ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 5))
-        
         stats_container = ttk.Frame(content)
         stats_container.pack(fill=X, pady=(0, 10))
         
@@ -1368,17 +1266,17 @@ class ServerHub(ttk.Window):
             if self.cf_process: 
                 self.stop_cf()
         except Exception: pass
-        finally: self.destroy()
+        finally:
+            self.ping_executor.shutdown(wait=False)
+            self.destroy()
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
         frame = ttk.Frame(parent, style="Card.TFrame", padding=(8, 4), height=65)
         frame.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=2)
         frame.pack_propagate(False)
-        
         ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor=CENTER)
         val_lbl = ttk.Label(frame, text=initial_value, style=f"CardValue.{style}.TLabel")
         val_lbl.pack(anchor=CENTER, expand=True, pady=(0, 0))
-        
         self.stat_vars[var_name] = {"label": val_lbl, "style": f"CardValue.{style}.TLabel"}
 
     def _set_stat(self, var_name, new_value):
@@ -1390,12 +1288,10 @@ class ServerHub(ttk.Window):
     def _create_log_box(self, parent, title, clear_cmd):
         frame = ttk.Frame(parent, style="Soft.TFrame")
         frame.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
-        
         hdr = ttk.Frame(frame)
         hdr.pack(fill=X)
         ttk.Label(hdr, text=title, style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
         if clear_cmd: ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
-            
         log_box = ScrolledText(frame, font=("Consolas", 10))
         log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
         log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
@@ -1408,10 +1304,10 @@ class ServerHub(ttk.Window):
         log_box.text.tag_configure("log_info", foreground="#5DADE2")
         log_box.text.tag_configure("log_register", foreground="#6EC6FF", font=("Consolas", 10, "bold"))
         log_box.text.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 10, "bold"))
-        
         return log_box
 
     def update_qr(self, label, data):
+        if not label.winfo_exists(): return
         qr = qrcode.QRCode(version=1, box_size=10, border=1)
         qr.add_data(data); qr.make(fit=True)
         img_tk = ImageTk.PhotoImage(qr.make_image(fill_color="black", back_color="white").resize((110, 110), Image.Resampling.LANCZOS))
@@ -1455,20 +1351,18 @@ class ServerHub(ttk.Window):
             self._meter_cache[cache_key] = total
 
     def refresh_hw_meters(self):
+        if not self.winfo_exists(): return
         try:
             with _telemetry_lock:
                 snap_telemetry = dict(TELEMETRY_DATA)
 
-            # 1. Update CPU & RAM — value every tick, style only on tier change
             c, r = snap_telemetry.get("cpu", 0), snap_telemetry.get("ram", 0)
             self._meter_set_value(self.mini_meter_cpu, c, "cpu")
             self._meter_set_style(self.mini_meter_cpu, SUCCESS if c < 60 else (WARNING if c < 85 else DANGER), "cpu_style")
             self._meter_set_value(self.mini_meter_ram, r, "ram")
             self._meter_set_style(self.mini_meter_ram, SUCCESS if r < 70 else (WARNING if r < 90 else DANGER), "ram_style")
 
-            # 2. Update Fast Dedicated Network Speedometer & Tooltip
             net_type = snap_telemetry.get("net_type", "Disconnected")
-
             if net_type == "Disconnected" or net_type == "Offline":
                 self._meter_set_value(self.mini_meter_net, 0, "net")
                 self._meter_set_subtext(self.mini_meter_net, "OFFLINE", "net_subtext")
@@ -1481,7 +1375,6 @@ class ServerHub(ttk.Window):
                 dl_mb = snap_telemetry.get("total_dl_mb", 0.0)
                 ul_mb = snap_telemetry.get("total_ul_mb", 0.0)
 
-                # Format Rich Tooltip
                 tt_text = (
                     f"Status: Connected\n"
                     f"Connection Type: {net_type}\n"
@@ -1502,13 +1395,11 @@ class ServerHub(ttk.Window):
                 self._meter_set_style(self.mini_meter_net, SUCCESS if mbps > 1.0 else INFO, "net_style")
                 self.net_tooltip.text = tt_text
 
-            # 3. Update API Latency
             with metrics_lock: snap_metrics = dict(SERVER_METRICS)
             proc_ms = int(snap_metrics["avg_process_ms"])
             self._meter_set_value(self.mini_meter_api, min(proc_ms, 500), "api")
             self._meter_set_style(self.mini_meter_api, SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER), "api_style")
 
-            # 4. Update External Ping Tests
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
 
@@ -1522,11 +1413,12 @@ class ServerHub(ttk.Window):
             else:
                 self.lbl_hdr_cloud_ping.configure(text="WAN Ping: DOWN", bootstyle=SECONDARY)
         except Exception as e:
-            logging.error(f"refresh_hw_meters: non-fatal error, loop continues: {e}")
+            logging.error(f"refresh_hw_meters error: {e}")
         finally:
             self.after(1000, self.refresh_hw_meters)
 
     def refresh_stats(self):
+        if not self.winfo_exists(): return
         current_time = time.time()
         with device_lock:
             active_ids = [d_id for d_id, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
@@ -1564,7 +1456,6 @@ class ServerHub(ttk.Window):
             if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
                 self.lbl_stats_health.configure(text=f"⚠ Stats stale ({int(stale)}s): {snap['last_error']}", bootstyle=WARNING)
             else: self.lbl_stats_health.configure(text="")
-
         self.after(4000, self.refresh_stats)
 
     def start_flask(self):
@@ -1600,20 +1491,12 @@ class ServerHub(ttk.Window):
         self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
         
         stop_db_writers()
-        
-        if self.http_thread: 
-            self.http_thread.shutdown()
-            self.http_thread = None
-            
-        if self.https_thread: 
-            self.https_thread.shutdown()
-            self.https_thread = None
-            
+        if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
+        if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
 
     def _animate_cf_connecting(self, tick=0):
-        if not self.winfo_exists() or not self._cf_connecting: 
-            return
+        if not self.winfo_exists() or not self._cf_connecting: return
         self.lbl_stat_cf.configure(text=f"● Cloudflare: CONNECTING{'.' * (tick % 4)}", bootstyle=WARNING)
         self.after(450, lambda: self._animate_cf_connecting(tick + 1))
 
@@ -1638,17 +1521,14 @@ class ServerHub(ttk.Window):
                 for line in self.cf_process.stdout:
                     cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
                     self._append_log('cf', cl)
-                    
                     if not url_found:
                         m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
                         if m:
                             tunnel_url = m.group(0)
                             self.cloudflare_url = tunnel_url
                             url_found = True
-                            
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             time.sleep(30)
-                            
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
                             self.gui_queue.put(self._mark_cf_live)
@@ -1659,7 +1539,6 @@ class ServerHub(ttk.Window):
             except Exception as e: 
                 self.gui_queue.put(self.stop_cf)
                 self._append_log('cf', f"[ERROR] Tunnel failed: {e}")
-                
         threading.Thread(target=_run_cf, daemon=True).start()
         
     def stop_cf(self):
@@ -1674,16 +1553,13 @@ class ServerHub(ttk.Window):
                     subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.cf_process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
                     self.cf_process.terminate()
-            except Exception: 
-                pass
-            finally: 
-                self.cf_process = None
+            except Exception: pass
+            finally: self.cf_process = None
                 
         self.cloudflare_url = "Offline"
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
-
 
 if __name__ == "__main__":
     app_window = ServerHub()
