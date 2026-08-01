@@ -19,6 +19,8 @@ EVENT HUB (server_hub.py) - EVENT DAY QUICK HANDBOOK
 - Local hotspot & LAN : WORKING NORMALLY.
 - Androids & Laptops  : Keep using http://Laptop_IP:5000.
 - Cloudflare Remote   : DOWN until internet returns.
+- To ensure mobile scanners on your local Wi-Fi can reach the Waitress engine (Port 5000) and HTTPS Cheroot engine (Port 5001), run this exactly in PowerShell (Admin):
+  * `New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001`
 
 [4] NETWORK LAYOUT
 - USB Tether : Internet backbone.
