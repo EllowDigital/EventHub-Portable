@@ -495,12 +495,14 @@ def _handle_register_job(payload):
     session = mysql_factory()
 
     try:
-        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).with_for_update().first()
+        # FIX 2: Dropped .with_for_update() on pre-check to prevent InnoDB gap-lock deadlocks under concurrent registrations.
+        # Mobile is unique in schema.py; IntegrityError fallback handles race conditions cleanly.
+        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
         if existing_main:
             log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
             return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
 
-        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).with_for_update().first()
+        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
         if existing_kiosk:
             log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
             return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
@@ -714,13 +716,23 @@ def check_mobile():
 
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
+    # FIX 4: Added limit/offset pagination to protect connection pool under heavy read loads.
+    limit = request.args.get('limit', 500, type=int)
+    limit = max(1, min(limit, 1000)) # Safety cap at 1000 records
+    page = request.args.get('page', 1, type=int)
+    offset = max(0, (page - 1) * limit)
+
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
     if not mysql_factory: return jsonify({"status": "error", "message": "DB offline"}), 503
     session = mysql_factory()
     try:
-        main_att = session.query(Attendee).all()
-        kiosk_att = session.query(OfflineKioskAttendee).all()
+        main_att = session.query(Attendee).offset(offset).limit(limit).all()
+        kiosk_att = []
+        rem_limit = limit - len(main_att)
+        if rem_limit > 0:
+            kiosk_att = session.query(OfflineKioskAttendee).offset(offset).limit(rem_limit).all()
+            
         results = []
         for att in (main_att + kiosk_att):
             att_dict = {
@@ -762,6 +774,8 @@ class HttpsFlaskThread(threading.Thread):
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context(); self.ctx.push()
         self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=512)
+        # FIX 5: Explicitly set Cheroot idle timeout parity with Waitress channel_timeout
+        self.server.keep_alive_timeout = 15
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
         try: self.server.start()
@@ -796,7 +810,12 @@ class ServerHub(ttk.Window):
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
+        
+        # FIX 6: Added cf_lock to ensure thread-safe mutation of Cloudflare process attributes
+        self.cf_lock = threading.Lock()
         self.cloudflare_url = "Offline"
+        self.cf_process = None
+        self._cf_connecting = False  
         
         self.SessionMySQL = None
         self.SessionSQLite = None
@@ -806,8 +825,6 @@ class ServerHub(ttk.Window):
 
         self.http_thread = None
         self.https_thread = None
-        self.cf_process = None
-        self._cf_connecting = False  
         
         self.log_lock = threading.Lock()
         self.log_buffer_flask = []
@@ -849,11 +866,13 @@ class ServerHub(ttk.Window):
             return 0, "OFFLINE"
 
     def _ping_cloud(self, session):
-        if self.cloudflare_url == "Offline":
+        with self.cf_lock:
+            cf_url = self.cloudflare_url
+        if cf_url == "Offline":
             return 0, "OFFLINE"
         start = time.time()
         try:
-            session.get(f"{self.cloudflare_url}/api/status", timeout=7, verify=False)
+            session.get(f"{cf_url}/api/status", timeout=7, verify=False)
             return int((time.time() - start) * 1000), "ONLINE"
         except Exception as e:
             if getattr(self, "_last_ping_err", "") != str(e): 
@@ -889,22 +908,26 @@ class ServerHub(ttk.Window):
     def log_flask_event(self, message): 
         self._append_log('flask', message)
 
+    # FIX 1: Protected .after() rescheduling loop with try/finally so errors never kill the log flush loop
     def flush_log_buffers(self):
         if not self.winfo_exists(): return
-        with self.log_lock:
-            flask_logs = list(self.log_buffer_flask)
-            net_logs = list(self.log_buffer_network)
-            cf_logs = list(self.log_buffer_cf)
-            self.log_buffer_flask.clear()
-            self.log_buffer_network.clear()
-            self.log_buffer_cf.clear()
+        try:
+            with self.log_lock:
+                flask_logs = list(self.log_buffer_flask)
+                net_logs = list(self.log_buffer_network)
+                cf_logs = list(self.log_buffer_cf)
+                self.log_buffer_flask.clear()
+                self.log_buffer_network.clear()
+                self.log_buffer_cf.clear()
 
-        if flask_logs: self._write_logs_to_widget(self.log_flask.text, flask_logs)
-        if net_logs: self._write_logs_to_widget(self.log_network.text, net_logs)
-        if cf_logs and hasattr(self, 'log_cf') and self.log_cf: 
-            self._write_logs_to_widget(self.log_cf.text, cf_logs)
-            
-        self.after(250, self.flush_log_buffers)
+            if flask_logs: self._write_logs_to_widget(self.log_flask.text, flask_logs)
+            if net_logs: self._write_logs_to_widget(self.log_network.text, net_logs)
+            if cf_logs and hasattr(self, 'log_cf') and self.log_cf: 
+                self._write_logs_to_widget(self.log_cf.text, cf_logs)
+        except Exception as e:
+            logging.error(f"flush_log_buffers error: {e}")
+        finally:
+            self.after(250, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
         if not text_widget.winfo_exists(): return
@@ -920,15 +943,22 @@ class ServerHub(ttk.Window):
             text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
         text_widget.configure(state=DISABLED)
 
+    # FIX 1: Protected .after() rescheduling loop with try/finally & inner try/except for individual tasks
     def process_gui_queue(self):
         if not self.winfo_exists(): return
-        for _ in range(100):
-            try: 
-                task = self.gui_queue.get_nowait()
-                task()
-            except queue.Empty: 
-                break
-        self.after(30, self.process_gui_queue)
+        try:
+            for _ in range(100):
+                try: 
+                    task = self.gui_queue.get_nowait()
+                    task()
+                except queue.Empty: 
+                    break
+                except Exception as e:
+                    logging.error(f"gui_queue task execution error: {e}")
+        except Exception as e:
+            logging.error(f"process_gui_queue outer error: {e}")
+        finally:
+            self.after(30, self.process_gui_queue)
 
     def clear_system_logs(self):
         with self.log_lock: self.log_buffer_flask.clear()
@@ -1226,7 +1256,9 @@ class ServerHub(ttk.Window):
         try:
             if self.http_thread or self.https_thread: 
                 self.stop_flask()
-            if self.cf_process: 
+            with self.cf_lock:
+                cf_proc = self.cf_process
+            if cf_proc: 
                 self.stop_cf()
         except Exception: pass
         finally:
@@ -1359,46 +1391,56 @@ class ServerHub(ttk.Window):
         finally:
             self.after(1000, self.refresh_hw_meters)
 
+    # FIX 1 & 3: Protected .after() rescheduling loop with try/finally AND added independent ACTIVE_DEVICES pruning
     def refresh_stats(self):
         if not self.winfo_exists(): return
-        current_time = time.time()
-        with device_lock:
-            active_ids = [d_id for d_id, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
-            device_info = {d_id: dict(ACTIVE_DEVICES[d_id]) for d_id in active_ids}
+        try:
+            current_time = time.time()
+            with device_lock:
+                # Prune stale devices directly on GUI thread loop so cleanup doesn't rely on web /stats polling
+                for d_id, data in list(ACTIVE_DEVICES.items()):
+                    if current_time - data['last_seen'] >= DEVICE_ONLINE_WINDOW:
+                        del ACTIVE_DEVICES[d_id]
 
-        self._set_stat("online_scanners", len(active_ids))
-        if hasattr(self, 'lbl_devices_header'): 
-            self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)})")
+                active_ids = [d_id for d_id, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
+                device_info = {d_id: dict(ACTIVE_DEVICES[d_id]) for d_id in active_ids}
 
-        for row in self.tree_devices.get_children(): self.tree_devices.delete(row)
-            
-        if active_ids:
-            for d_id in sorted(active_ids, key=lambda i: device_info[i]['name'].lower()):
-                info = device_info[d_id]
-                sec_ago = max(0, int(current_time - info['last_seen']))
-                sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
-                self.tree_devices.insert("", END, values=(info['name'], info['ip'], "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
-        else: 
-            self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
+            self._set_stat("online_scanners", len(active_ids))
+            if hasattr(self, 'lbl_devices_header'): 
+                self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)})")
 
-        if not self._db_checked:
-            self.lbl_stat_mysql.configure(text="● MYSQL: CHECKING", bootstyle=INFO); self.lbl_stat_sqlite.configure(text="● SQLITE: CHECKING", bootstyle=INFO)
-        else:
-            self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS) if self.SessionMySQL else self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
-            self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS) if self.SessionSQLite else self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
+            for row in self.tree_devices.get_children(): self.tree_devices.delete(row)
+                
+            if active_ids:
+                for d_id in sorted(active_ids, key=lambda i: device_info[i]['name'].lower()):
+                    info = device_info[d_id]
+                    sec_ago = max(0, int(current_time - info['last_seen']))
+                    sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
+                    self.tree_devices.insert("", END, values=(info['name'], info['ip'], "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
+            else: 
+                self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
 
-        with stats_lock: snap = dict(STATS_CACHE)
-            
-        for k, v in zip(["total_att", "kiosk_reg", "sqlite_total", "chk_30", "chk_31", "chk_01", "chk_today", "chk_total"], 
-                        [snap["total_attendees"], snap["total_registrations"], snap["total_attendees"], snap["chk_30"], snap["chk_31"], snap["chk_01"], snap["today_scans"], snap["total_scans"]]): 
-            self._set_stat(k, v)
+            if not self._db_checked:
+                self.lbl_stat_mysql.configure(text="● MYSQL: CHECKING", bootstyle=INFO); self.lbl_stat_sqlite.configure(text="● SQLITE: CHECKING", bootstyle=INFO)
+            else:
+                self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS) if self.SessionMySQL else self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
+                self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS) if self.SessionSQLite else self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
 
-        if hasattr(self, 'lbl_stats_health'):
-            stale = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
-            if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
-                self.lbl_stats_health.configure(text=f"⚠ Stats stale ({int(stale)}s): {snap['last_error']}", bootstyle=WARNING)
-            else: self.lbl_stats_health.configure(text="")
-        self.after(4000, self.refresh_stats)
+            with stats_lock: snap = dict(STATS_CACHE)
+                
+            for k, v in zip(["total_att", "kiosk_reg", "sqlite_total", "chk_30", "chk_31", "chk_01", "chk_today", "chk_total"], 
+                            [snap["total_attendees"], snap["total_registrations"], snap["total_attendees"], snap["chk_30"], snap["chk_31"], snap["chk_01"], snap["today_scans"], snap["total_scans"]]): 
+                self._set_stat(k, v)
+
+            if hasattr(self, 'lbl_stats_health'):
+                stale = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
+                if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
+                    self.lbl_stats_health.configure(text=f"⚠ Stats stale ({int(stale)}s): {snap['last_error']}", bootstyle=WARNING)
+                else: self.lbl_stats_health.configure(text="")
+        except Exception as e:
+            logging.error(f"refresh_stats error: {e}")
+        finally:
+            self.after(4000, self.refresh_stats)
 
     def start_flask(self):
         self.btn_start_flask.configure(state=DISABLED)
@@ -1458,23 +1500,27 @@ class ServerHub(ttk.Window):
 
         def _run_cf():
             try:
-                self.cf_process = subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
+                proc = subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
+                with self.cf_lock:
+                    self.cf_process = proc
+
                 url_found = False
-                for line in self.cf_process.stdout:
+                for line in proc.stdout:
                     cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
                     self._append_log('cf', cl)
                     if not url_found:
                         m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
                         if m:
                             tunnel_url = m.group(0)
-                            self.cloudflare_url = tunnel_url
+                            with self.cf_lock:
+                                self.cloudflare_url = tunnel_url
                             url_found = True
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             time.sleep(30)
                             self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
                             self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
                             self.gui_queue.put(self._mark_cf_live)
-                            self._append_log('cf', f"[SUCCESS] Tunnel active: {self.cloudflare_url}")
+                            self._append_log('cf', f"[SUCCESS] Tunnel active: {tunnel_url}")
             except FileNotFoundError:
                 self.gui_queue.put(self.stop_cf)
                 self._append_log('cf', "[ERROR] 'cloudflared' not found in PATH.")
@@ -1489,16 +1535,19 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.configure(state=NORMAL if self.http_thread else DISABLED)
         self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
         
-        if self.cf_process:
+        with self.cf_lock:
+            proc = self.cf_process
+            self.cf_process = None
+            self.cloudflare_url = "Offline"
+
+        if proc:
             try: 
                 if platform.system() == "Windows":
-                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(self.cf_process.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 else:
-                    self.cf_process.terminate()
+                    proc.terminate()
             except Exception: pass
-            finally: self.cf_process = None
                 
-        self.cloudflare_url = "Offline"
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
