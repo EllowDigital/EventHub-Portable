@@ -8,6 +8,7 @@ import queue
 import re
 import uuid
 import platform
+import subprocess
 import requests
 import urllib3
 import tkinter as tk
@@ -30,6 +31,13 @@ try:
         HAS_WINSOUND = False
 except ImportError:
     HAS_WINSOUND = False
+
+# Text-to-Speech engine fallback for Mac/Linux
+try:
+    import pyttsx3
+    HAS_TTS = True
+except ImportError:
+    HAS_TTS = False
 
 # Suppress InsecureRequestWarning for adhoc self-signed HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -254,7 +262,7 @@ class OfflineKioskApp(ttk.Window):
         control_frame = ttk.Frame(header_frame)
         control_frame.pack(side=RIGHT)
 
-        self.btn_sound = ttk.Button(control_frame, text="🔊 Sound", bootstyle="outline-info", command=self.toggle_sound)
+        self.btn_sound = ttk.Button(control_frame, text="🔊 Sound Enabled", bootstyle="outline-success", command=self.toggle_sound)
         self.btn_sound.pack(side=LEFT, padx=(0, 5))
 
         self.btn_settings = ttk.Button(control_frame, text="⚙️ Settings", bootstyle=SECONDARY, command=self.open_settings)
@@ -408,18 +416,21 @@ class OfflineKioskApp(ttk.Window):
         err_lbl.pack(anchor=W)
         self.errors[name] = err_lbl
 
-    # --- ADVANCED HARDWARE SOUNDS ---
+    # --- ADVANCED HARDWARE SOUNDS & TTS ---
     def toggle_sound(self):
         self.sound_enabled = not self.sound_enabled
-        self.btn_sound.configure(
-            text="🔊 Sound" if self.sound_enabled else "🔇 Muted", 
-            bootstyle="outline-info" if self.sound_enabled else "outline-secondary"
-        )
+        if self.sound_enabled:
+            self.btn_sound.configure(text="🔊 Voice Enabled", bootstyle="outline-success")
+            self.play_sound("SUCCESS", "Audio alerts enabled.")
+        else:
+            self.btn_sound.configure(text="🔇 Muted", bootstyle="outline-secondary")
 
-    def play_sound(self, status):
+    def play_sound(self, status, speak_text=""):
         if not self.sound_enabled:
             return
+            
         def _play():
+            # 1. Play Tone Chimes
             if HAS_WINSOUND:
                 try:
                     if status == "SUCCESS":
@@ -437,6 +448,35 @@ class OfflineKioskApp(ttk.Window):
                 if status != "SUCCESS":
                     time.sleep(0.2)
                     self.bell()
+                    
+            # 2. Text-to-Speech Voice Engine (Female)
+            if speak_text:
+                try:
+                    if platform.system() == "Windows":
+                        safe_text = speak_text.replace("'", "")
+                        ps_script = (
+                            f"Add-Type -AssemblyName System.Speech; "
+                            f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                            f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
+                            f"$synth.Rate = 0; "
+                            f"$synth.Speak('{safe_text}');"
+                        )
+                        subprocess.run(
+                            ["powershell", "-Command", ps_script], 
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                    elif HAS_TTS:
+                        engine = pyttsx3.init()
+                        voices = engine.getProperty('voices')
+                        for voice in voices:
+                            if 'female' in voice.name.lower() or 'zira' in voice.name.lower() or 'samantha' in voice.name.lower():
+                                engine.setProperty('voice', voice.id)
+                                break
+                        engine.say(speak_text)
+                        engine.runAndWait()
+                except Exception as e:
+                    logging.error(f"TTS Error: {e}")
+                    
         threading.Thread(target=_play, daemon=True).start()
 
     # --- LIVE VALIDATION & REACTIVE LOGIC ---
@@ -506,8 +546,12 @@ class OfflineKioskApp(ttk.Window):
                     aid = data.get('attendee_id', 'UNKNOWN ID')
                     self.gui_queue.put(lambda: self.errors['mobile'].configure(text=f"⚠ Already Registered! ID: {aid}", foreground="#ffbb33"))
                     self.gui_queue.put(lambda: self.inputs['mobile'].configure(bootstyle=WARNING))
+                    # 🎤 VOICE ALERT: Duplicate Mobile Number
+                    self.play_sound("DUPLICATE", "Warning. This mobile number is already registered.")
                 else:
                     self.gui_queue.put(lambda: self.errors['mobile'].configure(text="✓ Ready", foreground="#00e676"))
+                    # 🎤 VOICE ALERT: Mobile Available
+                    self.play_sound("SUCCESS", "Number available.")
             elif res.status_code == 404:
                 self.gui_queue.put(lambda: self.errors['mobile'].configure(text="⚠ Backend missing route", foreground="#ff4444"))
         except Exception:
@@ -691,7 +735,7 @@ class OfflineKioskApp(ttk.Window):
     def submit_form(self, event=None):
         if self.is_submitting: return
         if not self.validate_form():
-            self.play_sound("ERROR")
+            self.play_sound("ERROR", "Please check the form for errors.")
             return
             
         self.is_submitting = True
@@ -752,16 +796,16 @@ class OfflineKioskApp(ttk.Window):
 
     def handle_submit_error(self, message):
         self.is_submitting = False
-        self.play_sound("ERROR")
+        self.play_sound("ERROR", "Warning. Registration failed.")
         messagebox.showerror("Registration Failed", message)
         self.btn_submit.configure(state=NORMAL, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS)
 
     # --- SUCCESS MODAL ---
     def show_success_modal(self, aid, is_duplicate=False):
         if is_duplicate:
-            self.play_sound("DUPLICATE")
+            self.play_sound("DUPLICATE", "Warning. Attendee already registered.")
         else:
-            self.play_sound("SUCCESS")
+            self.play_sound("SUCCESS", "Registration saved successfully.")
             
         modal = tk.Toplevel(self)
         modal.geometry("450x350")
