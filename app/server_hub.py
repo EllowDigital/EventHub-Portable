@@ -11,6 +11,7 @@ import re
 import time
 import uuid
 import queue
+import collections
 import concurrent.futures
 from dataclasses import dataclass, field
 import ipaddress
@@ -209,6 +210,9 @@ NETWORK_LATENCY = {"local_ms": 0, "cloud_ms": 0, "local_status": "OFFLINE", "clo
 network_latency_lock = threading.Lock()
 SERVER_METRICS = {"avg_process_ms": 0.0, "req_count": 0}
 metrics_lock = threading.Lock()
+TRAFFIC_HISTORY = collections.deque([0] * 60, maxlen=60)
+_current_sec_requests = 0
+traffic_lock = threading.Lock()
 
 STATS_CACHE = {
     "total_attendees": 0, "total_registrations": 0,
@@ -275,6 +279,10 @@ def log_request(response):
     if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': 
         return response
     try:
+        global _current_sec_requests
+        with traffic_lock:
+            _current_sec_requests += 1
+
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
             try:
@@ -340,6 +348,14 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             with scan_clients_lock:
                 if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
 
+def traffic_monitor_loop():
+    global _current_sec_requests
+    while True:
+        time.sleep(1)
+        with traffic_lock:
+            hits = _current_sec_requests
+            _current_sec_requests = 0
+        TRAFFIC_HISTORY.append(hits)
 
 def _compute_stats_snapshot():
     sessions = get_cached_sessions()
@@ -727,6 +743,7 @@ def get_all_attendees():
         try: session.close()
         except Exception: pass
 
+
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
@@ -736,6 +753,7 @@ class WaitressHttpThread(threading.Thread):
         try: self.server.run()
         except Exception: logging.exception("Waitress crashed")
     def shutdown(self): self.server.close()
+
 
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=150):
@@ -773,7 +791,6 @@ class ServerHub(ttk.Window):
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
         self.minsize(1000, 650)
 
-        # Allow exiting fullscreen with the Escape key
         self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
 
         self.local_ip = get_local_ip()
@@ -813,6 +830,7 @@ class ServerHub(ttk.Window):
         self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
+        threading.Thread(target=traffic_monitor_loop, daemon=True).start()
 
     def connect_db(self):
         try:
