@@ -1,83 +1,67 @@
-============================================================
-EVENT HUB (server_hub.py) - EVENT DAY QUICK HANDBOOK
-============================================================
+================================================================================
+                    EVENT HUB - QUICK REFERENCE HANDBOOK
+================================================================================
 
 [1] STARTUP SEQUENCE
-1. Connect Phone A -> Laptop A (via USB Tethering).
-2. Connect RJ45 LAN cable (or Gigabit Switch) to all registration laptops.
+1. Connect Phone A (via USB Tethering) to Laptop A.
+2. Connect RJ45 LAN/Switch to Registration Laptops.
 3. Turn ON Mobile Hotspot on Laptop A.
-4. Connect all scanner phones to Laptop A's Mobile Hotspot.
+4. Connect Scanner Phones (up to 8) to Laptop A's Hotspot.
 5. Launch server_hub.py -> Click "▶ Start Engine".
-6. Start Cloudflare Gateway/Tunnel (if internet is active) & share the public link.
+6. Start Cloudflare Tunnel (if online) -> Share public link.
 
-[2] DEVICE ROUTING & URL MATRIX
----------------------------------------------------------------------------------------------------------------------
-| Physical Device    | Target Interface    | Network Link     | Exact URL / Hub Config                  | Target Engine & Purpose                                  |
-|--------------------|---------------------|------------------|-----------------------------------------|----------------------------------------------------------|
-| Kiosk Laptops      | register.py (Web)   | RJ45 LAN Cable   | http://<LaptopA_LAN_IP>:5000            | Waitress HTTP (Zero encryption lag for fast data entry)  |
-| 8 Mobile Scanners  | check_in.html (Web) | Wi-Fi Hotspot    | https://<LaptopA_Hotspot_IP>:5001       | Cheroot HTTPS (MANDATORY to unlock Android/iOS camera)   |
-| Master Phone A     | check_in.html (Web) | USB Tethering    | https://<LaptopA_USB_IP>:5001           | Cheroot HTTPS (Hardwired; immune to Wi-Fi congestion)    |
-| Gate Display Laptops| check_in.py (GUI)  | Wi-Fi / LAN      | Set Hub URL: https://<LaptopA_IP>:5001  | Cheroot HTTPS (Bypasses streaming bug via unbuffered API)|
-| Roving Staff       | check_in.html (Web) | 4G/5G Cellular   | https://your-tunnel.trycloudflare.com   | Cloudflare Tunnel (Relays remote traffic securely)       |
-| Background Sync    | Photo Sync Script   | Outbound USB     | (Runs Automatically)                    | Cloudinary API (External CDN; independent of local APIs) |
----------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)
+--------------------------------------------------------------------------------
+DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE
+-------------------|------------|-------------------------------|---------------
+Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)
+Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras
+Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag
+Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)
+Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning
+Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API
+--------------------------------------------------------------------------------
 
-[3] IF INTERNET STOPS (OFFLINE MODE)
-- Local Hotspot & LAN : WORKING NORMALLY.
-- Registration Desks  : Continue using http://<IP>:5000.
-- Gate Scanners       : Continue using https://<IP>:5001.
-- Cloudflare Remote   : DOWN (Remote staff cannot connect until the internet returns).
-- FIREWALL RULE: To ensure mobile scanners on your local Wi-Fi can reach the Waitress engine (Port 5000) and HTTPS Cheroot engine (Port 5001), run this exact command in PowerShell (Admin):
-  > New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001
+[3] GOLDEN RULES & REMINDERS
+- STARTUP ORDER: Network -> Hotspot -> Server -> Clients.
+- REGISTRATION PCs = HTTP (Port 5000).
+- SCANNERS & GUI = HTTPS (Port 5001) -> *STRICTLY REQUIRED for cameras/live-sync!*
+- SSL WARNING: Accept the "Not Secure" warning on scanners ONCE before the event.
+- NEVER close server_hub.py during the live event.
+- Staff never connect to MySQL directly; APIs handle all traffic.
 
-[4] HARDWARE & NETWORK LAYOUT
-- Laptop A (Central) : Runs server_hub.py. Acts as the brain; connects to everything below.
-- Phone A (USB)      : Acts as the internet backbone AND the Master Gate Scanner.
-- RJ45 LAN Laptops   : Used strictly for register.py / Kiosk data entry.
-- Hotspot Phones     : Up to 8 Android/iOS devices used strictly for check_in.py / QR Scanning.
+[4] OFFLINE MODE (INTERNET GOES DOWN)
+- DO NOT PANIC: Local Hotspot & LAN continue working normally.
+- Registration uses Port 5000; Scanners use Port 5001.
+- Remote Cloudflare staff will be DOWN until internet returns.
 
-[5] FIREWALL & NETWORK PROFILE (CRITICAL)
-- Allow Windows Firewall ports: 5000 (HTTP), 5001 (HTTPS), and 3306 (Only for remote MySQL admin access).
-- IMPORTANT: Ensure your active Windows network profile is set to "Private" (not "Public"). Windows automatically blocks local LAN traffic on "Public" networks.
-- Pause or add exceptions to third-party antiviruses (McAfee, Norton, Avast, etc.). Their built-in firewalls often override Windows Firewall and silently block connections.
+[5] SYSTEM & POWER OPTIMIZATIONS (CRITICAL)
+- NETWORK PROFILE: Must be "Private" (Windows blocks LAN on "Public").
+- FIREWALL PORTS: Allow TCP 5000, 5001, 3306.
+- ANTIVIRUS: Pause McAfee/Norton/Avast firewalls (they block local traffic).
+- POWER PLAN: Set Screen & Sleep to "Never". 
+- ADAPTERS: Device Manager > Network Adapters > Uncheck "Allow computer to turn off device".
 
-[6] WINDOWS SERVER OPTIMIZATION (PREVENT SLEEP DROPS)
-- Settings > System > Power & sleep: Set "Screen" and "Sleep" to "Never".
-- Device Manager > Network Adapters > Right-click your Wi-Fi/Ethernet adapters > Properties > Power Management: UNCHECK "Allow the computer to turn off this device to save power".
+[6] TROUBLESHOOTING & FIXES
+» FIX: DEVICES CAN'T LOAD THE HUB IP
+  1. Check Laptop A's IP via 'ipconfig'.
+  2. Verify devices are on the correct Wi-Fi/LAN.
+  3. Turn OFF all VPNs (they scramble local routing).
 
-[7] FIX: DEVICES CANNOT LOAD THE IP ADDRESS
-- Step 1: Verify Laptop A's IP address hasn't changed. Re-run `ipconfig` in Command Prompt to confirm the IPv4 Address.
-- Step 2: Ensure the client device is actually connected to the correct Wi-Fi Hotspot or LAN switch.
-- Step 3: Turn OFF any active VPNs on both Laptop A and the client mobile devices (VPNs scramble local IP routing and prevent LAN discovery).
+» FIX: CLOUDFLARE WON'T OPEN
+  - Change Laptop A DNS to: 1.1.1.1 (Preferred) and 1.0.0.1 (Alternate).
 
-[8] FIX: CLOUDFLARE WON'T OPEN
-Change Laptop A's DNS settings to:
-- Preferred DNS : 1.1.1.1
-- Alternate DNS : 1.0.0.1
+» FIX: NETWORK GLITCHY / DROPPING
+  - Admin PowerShell Command (Run to force allow ports):
+    New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001
+  - Admin CMD (Network Reset):
+    ipconfig /flushdns
+    ipconfig /release
+    ipconfig /renew
+    netsh winsock reset (Requires Restart)
 
-[9] FIX: NETWORK SHOWS OFFLINE / GLITCHY
-Run Command Prompt as Administrator and execute these commands one by one:
-  > ipconfig /flushdns
-  > ipconfig /release
-  > ipconfig /renew
-  > netsh winsock reset
-*IMPORTANT: Restart the PC after running the winsock reset command.*
-
-[10] LAN SETUP (OPTIONAL MANUAL CONFIG)
-- Server Laptop IP  : 192.168.10.1 (Subnet Mask: 255.255.255.0)
-- Client Laptop IPs : 192.168.10.2, 192.168.10.3 (Subnet Mask: 255.255.255.0)
-- Client Target URL : http://192.168.10.1:5000
-
-[11] DATABASE PROTOCOL
-- Normal event staff NEVER connect to MySQL directly.
-- All registration/check-in apps route through server_hub.py APIs automatically.
-- Only technical administrators should interface with MySQL directly.
-
-[12] EVENT DAY REMINDERS
-[!] Start devices in the correct sequence (Network -> Hotspot -> Server -> Clients).
-[!] Registration PCs = HTTP (Port 5000)
-[!] Scanners (Android & iOS) = HTTPS (Port 5001) - STRICTLY REQUIRED to unlock the camera!
-[!] Remote users = Cloudflare Gateway/Tunnel
-[!] Accept the "Not Secure" local SSL warning on scanners ONCE before the event starts.
-[!] No Internet? = Don't panic. The local event ecosystem continues normally.
-[!] DO NOT CLOSE server_hub.py during the event!
+» MANUAL LAN SETUP (FALLBACK)
+  - Server IP: 192.168.10.1 (Subnet: 255.255.255.0)
+  - Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)
+  - Client URL: http://192.168.10.1:5000
