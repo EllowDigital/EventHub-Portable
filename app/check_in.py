@@ -104,7 +104,7 @@ class SettingsDialog(ttk.Toplevel):
     def __init__(self, parent, config_manager, on_save_callback):
         super().__init__(parent)
         self.title("Settings — Gate Terminal")
-        self.geometry("500x480") 
+        self.geometry("520x500") 
         self.resizable(False, False)
         self.config_manager = config_manager
         self.on_save = on_save_callback
@@ -120,34 +120,34 @@ class SettingsDialog(ttk.Toplevel):
         self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
     def build_ui(self):
-        frame = ttk.Frame(self, padding=25)
+        frame = ttk.Frame(self, padding=30)
         frame.pack(fill=BOTH, expand=True)
 
-        ttk.Label(frame, text="⚙️ Terminal Settings", font="-size 16 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 20))
+        ttk.Label(frame, text="⚙️ Terminal Settings", font="-size 18 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 25))
 
         ttk.Label(frame, text="Hub Server URL (HTTP/HTTPS)", font="-weight bold").pack(anchor=W)
-        self.ent_url = ttk.Entry(frame)
+        self.ent_url = ttk.Entry(frame, font="-size 11")
         self.ent_url.insert(0, self.config_manager.config["hub_url"])
-        self.ent_url.pack(fill=X, pady=(0, 15), ipady=4)
+        self.ent_url.pack(fill=X, pady=(5, 20), ipady=6)
 
         ttk.Label(frame, text="Device Identifier Name", font="-weight bold").pack(anchor=W)
-        self.ent_device = ttk.Entry(frame)
+        self.ent_device = ttk.Entry(frame, font="-size 11")
         self.ent_device.insert(0, self.config_manager.config["device_name"])
-        self.ent_device.pack(fill=X, pady=(0, 15), ipady=4)
+        self.ent_device.pack(fill=X, pady=(5, 20), ipady=6)
 
         ttk.Label(frame, text="Local Photo Directory (Relative Path)", font="-weight bold").pack(anchor=W)
         photo_frame = ttk.Frame(frame)
-        photo_frame.pack(fill=X, pady=(0, 20))
+        photo_frame.pack(fill=X, pady=(5, 30))
         
-        self.ent_photo = ttk.Entry(photo_frame)
+        self.ent_photo = ttk.Entry(photo_frame, font="-size 11")
         self.ent_photo.insert(0, self.config_manager.config["photo_directory"])
-        self.ent_photo.pack(side=LEFT, fill=X, expand=True, padx=(0, 5), ipady=4)
-        ttk.Button(photo_frame, text="Browse", bootstyle=SECONDARY, command=self.browse_dir).pack(side=RIGHT, ipady=4)
+        self.ent_photo.pack(side=LEFT, fill=X, expand=True, padx=(0, 10), ipady=6)
+        ttk.Button(photo_frame, text="Browse", bootstyle=SECONDARY, command=self.browse_dir).pack(side=RIGHT, ipady=6)
 
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill=X, side=BOTTOM, pady=(10, 0))
-        ttk.Button(btn_frame, text="💾 Save & Apply", bootstyle=SUCCESS, command=self.save).pack(fill=X, pady=5, ipady=5)
-        ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(fill=X, ipady=5)
+        ttk.Button(btn_frame, text="💾 Save & Apply", bootstyle=SUCCESS, command=self.save).pack(fill=X, pady=5, ipady=8)
+        ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(fill=X, ipady=8)
 
     def browse_dir(self):
         start_dir = os.path.normpath(os.path.join(BASE_DIR, self.ent_photo.get()))
@@ -174,12 +174,12 @@ class SettingsDialog(ttk.Toplevel):
 class GateDisplay(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Gate Terminal")
-        self.geometry("1400x850")
-        self.minsize(1200, 700)
+        self.geometry("1440x900")
+        self.minsize(1280, 750)
         
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw - 1400) // 2}+{(sh - 850) // 2 - 20}")
+        self.geometry(f"+{(sw - 1440) // 2}+{(sh - 900) // 2 - 20}")
         
         self.current_theme = "darkly"
         self.config_manager = ConfigManager()
@@ -196,8 +196,8 @@ class GateDisplay(ttk.Window):
         self._placeholder_img_cache = {}
         self._last_scan_time = 0.0
         
-        # Deduplication cache to prevent 3x ghost thread events
-        self._processed_sigs = collections.deque(maxlen=20) 
+        # Deduplication cache to prevent ghost thread events. Increased size for safety with 4 phones.
+        self._processed_sigs = collections.deque(maxlen=100) 
 
         self.stream_session = None
         self.api_session = None
@@ -220,60 +220,62 @@ class GateDisplay(ttk.Window):
             self.set_placeholder_photo()
 
     def build_ui(self):
-        self.nav = ttk.Frame(self, padding=15)
+        self.nav = ttk.Frame(self, padding=20)
         self.nav.pack(fill=X)
         
         title_frame = ttk.Frame(self.nav)
         title_frame.pack(side=LEFT)
         
-        ttk.Label(title_frame, text="🎟️ Gate Display Terminal", font="-size 20 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
-        self.lbl_subtitle = ttk.Label(title_frame, text=f"{self.config_manager.config['device_name']} • TDE UP 2026", font="-size 10 -weight bold", bootstyle=SECONDARY)
-        self.lbl_subtitle.pack(anchor=W)
+        ttk.Label(title_frame, text="🎟️ Gate Display Terminal", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
+        self.lbl_subtitle = ttk.Label(title_frame, text=f"{self.config_manager.config['device_name']} • TDE UP 2026", font="-size 11 -weight bold", bootstyle=SECONDARY)
+        self.lbl_subtitle.pack(anchor=W, pady=(2, 0))
 
         controls = ttk.Frame(self.nav)
         controls.pack(side=RIGHT)
         
-        ttk.Button(controls, text="🌗 Theme", bootstyle="outline-secondary", command=self.toggle_theme).pack(side=LEFT, padx=5)
-        ttk.Button(controls, text="⚙️ Settings", bootstyle="outline-secondary", command=self.open_settings).pack(side=LEFT, padx=5)
+        ttk.Button(controls, text="🌗 Theme", bootstyle="outline-secondary", command=self.toggle_theme).pack(side=LEFT, padx=6)
+        ttk.Button(controls, text="⚙️ Settings", bootstyle="outline-secondary", command=self.open_settings).pack(side=LEFT, padx=6)
         
         self.btn_sound = ttk.Button(controls, text="🔊 Sound", bootstyle="outline-info", command=self.toggle_sound)
-        self.btn_sound.pack(side=LEFT, padx=5)
+        self.btn_sound.pack(side=LEFT, padx=6)
         
-        ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=5)
+        ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=6)
         
-        self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(12, 6))
-        self.net_pill.pack(side=LEFT, padx=20)
+        self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(15, 8))
+        self.net_pill.pack(side=LEFT, padx=25)
         
-        self.lbl_hub_status = ttk.Label(self.net_pill, text="● Connecting...", font="-weight bold -size 11", bootstyle=WARNING)
+        self.lbl_hub_status = ttk.Label(self.net_pill, text="● Connecting...", font="-weight bold -size 12", bootstyle=WARNING)
         self.lbl_hub_status.pack(side=LEFT)
 
+        ttk.Separator(self, orient=HORIZONTAL).pack(fill=X)
+
         self.test_banner = ttk.Frame(self, bootstyle=DANGER)
-        self.lbl_test_mode = ttk.Label(self.test_banner, text="⚠️ TEST MODE ACTIVE", font="-weight bold -size 12", bootstyle="inverse-danger")
-        self.lbl_test_mode.pack(pady=8)
+        self.lbl_test_mode = ttk.Label(self.test_banner, text="⚠️ TEST MODE ACTIVE", font="-weight bold -size 14", bootstyle="inverse-danger")
+        self.lbl_test_mode.pack(pady=10)
         
-        self.content = ttk.Frame(self, padding=25)
+        self.content = ttk.Frame(self, padding=30)
         self.content.pack(fill=BOTH, expand=True)
 
         left_panel = ttk.Frame(self.content)
-        left_panel.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 25))
+        left_panel.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 30))
 
-        self.status_banner = ttk.Label(left_panel, text="WAITING FOR SCAN...", font="-size 32 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
-        self.status_banner.pack(fill=X, pady=(0, 25), ipady=30)
+        self.status_banner = ttk.Label(left_panel, text="WAITING FOR SCAN...", font="-size 34 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
+        self.status_banner.pack(fill=X, pady=(0, 30), ipady=35)
 
         profile_frame = ttk.Frame(left_panel)
         profile_frame.pack(fill=BOTH, expand=True)
 
-        photo_container = ttk.Frame(profile_frame, width=340)
-        photo_container.pack(side=LEFT, fill=Y, padx=(0, 30))
+        photo_container = ttk.Frame(profile_frame, width=360)
+        photo_container.pack(side=LEFT, fill=Y, padx=(0, 35))
         photo_container.pack_propagate(False) 
         
-        photo_border = ttk.Frame(photo_container, bootstyle=SECONDARY, padding=2)
+        photo_border = ttk.Frame(photo_container, bootstyle=SECONDARY, padding=3)
         photo_border.pack(fill=BOTH, expand=True)
         
         self.lbl_photo = ttk.Label(photo_border, anchor=CENTER)
         self.lbl_photo.pack(fill=BOTH, expand=True)
         
-        self.lbl_attendee_id = ttk.Label(photo_container, text="---", font="-size 14 -weight bold", bootstyle=SECONDARY, anchor=CENTER)
+        self.lbl_attendee_id = ttk.Label(photo_container, text="---", font="-size 15 -weight bold", bootstyle=SECONDARY, anchor=CENTER)
         self.lbl_attendee_id.pack(pady=15)
         self.set_placeholder_photo()
 
@@ -285,75 +287,76 @@ class GateDisplay(ttk.Window):
         header_frame.columnconfigure(0, weight=1) 
         header_frame.columnconfigure(1, weight=0) 
         
-        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 36 -weight bold", bootstyle=DEFAULT, wraplength=550)
+        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 40 -weight bold", bootstyle=DEFAULT, wraplength=580)
         self.lbl_name.grid(row=0, column=0, sticky=NW, pady=(0, 5))
         
-        self.lbl_pass_badge = ttk.Label(header_frame, text="PENDING", font="-size 16 -weight bold", bootstyle="inverse-secondary", padding=(20, 8))
+        self.lbl_pass_badge = ttk.Label(header_frame, text="PENDING", font="-size 18 -weight bold", bootstyle="inverse-secondary", padding=(25, 10))
         self.lbl_pass_badge.grid(row=0, column=1, sticky=NE, padx=(10, 0))
 
-        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 16", bootstyle=INFO, wraplength=550)
-        self.lbl_company.pack(anchor=W, pady=(5, 30))
+        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 18", bootstyle=INFO, wraplength=580)
+        self.lbl_company.pack(anchor=W, pady=(8, 35))
 
         grid = ttk.Frame(details)
         grid.pack(fill=BOTH, expand=True)
-        grid.columnconfigure(0, weight=1, minsize=200)
-        grid.columnconfigure(1, weight=1, minsize=200)
+        grid.columnconfigure(0, weight=1, minsize=220)
+        grid.columnconfigure(1, weight=1, minsize=220)
         
         self.fields = {}
         row_col = [
-            (0, 0, "Mobile Number", "mobile"), (0, 1, "Location", "location"), 
-            (1, 0, "Category", "category"), (1, 1, "Gender", "gender"), 
-            (2, 0, "Event Date", "date"), (2, 1, "Scanner ID", "scanner")
+            (0, 0, "📱 Mobile Number", "mobile"), (0, 1, "📍 Location", "location"), 
+            (1, 0, "🏷️ Category", "category"), (1, 1, "👤 Gender", "gender"), 
+            (2, 0, "📅 Event Date", "date"), (2, 1, "📡 Scanner ID", "scanner")
         ]
         
         for r, c, label, key in row_col:
-            f = ttk.Frame(grid, padding=10)
-            f.grid(row=r, column=c, sticky=NSEW, padx=5, pady=5)
-            ttk.Label(f, text=f"{label.upper()}", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-            val = ttk.Label(f, text="---", font="-size 15 -weight bold", wraplength=260)
-            val.pack(anchor=W, pady=(4,0))
+            f = ttk.Frame(grid, padding=12)
+            f.grid(row=r, column=c, sticky=NSEW, padx=6, pady=6)
+            ttk.Label(f, text=f"{label.upper()}", font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
+            val = ttk.Label(f, text="---", font="-size 16 -weight bold", wraplength=280)
+            val.pack(anchor=W, pady=(6,0))
             self.fields[key] = val
 
-        self.bottom_banner = ttk.Label(left_panel, text="READY FOR OPERATIONS", font="-size 16 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
-        self.bottom_banner.pack(fill=X, side=BOTTOM, ipady=18)
+        self.bottom_banner = ttk.Label(left_panel, text="READY FOR OPERATIONS", font="-size 18 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
+        self.bottom_banner.pack(fill=X, side=BOTTOM, ipady=22)
 
-        right_panel = ttk.Frame(self.content, width=420)
+        right_panel = ttk.Frame(self.content, width=440)
         right_panel.pack(side=RIGHT, fill=Y)
         right_panel.pack_propagate(False)
 
-        lookup = ttk.Labelframe(right_panel, text=" 🔍 Manual Entry ", padding=20)
-        lookup.pack(fill=X, pady=(0, 20))
+        lookup = ttk.Labelframe(right_panel, text=" 🔍 Manual Entry ", padding=25)
+        lookup.pack(fill=X, pady=(0, 25))
         
         self.ent_phone = self.create_placeholder_entry(lookup, "Phone Number (e.g. 90000...)")
-        self.ent_phone.pack(fill=X, pady=(0, 12), ipady=6)
+        self.ent_phone.pack(fill=X, pady=(0, 15), ipady=8)
         self.ent_phone.bind("<Return>", lambda e: self.manual_scan('phone'))
         
         self.ent_id = self.create_placeholder_entry(lookup, "Attendee ID (e.g. TDE26...)")
-        self.ent_id.pack(fill=X, pady=(0, 15), ipady=6)
+        self.ent_id.pack(fill=X, pady=(0, 18), ipady=8)
         self.ent_id.bind("<Return>", lambda e: self.manual_scan('id'))
 
-        ttk.Button(lookup, text="PROCESS MANUAL SCAN", bootstyle=SUCCESS, command=self.handle_manual_submit).pack(fill=X, ipady=6)
+        # CORRECTED LINE: Removed font="-weight bold" which ttk.Button does not support
+        ttk.Button(lookup, text="PROCESS MANUAL SCAN", bootstyle=SUCCESS, command=self.handle_manual_submit).pack(fill=X, ipady=8)
 
         stats_frame = ttk.Frame(right_panel)
-        stats_frame.pack(fill=X, pady=(0, 25))
+        stats_frame.pack(fill=X, pady=(0, 30))
         
         self.stat_labels = {}
         for idx, (title, color) in enumerate([("Success", SUCCESS), ("Duplicate", WARNING), ("Wrong Day", SECONDARY), ("Errors", DANGER)]):
-            f = ttk.Frame(stats_frame, borderwidth=1, relief=SOLID, padding=12)
-            f.grid(row=idx//2, column=idx%2, sticky=NSEW, padx=4, pady=4)
+            f = ttk.Frame(stats_frame, borderwidth=1, relief=SOLID, padding=15)
+            f.grid(row=idx//2, column=idx%2, sticky=NSEW, padx=5, pady=5)
             stats_frame.columnconfigure(idx%2, weight=1)
             
-            val = ttk.Label(f, text="0", font="-size 24 -weight bold", bootstyle=color)
+            val = ttk.Label(f, text="0", font="-size 26 -weight bold", bootstyle=color)
             val.pack(anchor=CENTER)
-            ttk.Label(f, text=title.upper(), font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=CENTER)
+            ttk.Label(f, text=title.upper(), font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=CENTER)
             self.stat_labels[title] = val
 
-        ttk.Label(right_panel, text="🕒 RECENT ACTIVITY", font="-size 12 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 10))
+        ttk.Label(right_panel, text="🕒 RECENT ACTIVITY", font="-size 13 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 12))
         self.list_frame = ttk.Frame(right_panel)
         self.list_frame.pack(fill=BOTH, expand=True)
 
     def create_placeholder_entry(self, parent, placeholder_text):
-        entry = ttk.Entry(parent, font="-size 11")
+        entry = ttk.Entry(parent, font="-size 12")
         entry.insert(0, placeholder_text)
         entry.configure(foreground='gray')
 
@@ -389,7 +392,7 @@ class GateDisplay(ttk.Window):
             return
         
         def _play():
-            # 1. Play Tone Chimes
+            # 1. Play Tone Chimes (Kept for immediate feedback without overlapping speech delays)
             if HAS_WINSOUND:
                 try:
                     if status == "SUCCESS":
@@ -412,42 +415,38 @@ class GateDisplay(ttk.Window):
                     time.sleep(0.2)
                     self.bell()
 
-            # 2. Text-to-Speech Voice Engine
+            # 2. Text-to-Speech Voice Engine (Removed SUCCESS and DUPLICATE speech)
             speak_text = ""
-            if status == "SUCCESS":
-                speak_text = f"Access Granted. Welcome {attendee_name}." if attendee_name else "Access Granted."
-            elif status == "DUPLICATE":
-                speak_text = "Warning. Duplicate Scan."
-            else:
+            if status not in ["SUCCESS", "DUPLICATE"]:
                 speak_text = "Access Denied."
 
-            try:
-                if platform.system() == "Windows":
-                    # Thread-Safe Windows Native Call with Female Voice Selection
-                    safe_text = speak_text.replace("'", "")
-                    ps_script = (
-                        f"Add-Type -AssemblyName System.Speech; "
-                        f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                        f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
-                        f"$synth.Rate = 0; "
-                        f"$synth.Speak('{safe_text}');"
-                    )
-                    subprocess.run(
-                        ["powershell", "-Command", ps_script], 
-                        creationflags=subprocess.CREATE_NO_WINDOW
-                    )
-                elif HAS_TTS:
-                    # Fallback for Mac/Linux
-                    engine = pyttsx3.init()
-                    voices = engine.getProperty('voices')
-                    for voice in voices:
-                        if 'female' in voice.name.lower() or 'zira' in voice.name.lower() or 'samantha' in voice.name.lower():
-                            engine.setProperty('voice', voice.id)
-                            break
-                    engine.say(speak_text)
-                    engine.runAndWait()
-            except Exception as e:
-                logging.error(f"TTS Error: {e}")
+            # Only run the heavy TTS engine if there's actually a message to speak
+            if speak_text:
+                try:
+                    if platform.system() == "Windows":
+                        safe_text = speak_text.replace("'", "")
+                        ps_script = (
+                            f"Add-Type -AssemblyName System.Speech; "
+                            f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                            f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
+                            f"$synth.Rate = 0; "
+                            f"$synth.Speak('{safe_text}');"
+                        )
+                        subprocess.run(
+                            ["powershell", "-Command", ps_script], 
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                    elif HAS_TTS:
+                        engine = pyttsx3.init()
+                        voices = engine.getProperty('voices')
+                        for voice in voices:
+                            if 'female' in voice.name.lower() or 'zira' in voice.name.lower() or 'samantha' in voice.name.lower():
+                                engine.setProperty('voice', voice.id)
+                                break
+                        engine.say(speak_text)
+                        engine.runAndWait()
+                except Exception as e:
+                    logging.error(f"TTS Error: {e}")
 
         threading.Thread(target=_play, daemon=True).start()
 
@@ -455,7 +454,7 @@ class GateDisplay(ttk.Window):
         bg_color = '#e9ecef' if self.current_theme == "flatly" else '#222222'
         
         if bg_color not in self._placeholder_img_cache:
-            img = Image.new('RGB', (320, 320), color=bg_color)
+            img = Image.new('RGB', (340, 340), color=bg_color)
             self._placeholder_img_cache[bg_color] = ImageTk.PhotoImage(img)
             
         self.current_photo = self._placeholder_img_cache[bg_color]
@@ -472,7 +471,7 @@ class GateDisplay(ttk.Window):
                 if os.path.exists(path):
                     try:
                         img = Image.open(path)
-                        img = ImageOps.fit(img, (320, 320), Image.Resampling.LANCZOS)
+                        img = ImageOps.fit(img, (340, 340), Image.Resampling.LANCZOS)
                         photo_image = ImageTk.PhotoImage(img)
                         self.gui_queue.put(lambda p=photo_image: self.update_photo_ui(p))
                         photo_found = True
@@ -510,12 +509,12 @@ class GateDisplay(ttk.Window):
         
         raw_ts = event_data.get("timestamp", "")
         
-        # --- EVENT DEDUPLICATION (Fixes Ghost Thread 3x Bug) ---
+        # --- EVENT DEDUPLICATION ---
         aid = attendee.get("attendee_id", "unknown") if attendee else "none"
         event_sig = f"{raw_ts}_{aid}_{status_type}"
         
         if event_sig in self._processed_sigs:
-            return # Ignore duplicate broadcast from ghost threads!
+            return 
             
         self._processed_sigs.append(event_sig)
 
@@ -537,7 +536,7 @@ class GateDisplay(ttk.Window):
         self.status_banner.configure(text=cfg["banner"], bootstyle=f"inverse-{c_style}")
         self.bottom_banner.configure(text=cfg["bottom"], bootstyle=f"inverse-{c_style}")
         
-        # Trigger the Sound and Voice Alert
+        # Trigger the Sound Alert
         att_name = attendee.get("full_name", "") if attendee else ""
         self.play_sound(status_type, message, att_name)
 
@@ -582,18 +581,18 @@ class GateDisplay(ttk.Window):
 
     def add_recent_scan(self, name, att_id, style, time_str):
         card = ttk.Frame(self.list_frame, bootstyle=style, borderwidth=1, relief=SOLID)
-        card.pack(fill=X, pady=4, padx=2)
+        card.pack(fill=X, pady=5, padx=2)
         
         lbl_style = f"inverse-{style}"
         
         top = ttk.Frame(card, bootstyle=style)
-        top.pack(fill=X, padx=12, pady=(8, 0))
-        ttk.Label(top, text=f"👤 {name}", font="-size 11 -weight bold", bootstyle=lbl_style).pack(side=LEFT)
-        ttk.Label(top, text=time_str, font="-size 9", bootstyle=lbl_style).pack(side=RIGHT)
+        top.pack(fill=X, padx=14, pady=(10, 0))
+        ttk.Label(top, text=f"👤 {name}", font="-size 12 -weight bold", bootstyle=lbl_style).pack(side=LEFT)
+        ttk.Label(top, text=time_str, font="-size 10", bootstyle=lbl_style).pack(side=RIGHT)
         
         bot = ttk.Frame(card, bootstyle=style)
-        bot.pack(fill=X, padx=12, pady=(4, 8))
-        ttk.Label(bot, text=att_id, font="-size 9", bootstyle=lbl_style).pack(side=LEFT)
+        bot.pack(fill=X, padx=14, pady=(4, 10))
+        ttk.Label(bot, text=att_id, font="-size 10", bootstyle=lbl_style).pack(side=LEFT)
         ttk.Label(bot, text="✓ OK" if style=="success" else "⚠ WARN", font="-weight bold", bootstyle=lbl_style).pack(side=RIGHT)
         
         self.recent_scans.insert(0, card)
