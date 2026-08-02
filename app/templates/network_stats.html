@@ -6,26 +6,40 @@
   <title>Network & Device Stats - TDE UP 2026</title>
   <style>
     :root {
+      /* Base Colors */
       --bg-dark: #07080c;
-      --surface: #12141c;
-      --surface-hover: #1a1d29;
+      --bg-base: #0f111a;
+      
+      /* Neon Accents */
       --primary: #00d2ff;
       --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
+      --success-glow: rgba(0, 230, 118, 0.4);
       --warning: #ffbb33;
       --danger: #ff4444;
       --purple: #c792ea;
+      --purple-glow: rgba(199, 146, 234, 0.4);
+      
+      /* Typography */
       --text-main: #ffffff;
-      --text-muted: #8b93a5;
-      --radius-sm: 8px;
-      --radius-md: 12px;
-      --radius-lg: 20px;
-      --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+      --text-muted: rgba(255, 255, 255, 0.6);
+      
+      /* Layout & Physics */
+      --radius-sm: 12px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+      
+      /* Liquid Glass Variables */
+      --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+      --glass-border-light: rgba(255, 255, 255, 0.25);
+      --glass-border-dark: rgba(255, 255, 255, 0.05);
+      --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
     }
 
     body {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      background: radial-gradient(circle at top center, #161b26, var(--bg-dark));
+      background-color: var(--bg-base);
       color: var(--text-main);
       margin: 0;
       padding: 0;
@@ -36,38 +50,63 @@
       overflow-x: hidden;
     }
 
+    /* Ambient Background Orbs for Glass Refraction */
+    .bg-orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      z-index: -1;
+      opacity: 0.4;
+      animation: float 15s infinite alternate ease-in-out;
+    }
+    .orb-1 { width: 400px; height: 400px; background: var(--primary); top: -100px; left: -100px; }
+    .orb-2 { width: 500px; height: 500px; background: var(--purple); bottom: -150px; right: -100px; animation-delay: -5s; }
+    .orb-3 { width: 300px; height: 300px; background: var(--success); top: 40%; left: 30%; animation-duration: 20s; opacity: 0.2; }
+
+    @keyframes float {
+      0% { transform: translate(0, 0) scale(1); }
+      100% { transform: translate(40px, 60px) scale(1.1); }
+    }
+
     .app-container {
       width: 100%;
       max-width: 1200px;
       padding: 20px;
       display: flex;
       flex-direction: column;
-      animation: fadeIn 0.5s ease-out;
+      animation: fadeIn 0.6s ease-out;
       box-sizing: border-box;
+      z-index: 1;
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(15px); }
+      from { opacity: 0; transform: translateY(20px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
+    /* --- Liquid Glass Header --- */
     .header {
       width: 100%;
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 25px;
-      background: rgba(18, 20, 28, 0.75);
-      backdrop-filter: blur(15px);
-      -webkit-backdrop-filter: blur(15px);
       padding: 16px 20px;
-      border-radius: var(--radius-md);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      box-sizing: border-box;
       position: sticky;
       top: 15px;
       z-index: 100;
+      
+      /* Glassmorphism */
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px) saturate(150%);
+      -webkit-backdrop-filter: blur(20px) saturate(150%);
+      border-radius: var(--radius-lg);
+      border-top: 1px solid var(--glass-border-light);
+      border-left: 1px solid var(--glass-border-light);
+      border-right: 1px solid var(--glass-border-dark);
+      border-bottom: 1px solid var(--glass-border-dark);
+      box-shadow: var(--glass-shadow);
+      box-sizing: border-box;
     }
 
     .btn-back {
@@ -80,41 +119,49 @@
       gap: 6px;
       transition: var(--transition);
       background: rgba(255, 255, 255, 0.05);
-      padding: 8px 14px;
-      border-radius: 8px;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
-      border: none;
+      border: 1px solid rgba(255,255,255,0.1);
     }
-    .btn-back:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.1); }
+    .btn-back:hover { 
+      color: var(--text-main); 
+      background: rgba(255, 255, 255, 0.15); 
+      transform: translateY(-2px);
+      border-color: rgba(255,255,255,0.3);
+    }
     .btn-back:active { transform: scale(0.95); }
 
     .header-title {
       margin: 0;
-      font-size: 1.2rem;
+      font-size: 1.3rem;
       display: flex;
       align-items: center;
       gap: 10px;
       font-weight: 800;
       letter-spacing: 0.5px;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.5);
     }
 
     .version-tag {
       font-size: 0.7rem;
       background: rgba(0, 210, 255, 0.15);
       color: var(--primary);
-      padding: 4px 8px;
+      padding: 4px 10px;
       border-radius: 20px;
-      border: 1px solid rgba(0, 210, 255, 0.3);
+      border: 1px solid var(--primary-glow);
+      box-shadow: 0 0 10px var(--primary-glow);
     }
 
     .status-wrapper {
       display: flex;
       align-items: center;
-      gap: 10px;
-      background: rgba(0, 0, 0, 0.4);
-      padding: 8px 16px;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 8px 18px;
       border-radius: 30px;
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
     }
 
     .status-dot { width: 10px; height: 10px; border-radius: 50%; }
@@ -124,84 +171,124 @@
     .status-offline { background: #555; }
 
     @keyframes pulse {
-      0% { transform: scale(0.95); opacity: 0.8; }
-      50% { transform: scale(1.15); opacity: 1; }
-      100% { transform: scale(0.95); opacity: 0.8; }
+      0% { transform: scale(0.95); box-shadow: 0 0 5px var(--success); }
+      50% { transform: scale(1.15); box-shadow: 0 0 20px var(--success); }
+      100% { transform: scale(0.95); box-shadow: 0 0 5px var(--success); }
     }
 
+    /* Banners */
     .banner {
       width: 100%;
       text-align: center;
-      padding: 12px;
+      padding: 14px;
       font-size: 0.9rem;
       font-weight: 800;
       border-radius: var(--radius-md);
       margin-bottom: 25px;
       box-sizing: border-box;
       display: none;
-      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       letter-spacing: 0.5px;
+      backdrop-filter: blur(10px);
     }
-    @keyframes popIn { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    @keyframes popIn { 0% { transform: scale(0.95); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 
-    .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
+    .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); box-shadow: 0 4px 20px rgba(255,68,68,0.2); }
     .offline-banner { background-color: rgba(255, 187, 51, 0.15); color: var(--warning); border: 1px solid var(--warning); box-shadow: 0 4px 20px rgba(255, 187, 51, 0.2); }
 
+    /* --- Responsive Grid --- */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      grid-template-columns: repeat(4, 1fr);
       gap: 20px;
       margin-bottom: 40px;
       width: 100%;
     }
 
+    /* --- Liquid Glass Cards --- */
     .glass-card {
-      background: rgba(18, 20, 28, 0.65);
-      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
       border-radius: var(--radius-lg);
       padding: 25px 20px;
       text-align: center;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      box-shadow: inset 0 2px 10px rgba(0,0,0,0.2), 0 10px 30px rgba(0,0,0,0.4);
+      box-shadow: var(--glass-shadow);
+      border-top: 1px solid var(--glass-border-light);
+      border-left: 1px solid var(--glass-border-light);
+      border-right: 1px solid var(--glass-border-dark);
+      border-bottom: 1px solid var(--glass-border-dark);
       transition: var(--transition);
       display: flex;
       flex-direction: column;
       justify-content: center;
+      position: relative;
+      overflow: hidden;
     }
 
-    .glass-card:hover { transform: translateY(-5px); box-shadow: inset 0 2px 10px rgba(0,0,0,0.3), 0 15px 40px rgba(0,0,0,0.6); }
+    /* Inner Glass Reflection Highlight */
+    .glass-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%; width: 50%; height: 100%;
+      background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0) 100%);
+      transform: skewX(-25deg);
+      transition: var(--transition);
+      z-index: 0;
+    }
+
+    .glass-card:hover { 
+      transform: translateY(-8px) scale(1.02); 
+      box-shadow: 0 15px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.4); 
+      border-top: 1px solid rgba(255, 255, 255, 0.4);
+      border-left: 1px solid rgba(255, 255, 255, 0.4);
+    }
+    
+    .glass-card:hover::before {
+      animation: shine 0.8s forwards;
+    }
+
+    @keyframes shine {
+      100% { left: 200%; }
+    }
+
+    .glass-card h3, .glass-card p, .glass-card .speedometer-container {
+      position: relative;
+      z-index: 1;
+    }
 
     .glass-card h3 {
       margin: 0 0 15px 0;
       color: var(--text-muted);
       font-size: 0.85rem;
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 1.5px;
       font-weight: 800;
     }
 
     .glass-card p {
       margin: 0;
-      font-size: 2.8rem;
+      font-size: 3rem;
       font-weight: 900;
       font-family: monospace;
-      text-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+      text-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
     }
 
+    /* Colored Glow Typography */
     .card-primary h3 { color: var(--primary); }
-    .card-primary p { color: var(--primary); text-shadow: 0 0 20px rgba(0, 210, 255, 0.3); }
+    .card-primary p { color: var(--primary); text-shadow: 0 0 25px var(--primary-glow); }
     
     .card-success h3 { color: var(--success); }
-    .card-success p { color: var(--success); text-shadow: 0 0 20px rgba(0, 230, 118, 0.3); }
+    .card-success p { color: var(--success); text-shadow: 0 0 25px var(--success-glow); }
     
     .card-purple h3 { color: var(--purple); }
-    .card-purple p { color: var(--purple); text-shadow: 0 0 20px rgba(199, 146, 234, 0.3); }
+    .card-purple p { color: var(--purple); text-shadow: 0 0 25px var(--purple-glow); }
 
+    /* Speedometer */
     .speedometer-container {
       position: relative;
       width: 100%;
-      max-width: 180px;
+      max-width: 160px;
       margin: 0 auto;
       aspect-ratio: 2 / 1.15;
     }
@@ -210,19 +297,20 @@
       width: 100%;
       height: 100%;
       overflow: visible;
+      filter: drop-shadow(0 0 8px rgba(0,0,0,0.5));
     }
 
     .speedo-track {
       fill: none;
-      stroke: rgba(255, 255, 255, 0.08);
-      stroke-width: 12;
+      stroke: rgba(255, 255, 255, 0.05);
+      stroke-width: 14;
       stroke-linecap: round;
     }
 
     .speedo-fill {
       fill: none;
       stroke: var(--success);
-      stroke-width: 12;
+      stroke-width: 14;
       stroke-linecap: round;
       stroke-dasharray: 125.6; 
       stroke-dashoffset: 125.6; 
@@ -238,11 +326,11 @@
     }
 
     .speedo-text .val {
-      font-size: 1.8rem;
+      font-size: 2rem;
       font-weight: 900;
       font-family: monospace;
       color: #fff;
-      text-shadow: 0 0 10px rgba(255,255,255,0.2);
+      text-shadow: 0 0 15px rgba(255,255,255,0.4);
     }
 
     .speedo-text .lbl {
@@ -254,6 +342,7 @@
       margin-top: -2px;
     }
 
+    /* Section Title */
     .section-title {
       margin-bottom: 20px;
       font-size: 1.2rem;
@@ -263,64 +352,99 @@
       justify-content: space-between;
       align-items: center;
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 1.5px;
+      padding-bottom: 12px;
       border-bottom: 1px solid rgba(255,255,255,0.1);
-      padding-bottom: 10px;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.5);
     }
 
+    /* --- Liquid Glass Table --- */
     .table-container {
       width: 100%;
-      overflow-x: auto;
-      background: rgba(18, 20, 28, 0.65);
+      overflow-x: auto; /* Fixes Mobile Overflow */
+      background: var(--glass-bg);
+      backdrop-filter: blur(16px) saturate(150%);
+      -webkit-backdrop-filter: blur(16px) saturate(150%);
       border-radius: var(--radius-lg);
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--glass-border-light);
+      border-left: 1px solid var(--glass-border-light);
+      border-right: 1px solid var(--glass-border-dark);
+      border-bottom: 1px solid var(--glass-border-dark);
+      box-shadow: var(--glass-shadow);
+      padding-bottom: 5px; /* Prevent scrollbar clipping */
+    }
+
+    /* Custom Webkit Scrollbar for Table */
+    .table-container::-webkit-scrollbar {
+      height: 8px;
+    }
+    .table-container::-webkit-scrollbar-track {
+      background: rgba(0,0,0,0.2);
+      border-radius: 10px;
+      margin: 10px;
+    }
+    .table-container::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.2);
+      border-radius: 10px;
+    }
+    .table-container::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.4);
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 700px;
+      min-width: 750px; /* Forces scroll on small devices rather than squishing */
     }
 
     th, td {
       text-align: left;
-      padding: 20px 24px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      padding: 22px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
 
     th {
-      color: var(--text-muted);
-      font-size: 0.8rem;
+      color: rgba(255,255,255,0.8);
+      font-size: 0.85rem;
       text-transform: uppercase;
-      background: rgba(0, 0, 0, 0.4);
+      background: rgba(0, 0, 0, 0.2);
       letter-spacing: 1px;
       font-weight: 800;
     }
 
     tr:last-child td { border-bottom: none; }
-    tbody tr { transition: background 0.3s; }
-    tbody tr:hover { background: rgba(255, 255, 255, 0.04); }
+    
+    tbody tr { 
+      transition: background 0.3s; 
+    }
+    tbody tr:hover { 
+      background: rgba(255, 255, 255, 0.06); 
+    }
 
     .btn-edit {
       background: rgba(0, 210, 255, 0.1);
       color: var(--primary);
       border: 1px solid rgba(0, 210, 255, 0.3);
       padding: 8px 16px;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
       font-weight: 800;
       font-size: 0.85rem;
       transition: var(--transition);
+      backdrop-filter: blur(5px);
     }
-    .btn-edit:hover { background: var(--primary); color: #000; box-shadow: 0 0 15px var(--primary-glow); }
+    .btn-edit:hover { 
+      background: var(--primary); 
+      color: #000; 
+      box-shadow: 0 0 15px var(--primary-glow); 
+      transform: translateY(-2px);
+    }
     .btn-edit:active { transform: scale(0.95); }
 
     .latency-container {
-      width: 120px;
-      background: rgba(0,0,0,0.5);
+      width: 100%;
+      max-width: 130px;
+      background: rgba(0,0,0,0.6);
       border-radius: 10px;
       overflow: hidden;
       height: 8px;
@@ -337,15 +461,69 @@
 
     .latency-text { font-family: monospace; font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
 
-    @media (max-width: 600px) {
-      .header { flex-direction: column; gap: 15px; text-align: center; }
-      th, td { padding: 15px 12px; }
-      .speedometer-container { max-width: 150px; }
+    /* =========================================
+       📱 RESPONSIVE MEDIA QUERIES 
+       ========================================= */
+       
+    /* Tablets and Small Laptops (Max Width 1024px) */
+    @media (max-width: 1024px) {
+      .grid {
+        grid-template-columns: repeat(2, 1fr); /* 2x2 Grid */
+      }
     }
+
+    /* Mobile Devices (Max Width 768px) */
+    @media (max-width: 768px) {
+      .header {
+        flex-direction: column;
+        gap: 15px;
+        text-align: center;
+        padding: 20px 15px;
+      }
+      
+      .btn-back {
+        width: 100%;
+        justify-content: center;
+      }
+      
+      .status-wrapper {
+        width: 100%;
+        justify-content: center;
+        box-sizing: border-box;
+      }
+
+      .grid {
+        grid-template-columns: 1fr; /* 1 Column Stacked */
+        gap: 15px;
+      }
+
+      .glass-card p {
+        font-size: 2.5rem; /* Slightly smaller text for mobile */
+      }
+
+      .section-title {
+        flex-direction: column;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .section-title .btn-back {
+        width: 100%;
+      }
+
+      th, td {
+        padding: 16px 15px; /* Reduce table padding */
+      }
+    }
+
   </style>
 </head>
 
 <body>
+  <!-- Ambient Liquid Glass Orbs -->
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-orb orb-3"></div>
+
   <div class="app-container">
     
     <div class="header">
@@ -414,7 +592,7 @@
     <!-- DEVICE TABLE -->
     <div class="section-title">
       Active Devices on Network
-      <button class="btn-back" style="font-size: 0.8rem;" onclick="manualRefresh()">⟳ Refresh Nodes</button>
+      <button class="btn-back" style="font-size: 0.8rem; margin: 0; width: auto;" onclick="manualRefresh()">⟳ Refresh Nodes</button>
     </div>
 
     <div class="table-container">
@@ -459,7 +637,7 @@
       fetchStats();
     }
 
-    // 🔥 Anti-XSS Sanitizer added here
+    // Anti-XSS Sanitizer
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
       return String(str).replace(/[&<>'"]/g, tag => ({
@@ -553,11 +731,10 @@
         tbody.innerHTML = "";
 
         if (activeCount === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:40px; font-weight: 600;">No active devices detected on the network.<br>Ensure scanner screens are unlocked.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgba(255,255,255,0.6); padding:40px; font-weight: 600;">No active devices detected on the network.<br>Ensure scanner screens are unlocked.</td></tr>';
           return;
         }
 
-        // 🔥 Uses the new Compound ID to process multiple devices perfectly
         for (const [deviceId, info] of Object.entries(data.active_devices)) {
           const tr = document.createElement("tr");
 
@@ -590,13 +767,13 @@
 
           tr.innerHTML = `
             <td>
-              <div class="status-wrapper" style="background: transparent; padding: 0; border: none;">
+              <div class="status-wrapper" style="background: transparent; padding: 0; border: none; box-shadow: none;">
                 <span class="status-dot ${statusClass}"></span> 
                 <span style="font-size: 0.85rem; color:var(--text-muted);">${statusText}</span>
               </div>
             </td>
             <td><strong style="font-size: 1.1rem; color: #fff; letter-spacing: 0.5px;">${safeName}</strong></td>
-            <td style="font-family: monospace; color: #888;">${safeIp}</td>
+            <td style="font-family: monospace; color: rgba(255,255,255,0.7);">${safeIp}</td>
             <td>
               <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${barColor};"></div></div>
               <span class="latency-text">Pinged ${secondsAgo}s ago</span>
@@ -614,7 +791,6 @@
       }
     }
 
-    // Connects to the newly added /api/device/rename Python Endpoint
     async function renameDevice(deviceId, oldName) {
       playClick();
       const newName = prompt(`Enter a new custom name for this device:`, oldName);
