@@ -199,6 +199,8 @@ class LauncherApp(ttk.Window):
         # Staggered startup for smooth UI loading
         self.after(50, self._process_gui_queue)
         self.after(500, self.check_system_health)
+        self.after(800, self._run_schema_script_async) # Triggers app/schema.py setup
+        self.after(1000, self._setup_network_firewall_async) # Optimizes Network & Firewall
         self.after(2000, self._poll_processes)
 
         # 🔊 Welcome Announcement
@@ -541,6 +543,74 @@ class LauncherApp(ttk.Window):
         self.log_box.text.configure(state="normal")
         self.log_box.text.delete("1.0", END)
         self.log_box.text.configure(state="disabled")
+
+    # --------------------------------------------------------------------------
+    # ASYNC SYSTEM/NETWORK RULES & SCHEMA INIT
+    # --------------------------------------------------------------------------
+    def _run_schema_script_async(self):
+        """Spawns a background thread to execute app/schema.py."""
+        threading.Thread(target=self._schema_task, daemon=True).start()
+
+    def _schema_task(self):
+        schema_script = os.path.join(APP_DIR, "schema.py")
+        if os.path.exists(schema_script):
+            self.log("Initializing database schema (app/schema.py)...", "INFO")
+            try:
+                flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                res = subprocess.run(
+                    [sys.executable, schema_script], 
+                    capture_output=True, 
+                    text=True, 
+                    cwd=APP_DIR, 
+                    creationflags=flags
+                )
+                if res.returncode == 0:
+                    self.log("Schema initialization completed successfully.", "SUCCESS")
+                else:
+                    err_msg = res.stderr.strip() or res.stdout.strip()
+                    self.log(f"Schema initialization failed: {err_msg}", "ERROR")
+            except Exception as e:
+                self.log(f"Error running schema script: {e}", "ERROR")
+        else:
+            self.log("Schema script (app/schema.py) not found. Skipping auto-initialization.", "WARNING")
+
+    def _setup_network_firewall_async(self):
+        """Spawns a background thread to check firewall rules and reset network."""
+        threading.Thread(target=self._network_firewall_task, daemon=True).start()
+
+    def _network_firewall_task(self):
+        if os.name != "nt":
+            return
+            
+        flags = subprocess.CREATE_NO_WINDOW
+        
+        # 1. Safely Check and Add Firewall Rule
+        self.log("Verifying EventHub firewall configurations...", "INFO")
+        ps_fw_cmd = (
+            "$rule = Get-NetFirewallRule -DisplayName 'EventHub Ports' -ErrorAction SilentlyContinue; "
+            "if (-not $rule) { "
+            "   New-NetFirewallRule -DisplayName 'EventHub Ports' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001 | Out-Null; "
+            "   Write-Output 'CREATED' "
+            "} else { Write-Output 'EXISTS' }"
+        )
+        try:
+            res = subprocess.run(["powershell", "-Command", ps_fw_cmd], capture_output=True, text=True, creationflags=flags)
+            if "CREATED" in res.stdout:
+                self.log("Added new inbound firewall rule for ports 5000, 5001.", "SUCCESS")
+            else:
+                self.log("Firewall rules for ports 5000 and 5001 are already configured.", "INFO")
+        except Exception as e:
+            self.log(f"Failed to configure firewall: {e}", "ERROR")
+
+        # 2. Reset Network Configs
+        self.log("Flushing DNS and renewing IP configuration (this may take a moment)...", "WARNING")
+        try:
+            subprocess.run(["ipconfig", "/flushdns"], capture_output=True, creationflags=flags)
+            subprocess.run(["ipconfig", "/release"], capture_output=True, creationflags=flags)
+            subprocess.run(["ipconfig", "/renew"], capture_output=True, creationflags=flags)
+            self.log("Network configuration reset successfully.", "SUCCESS")
+        except Exception as e:
+            self.log(f"Failed to reset network: {e}", "ERROR")
 
     # --------------------------------------------------------------------------
     # SYSTEM HEALTH & VERSION CHECKS
