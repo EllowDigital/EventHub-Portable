@@ -334,7 +334,6 @@ class GateDisplay(ttk.Window):
         self.ent_id.pack(fill=X, pady=(0, 18), ipady=8)
         self.ent_id.bind("<Return>", lambda e: self.manual_scan('id'))
 
-        # CORRECTED LINE: Removed font="-weight bold" which ttk.Button does not support
         ttk.Button(lookup, text="PROCESS MANUAL SCAN", bootstyle=SUCCESS, command=self.handle_manual_submit).pack(fill=X, ipady=8)
 
         stats_frame = ttk.Frame(right_panel)
@@ -392,7 +391,7 @@ class GateDisplay(ttk.Window):
             return
         
         def _play():
-            # 1. Play Tone Chimes (Kept for immediate feedback without overlapping speech delays)
+            # 1. Play Tone Chimes
             if HAS_WINSOUND:
                 try:
                     if status == "SUCCESS":
@@ -499,7 +498,8 @@ class GateDisplay(ttk.Window):
                 self.update_ui_with_event(event_data)
             except queue.Empty: break
 
-        self.after(30, self.process_queues)
+        # OPTIMIZATION: Reduced polling frequency to save CPU cycles (50ms = 20 checks/sec)
+        self.after(50, self.process_queues)
 
     def update_ui_with_event(self, event_data):
         status_type = event_data.get("status", "ERROR")
@@ -580,8 +580,14 @@ class GateDisplay(ttk.Window):
             self.stat_labels[key].configure(text=str(self.stats[key]))
 
     def add_recent_scan(self, name, att_id, style, time_str):
+        # Create the new card frame
         card = ttk.Frame(self.list_frame, bootstyle=style, borderwidth=1, relief=SOLID)
-        card.pack(fill=X, pady=5, padx=2)
+        
+        # CORRECTED LOGIC: Force the new card to render *above* the existing cards in the UI
+        if self.recent_scans:
+            card.pack(fill=X, pady=5, padx=2, before=self.recent_scans[0])
+        else:
+            card.pack(fill=X, pady=5, padx=2)
         
         lbl_style = f"inverse-{style}"
         
@@ -595,7 +601,10 @@ class GateDisplay(ttk.Window):
         ttk.Label(bot, text=att_id, font="-size 10", bootstyle=lbl_style).pack(side=LEFT)
         ttk.Label(bot, text="✓ OK" if style=="success" else "⚠ WARN", font="-weight bold", bootstyle=lbl_style).pack(side=RIGHT)
         
+        # Keep track of the active widgets in the list
         self.recent_scans.insert(0, card)
+        
+        # Enforce max 5 limit and securely destroy old widgets from memory
         if len(self.recent_scans) > 5:
             old = self.recent_scans.pop()
             old.destroy()
