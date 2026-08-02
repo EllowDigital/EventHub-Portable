@@ -5,7 +5,7 @@ TENT DECOR EXPO UP 2026
 
 Single entry point for the whole offline kit. 
 Auto-installs dependencies, verifies system health, captures tool logs, 
-and manages tool processes in a robust environment (Zero CMD Shells).
+and manages tool processes with Voice & Audio feedback.
 """
 
 import os
@@ -21,8 +21,27 @@ import winreg
 import time
 import json
 import sqlite3
+import platform
 from datetime import datetime
 import tkinter as tk
+
+# ==============================================================================
+# AUDIO & TTS IMPORTS
+# ==============================================================================
+try:
+    if platform.system() == "Windows":
+        import winsound
+        HAS_WINSOUND = True
+    else:
+        HAS_WINSOUND = False
+except ImportError:
+    HAS_WINSOUND = False
+
+try:
+    import pyttsx3
+    HAS_TTS = True
+except ImportError:
+    HAS_TTS = False
 
 # ==============================================================================
 # AUTO-ADMINISTRATOR ELEVATION (WINDOWS) — STEALTH MODE
@@ -172,6 +191,7 @@ class LauncherApp(ttk.Window):
         self.health_widgets = {}
         self.cached_cf_path = None
         self.team_img_original = None
+        self.sound_enabled = True
 
         self._configure_custom_styles()
         self.build_ui()
@@ -180,6 +200,13 @@ class LauncherApp(ttk.Window):
         self.after(50, self._process_gui_queue)
         self.after(500, self.check_system_health)
         self.after(2000, self._poll_processes)
+
+        # 🔊 Welcome Announcement
+        self.log(
+            "System initialized with Administrator Privileges. Ready for operations.", 
+            "SUCCESS", 
+            speak_text="Central Launcher Initialized. System ready for operations."
+        )
 
     def _configure_custom_styles(self):
         colors = self.style.colors
@@ -196,6 +223,72 @@ class LauncherApp(ttk.Window):
 
     def _mix_hex(self, c_a, c_b, w):
         return self._rgb_to_hex(a + (b - a) * w for a, b in zip(self._hex_to_rgb(c_a), self._hex_to_rgb(c_b)))
+
+    # --------------------------------------------------------------------------
+    # TTS & AUDIO NOTIFICATION ENGINE
+    # --------------------------------------------------------------------------
+    def play_sound(self, status, speak_text=""):
+        if not self.sound_enabled:
+            return
+            
+        def _play():
+            # 1. Play Tone Chimes
+            if HAS_WINSOUND:
+                try:
+                    if status == "SUCCESS":
+                        winsound.Beep(2000, 100)  
+                    elif status == "WARNING":
+                        winsound.Beep(1000, 100) 
+                        time.sleep(0.05)
+                        winsound.Beep(1000, 100)
+                    else: # ERROR
+                        winsound.Beep(400, 150)
+                        winsound.Beep(300, 300)
+                except Exception:
+                    self.bell() 
+            else:
+                self.bell()
+                if status != "SUCCESS":
+                    time.sleep(0.2)
+                    self.bell()
+
+            # 2. Text-to-Speech Voice Engine (Female)
+            if speak_text:
+                try:
+                    if platform.system() == "Windows":
+                        safe_text = speak_text.replace("'", "")
+                        ps_script = (
+                            f"Add-Type -AssemblyName System.Speech; "
+                            f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                            f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
+                            f"$synth.Rate = 0; "
+                            f"$synth.Speak('{safe_text}');"
+                        )
+                        subprocess.run(
+                            ["powershell", "-Command", ps_script], 
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                    elif HAS_TTS:
+                        engine = pyttsx3.init()
+                        voices = engine.getProperty('voices')
+                        for voice in voices:
+                            if 'female' in voice.name.lower() or 'zira' in voice.name.lower() or 'samantha' in voice.name.lower():
+                                engine.setProperty('voice', voice.id)
+                                break
+                        engine.say(speak_text)
+                        engine.runAndWait()
+                except Exception as e:
+                    self.gui_queue.put(("log", {"msg": f"TTS Error: {e}", "level": "ERROR"}))
+
+        threading.Thread(target=_play, daemon=True).start()
+
+    def toggle_sound(self):
+        self.sound_enabled = not self.sound_enabled
+        if self.sound_enabled:
+            self.btn_sound.configure(text="🔊 Voice Enabled", bootstyle="outline-success")
+            self.play_sound("SUCCESS", "Audio alerts enabled.")
+        else:
+            self.btn_sound.configure(text="🔇 Muted", bootstyle="outline-secondary")
 
     # --------------------------------------------------------------------------
     # UI CONSTRUCTION
@@ -215,6 +308,10 @@ class LauncherApp(ttk.Window):
 
         action_box = ttk.Frame(header_frame)
         action_box.pack(side=RIGHT)
+        
+        self.btn_sound = ttk.Button(action_box, text="🔊 Voice Enabled", bootstyle="outline-success", command=self.toggle_sound)
+        self.btn_sound.pack(side=LEFT, padx=10)
+        
         ttk.Button(action_box, text="⟳ Refresh Health Check", bootstyle="outline-info", command=self.check_system_health).pack(side=LEFT, padx=5)
         ttk.Button(action_box, text="🛑 Stop All Active Tools", bootstyle=DANGER, command=self.stop_all_tools).pack(side=LEFT, padx=5)
 
@@ -302,8 +399,6 @@ class LauncherApp(ttk.Window):
         self.log_box.text.tag_config("WARNING", foreground="#FFB454", font=("Consolas", 10, "bold"))
         self.log_box.text.tag_config("ERROR", foreground="#FF6B6B", font=("Consolas", 10, "bold"))
         self.log_box.text.tag_config("TOOL", foreground="#5DADE2") 
-
-        self.log("System initialized with Administrator Privileges. Ready for operations.", "SUCCESS")
 
     def _resize_team_banner(self, event):
         """Dynamically scales and crops the team banner based on real image aspect ratio."""
@@ -393,8 +488,10 @@ class LauncherApp(ttk.Window):
     # --------------------------------------------------------------------------
     # QUEUE & LOGGING (Thread-Safe UI Updates)
     # --------------------------------------------------------------------------
-    def log(self, message, level="INFO"):
+    def log(self, message, level="INFO", speak_text=None):
         self.gui_queue.put(("log", {"msg": message, "level": level}))
+        if speak_text:
+            self.play_sound(level, speak_text)
 
     def _process_gui_queue(self):
         """Immortal Queue Processing — wrapped in a try/except to survive bad data"""
@@ -605,7 +702,7 @@ class LauncherApp(ttk.Window):
 
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             subprocess.run(["msiexec.exe", "/i", msi_path, "/quiet", "/norestart"], check=True, creationflags=flags)
-            self.log("Cloudflared installation successful.", "SUCCESS")
+            self.log("Cloudflared installation successful.", "SUCCESS", speak_text="Cloudflared installed successfully.")
             
             inject_cloudflared_path()
             try: os.remove(msi_path)
@@ -614,7 +711,7 @@ class LauncherApp(ttk.Window):
             self.cached_cf_path = None 
             self.gui_queue.put(("prompt_cf_token", None))
         except Exception as e:
-            self.log(f"Cloudflared installation failed: {e}", "ERROR")
+            self.log(f"Cloudflared installation failed: {e}", "ERROR", speak_text="Warning. Cloudflared installation failed.")
 
     def _prompt_and_install_cf_service(self):
         token = simpledialog.askstring("Cloudflare Tunnel", "Enter your Cloudflare tunnel secret key to bind the service:", parent=self)
@@ -636,7 +733,7 @@ class LauncherApp(ttk.Window):
             proc = subprocess.run([cf_exe, "service", "install", token], capture_output=True, text=True, creationflags=flags)
             
             if proc.returncode == 0:
-                self.log("Tunnel service bound successfully. It will now run in the background.", "SUCCESS")
+                self.log("Tunnel service bound successfully. It will now run in the background.", "SUCCESS", speak_text="Tunnel service successfully bound.")
                 self.log("Note: You do NOT need to click 'Start Tunnel' in the Command Center anymore. It is running automatically.", "WARNING")
             else:
                 error_output = proc.stderr.strip() or proc.stdout.strip()
@@ -665,7 +762,7 @@ class LauncherApp(ttk.Window):
 
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             subprocess.run([py_path, "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_test=0"], check=True, creationflags=flags)
-            self.log("Python installation successful.", "SUCCESS")
+            self.log("Python installation successful.", "SUCCESS", speak_text="Python successfully updated.")
 
             try: os.remove(py_path) 
             except Exception: pass
@@ -704,7 +801,10 @@ class LauncherApp(ttk.Window):
                 env=env
             )
             self.processes[key] = proc
-            self.log(f"Tool started: {tool['label']}", "SUCCESS")
+            
+            # Announce Tool Start
+            safe_name = tool['label'].replace('Terminal', '').replace('Manager', '')
+            self.log(f"Tool started: {tool['label']}", "SUCCESS", speak_text=f"{safe_name} started.")
             self._set_tool_status(key, running=True)
             
             threading.Thread(target=self._stream_tool_logs, args=(proc, tool["label"]), daemon=True).start()
@@ -738,13 +838,14 @@ class LauncherApp(ttk.Window):
                     proc.terminate()
             except Exception: pass
             
-            self.log(f"Tool stopped: {tool['label']}", "WARNING")
+            safe_name = tool['label'].replace('Terminal', '').replace('Manager', '')
+            self.log(f"Tool stopped: {tool['label']}", "WARNING", speak_text=f"{safe_name} terminated.")
             self._set_tool_status(key, running=False)
 
     def stop_all_tools(self):
         count = sum(1 for key in list(self.processes.keys()) if self.processes[key].poll() is None and not self.stop_tool(next(t for t in TOOLS if t["key"] == key)))
         if count:
-            self.log(f"Terminated {count} active tools.", "INFO")
+            self.log(f"Terminated {count} active tools.", "INFO", speak_text="All active tools terminated.")
 
     def _set_tool_status(self, key, running):
         widgets = self.tool_widgets.get(key)
@@ -764,7 +865,8 @@ class LauncherApp(ttk.Window):
             proc = self.processes[key]
             if proc.poll() is not None:
                 tool = next((t for t in TOOLS if t["key"] == key), None)
-                self.log(f"Tool exited unexpectedly: {tool['label']} (Code {proc.returncode})", "ERROR")
+                safe_name = tool['label'].replace('Terminal', '').replace('Manager', '')
+                self.log(f"Tool exited unexpectedly: {tool['label']} (Code {proc.returncode})", "ERROR", speak_text=f"Warning. {safe_name} crashed.")
                 del self.processes[key]
                 self._set_tool_status(key, running=False)
         self.after(2000, self._poll_processes)
