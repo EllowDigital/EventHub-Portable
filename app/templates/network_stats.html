@@ -3,43 +3,43 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Network & Device Stats - TDE UP 2026</title>
+  <title>Developer Telemetry - EventHub TDE UP</title>
   <style>
     :root {
       /* Base Colors */
-      --bg-dark: #07080c;
-      --bg-base: #0f111a;
+      --bg-pure-black: #000000;
       
-      /* Neon Accents */
+      /* Neon Accents for Dark Mode */
       --primary: #00d2ff;
-      --primary-glow: rgba(0, 210, 255, 0.4);
+      --primary-glow: rgba(0, 210, 255, 0.5);
       --success: #00e676;
-      --success-glow: rgba(0, 230, 118, 0.4);
+      --success-glow: rgba(0, 230, 118, 0.5);
       --warning: #ffbb33;
       --danger: #ff4444;
       --purple: #c792ea;
-      --purple-glow: rgba(199, 146, 234, 0.4);
+      --purple-glow: rgba(199, 146, 234, 0.5);
       
       /* Typography */
       --text-main: #ffffff;
-      --text-muted: rgba(255, 255, 255, 0.6);
+      --text-muted: rgba(255, 255, 255, 0.5);
+      --font-dev: 'Consolas', 'Courier New', monospace;
       
       /* Layout & Physics */
-      --radius-sm: 12px;
-      --radius-md: 16px;
-      --radius-lg: 24px;
-      --transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
       
-      /* Liquid Glass Variables */
-      --glass-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
-      --glass-border-light: rgba(255, 255, 255, 0.25);
-      --glass-border-dark: rgba(255, 255, 255, 0.05);
-      --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      /* Dark Glassmorphism Variables */
+      --glass-bg: rgba(15, 15, 18, 0.55);
+      --glass-border-light: rgba(255, 255, 255, 0.15);
+      --glass-border-dark: rgba(255, 255, 255, 0.02);
+      --glass-shadow: 0 15px 35px rgba(0, 0, 0, 0.8);
     }
 
     body {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      background-color: var(--bg-base);
+      background-color: var(--bg-pure-black); /* Solid Dark Black Base */
       color: var(--text-main);
       margin: 0;
       padding: 0;
@@ -50,22 +50,22 @@
       overflow-x: hidden;
     }
 
-    /* Ambient Background Orbs for Glass Refraction */
+    /* Ambient Background Orbs for Glass Refraction (Deeper colors for black bg) */
     .bg-orb {
       position: fixed;
       border-radius: 50%;
-      filter: blur(80px);
+      filter: blur(90px);
       z-index: -1;
-      opacity: 0.4;
-      animation: float 15s infinite alternate ease-in-out;
+      opacity: 0.35;
+      animation: float 20s infinite alternate ease-in-out;
     }
-    .orb-1 { width: 400px; height: 400px; background: var(--primary); top: -100px; left: -100px; }
-    .orb-2 { width: 500px; height: 500px; background: var(--purple); bottom: -150px; right: -100px; animation-delay: -5s; }
-    .orb-3 { width: 300px; height: 300px; background: var(--success); top: 40%; left: 30%; animation-duration: 20s; opacity: 0.2; }
+    .orb-1 { width: 400px; height: 400px; background: #003366; top: -100px; left: -100px; }
+    .orb-2 { width: 500px; height: 500px; background: #330066; bottom: -150px; right: -100px; animation-delay: -5s; }
+    .orb-3 { width: 300px; height: 300px; background: #004d26; top: 40%; left: 30%; animation-duration: 25s; opacity: 0.2; }
 
     @keyframes float {
       0% { transform: translate(0, 0) scale(1); }
-      100% { transform: translate(40px, 60px) scale(1.1); }
+      100% { transform: translate(30px, 50px) scale(1.1); }
     }
 
     .app-container {
@@ -80,11 +80,11 @@
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(20px); }
+      from { opacity: 0; transform: translateY(15px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
-    /* --- Liquid Glass Header --- */
+    /* --- Dark Glass Header --- */
     .header {
       width: 100%;
       display: flex;
@@ -98,8 +98,8 @@
       
       /* Glassmorphism */
       background: var(--glass-bg);
-      backdrop-filter: blur(20px) saturate(150%);
-      -webkit-backdrop-filter: blur(20px) saturate(150%);
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
       border-radius: var(--radius-lg);
       border-top: 1px solid var(--glass-border-light);
       border-left: 1px solid var(--glass-border-light);
@@ -118,50 +118,50 @@
       align-items: center;
       gap: 6px;
       transition: var(--transition);
-      background: rgba(255, 255, 255, 0.05);
+      background: rgba(255, 255, 255, 0.03);
       padding: 8px 16px;
       border-radius: var(--radius-sm);
       cursor: pointer;
-      border: 1px solid rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.08);
     }
     .btn-back:hover { 
       color: var(--text-main); 
-      background: rgba(255, 255, 255, 0.15); 
-      transform: translateY(-2px);
-      border-color: rgba(255,255,255,0.3);
+      background: rgba(255, 255, 255, 0.1); 
+      border-color: rgba(255,255,255,0.25);
     }
     .btn-back:active { transform: scale(0.95); }
 
     .header-title {
       margin: 0;
-      font-size: 1.3rem;
+      font-size: 1.2rem;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       font-weight: 800;
-      letter-spacing: 0.5px;
-      text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+      letter-spacing: 1px;
     }
 
-    .version-tag {
+    /* Developer / Internal Badge */
+    .dev-badge {
+      font-family: var(--font-dev);
       font-size: 0.7rem;
-      background: rgba(0, 210, 255, 0.15);
-      color: var(--primary);
-      padding: 4px 10px;
-      border-radius: 20px;
-      border: 1px solid var(--primary-glow);
-      box-shadow: 0 0 10px var(--primary-glow);
+      background: rgba(255, 68, 68, 0.1);
+      color: var(--danger);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 68, 68, 0.4);
+      letter-spacing: 0.5px;
     }
 
     .status-wrapper {
       display: flex;
       align-items: center;
       gap: 12px;
-      background: rgba(0, 0, 0, 0.3);
+      background: rgba(0, 0, 0, 0.5);
       padding: 8px 18px;
       border-radius: 30px;
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      box-shadow: inset 0 2px 5px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.8);
     }
 
     .status-dot { width: 10px; height: 10px; border-radius: 50%; }
@@ -172,7 +172,7 @@
 
     @keyframes pulse {
       0% { transform: scale(0.95); box-shadow: 0 0 5px var(--success); }
-      50% { transform: scale(1.15); box-shadow: 0 0 20px var(--success); }
+      50% { transform: scale(1.15); box-shadow: 0 0 15px var(--success); }
       100% { transform: scale(0.95); box-shadow: 0 0 5px var(--success); }
     }
 
@@ -181,20 +181,32 @@
       width: 100%;
       text-align: center;
       padding: 14px;
-      font-size: 0.9rem;
+      font-size: 0.85rem;
       font-weight: 800;
+      font-family: var(--font-dev);
       border-radius: var(--radius-md);
       margin-bottom: 25px;
       box-sizing: border-box;
       display: none;
-      animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-      letter-spacing: 0.5px;
-      backdrop-filter: blur(10px);
+      animation: popIn 0.3s ease;
+      letter-spacing: 1px;
+      text-transform: uppercase;
     }
     @keyframes popIn { 0% { transform: scale(0.95); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
 
-    .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); box-shadow: 0 4px 20px rgba(255,68,68,0.2); }
-    .offline-banner { background-color: rgba(255, 187, 51, 0.15); color: var(--warning); border: 1px solid var(--warning); box-shadow: 0 4px 20px rgba(255, 187, 51, 0.2); }
+    .test-mode-banner { background-color: rgba(255, 187, 51, 0.1); color: var(--warning); border: 1px dashed var(--warning); }
+    .offline-banner { background-color: rgba(255, 68, 68, 0.1); color: var(--danger); border: 1px solid var(--danger); }
+
+    /* Admin Disclaimer */
+    .admin-disclaimer {
+      width: 100%;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-bottom: 20px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
 
     /* --- Responsive Grid --- */
     .grid {
@@ -205,19 +217,22 @@
       width: 100%;
     }
 
-    /* --- Liquid Glass Cards --- */
+    /* --- Dark Liquid Glass Cards --- */
     .glass-card {
       background: var(--glass-bg);
-      backdrop-filter: blur(16px) saturate(180%);
-      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
       border-radius: var(--radius-lg);
       padding: 25px 20px;
       text-align: center;
       box-shadow: var(--glass-shadow);
+      
+      /* Glass Edge Lighting */
       border-top: 1px solid var(--glass-border-light);
       border-left: 1px solid var(--glass-border-light);
       border-right: 1px solid var(--glass-border-dark);
       border-bottom: 1px solid var(--glass-border-dark);
+      
       transition: var(--transition);
       display: flex;
       flex-direction: column;
@@ -231,26 +246,22 @@
       content: '';
       position: absolute;
       top: 0; left: -100%; width: 50%; height: 100%;
-      background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0) 100%);
+      background: linear-gradient(to right, rgba(255,255,255,0) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0) 100%);
       transform: skewX(-25deg);
       transition: var(--transition);
       z-index: 0;
     }
 
     .glass-card:hover { 
-      transform: translateY(-8px) scale(1.02); 
-      box-shadow: 0 15px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.4); 
-      border-top: 1px solid rgba(255, 255, 255, 0.4);
-      border-left: 1px solid rgba(255, 255, 255, 0.4);
+      transform: translateY(-6px); 
+      box-shadow: 0 20px 45px rgba(0,0,0,1), inset 0 1px 0 rgba(255,255,255,0.2); 
+      border-top: 1px solid rgba(255, 255, 255, 0.3);
+      border-left: 1px solid rgba(255, 255, 255, 0.3);
+      background: rgba(25, 25, 28, 0.65);
     }
     
-    .glass-card:hover::before {
-      animation: shine 0.8s forwards;
-    }
-
-    @keyframes shine {
-      100% { left: 200%; }
-    }
+    .glass-card:hover::before { animation: shine 0.7s forwards; }
+    @keyframes shine { 100% { left: 200%; } }
 
     .glass-card h3, .glass-card p, .glass-card .speedometer-container {
       position: relative;
@@ -260,29 +271,29 @@
     .glass-card h3 {
       margin: 0 0 15px 0;
       color: var(--text-muted);
-      font-size: 0.85rem;
+      font-size: 0.8rem;
       text-transform: uppercase;
       letter-spacing: 1.5px;
-      font-weight: 800;
+      font-weight: 700;
+      font-family: var(--font-dev);
     }
 
     .glass-card p {
       margin: 0;
       font-size: 3rem;
       font-weight: 900;
-      font-family: monospace;
-      text-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+      font-family: var(--font-dev);
     }
 
-    /* Colored Glow Typography */
+    /* Colored Glow Typography for pure black contrast */
     .card-primary h3 { color: var(--primary); }
-    .card-primary p { color: var(--primary); text-shadow: 0 0 25px var(--primary-glow); }
+    .card-primary p { color: var(--primary); text-shadow: 0 0 30px var(--primary-glow); }
     
     .card-success h3 { color: var(--success); }
-    .card-success p { color: var(--success); text-shadow: 0 0 25px var(--success-glow); }
+    .card-success p { color: var(--success); text-shadow: 0 0 30px var(--success-glow); }
     
     .card-purple h3 { color: var(--purple); }
-    .card-purple p { color: var(--purple); text-shadow: 0 0 25px var(--purple-glow); }
+    .card-purple p { color: var(--purple); text-shadow: 0 0 30px var(--purple-glow); }
 
     /* Speedometer */
     .speedometer-container {
@@ -297,7 +308,7 @@
       width: 100%;
       height: 100%;
       overflow: visible;
-      filter: drop-shadow(0 0 8px rgba(0,0,0,0.5));
+      filter: drop-shadow(0 0 10px rgba(0,0,0,0.8));
     }
 
     .speedo-track {
@@ -328,24 +339,25 @@
     .speedo-text .val {
       font-size: 2rem;
       font-weight: 900;
-      font-family: monospace;
+      font-family: var(--font-dev);
       color: #fff;
-      text-shadow: 0 0 15px rgba(255,255,255,0.4);
+      text-shadow: 0 0 15px rgba(255,255,255,0.3);
     }
 
     .speedo-text .lbl {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: 1px;
       font-weight: 800;
       margin-top: -2px;
+      font-family: var(--font-dev);
     }
 
     /* Section Title */
     .section-title {
       margin-bottom: 20px;
-      font-size: 1.2rem;
+      font-size: 1.1rem;
       font-weight: 800;
       color: #fff;
       display: flex;
@@ -355,46 +367,34 @@
       letter-spacing: 1.5px;
       padding-bottom: 12px;
       border-bottom: 1px solid rgba(255,255,255,0.1);
-      text-shadow: 0 2px 10px rgba(0,0,0,0.5);
     }
 
-    /* --- Liquid Glass Table --- */
+    /* --- Dark Liquid Glass Table --- */
     .table-container {
       width: 100%;
-      overflow-x: auto; /* Fixes Mobile Overflow */
+      overflow-x: auto; 
       background: var(--glass-bg);
-      backdrop-filter: blur(16px) saturate(150%);
-      -webkit-backdrop-filter: blur(16px) saturate(150%);
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
       border-radius: var(--radius-lg);
       border-top: 1px solid var(--glass-border-light);
       border-left: 1px solid var(--glass-border-light);
       border-right: 1px solid var(--glass-border-dark);
       border-bottom: 1px solid var(--glass-border-dark);
       box-shadow: var(--glass-shadow);
-      padding-bottom: 5px; /* Prevent scrollbar clipping */
+      padding-bottom: 5px; 
     }
 
     /* Custom Webkit Scrollbar for Table */
-    .table-container::-webkit-scrollbar {
-      height: 8px;
-    }
-    .table-container::-webkit-scrollbar-track {
-      background: rgba(0,0,0,0.2);
-      border-radius: 10px;
-      margin: 10px;
-    }
-    .table-container::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.2);
-      border-radius: 10px;
-    }
-    .table-container::-webkit-scrollbar-thumb:hover {
-      background: rgba(255,255,255,0.4);
-    }
+    .table-container::-webkit-scrollbar { height: 8px; }
+    .table-container::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 10px; margin: 10px; }
+    .table-container::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 10px; }
+    .table-container::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 750px; /* Forces scroll on small devices rather than squishing */
+      min-width: 750px; 
     }
 
     th, td {
@@ -404,32 +404,30 @@
     }
 
     th {
-      color: rgba(255,255,255,0.8);
-      font-size: 0.85rem;
+      color: rgba(255,255,255,0.6);
+      font-size: 0.75rem;
       text-transform: uppercase;
-      background: rgba(0, 0, 0, 0.2);
-      letter-spacing: 1px;
+      background: rgba(0, 0, 0, 0.4);
+      letter-spacing: 2px;
       font-weight: 800;
+      font-family: var(--font-dev);
     }
 
     tr:last-child td { border-bottom: none; }
     
-    tbody tr { 
-      transition: background 0.3s; 
-    }
-    tbody tr:hover { 
-      background: rgba(255, 255, 255, 0.06); 
-    }
+    tbody tr { transition: background 0.3s; }
+    tbody tr:hover { background: rgba(255, 255, 255, 0.05); }
 
     .btn-edit {
-      background: rgba(0, 210, 255, 0.1);
+      background: rgba(0, 210, 255, 0.05);
       color: var(--primary);
-      border: 1px solid rgba(0, 210, 255, 0.3);
+      border: 1px solid rgba(0, 210, 255, 0.2);
       padding: 8px 16px;
       border-radius: var(--radius-sm);
       cursor: pointer;
       font-weight: 800;
-      font-size: 0.85rem;
+      font-size: 0.8rem;
+      font-family: var(--font-dev);
       transition: var(--transition);
       backdrop-filter: blur(5px);
     }
@@ -437,19 +435,18 @@
       background: var(--primary); 
       color: #000; 
       box-shadow: 0 0 15px var(--primary-glow); 
-      transform: translateY(-2px);
     }
     .btn-edit:active { transform: scale(0.95); }
 
     .latency-container {
       width: 100%;
       max-width: 130px;
-      background: rgba(0,0,0,0.6);
+      background: rgba(0,0,0,0.8);
       border-radius: 10px;
       overflow: hidden;
-      height: 8px;
+      height: 6px;
       margin-bottom: 6px;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.8);
+      box-shadow: inset 0 1px 4px rgba(0,0,0,1);
       border: 1px solid rgba(255,255,255,0.05);
     }
 
@@ -459,20 +456,16 @@
       border-radius: 10px;
     }
 
-    .latency-text { font-family: monospace; font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
+    .latency-text { font-family: var(--font-dev); font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
 
     /* =========================================
        📱 RESPONSIVE MEDIA QUERIES 
        ========================================= */
        
-    /* Tablets and Small Laptops (Max Width 1024px) */
     @media (max-width: 1024px) {
-      .grid {
-        grid-template-columns: repeat(2, 1fr); /* 2x2 Grid */
-      }
+      .grid { grid-template-columns: repeat(2, 1fr); }
     }
 
-    /* Mobile Devices (Max Width 768px) */
     @media (max-width: 768px) {
       .header {
         flex-direction: column;
@@ -480,73 +473,51 @@
         text-align: center;
         padding: 20px 15px;
       }
-      
-      .btn-back {
-        width: 100%;
-        justify-content: center;
-      }
-      
-      .status-wrapper {
-        width: 100%;
-        justify-content: center;
-        box-sizing: border-box;
-      }
-
-      .grid {
-        grid-template-columns: 1fr; /* 1 Column Stacked */
-        gap: 15px;
-      }
-
-      .glass-card p {
-        font-size: 2.5rem; /* Slightly smaller text for mobile */
-      }
-
-      .section-title {
-        flex-direction: column;
-        gap: 12px;
-        align-items: flex-start;
-      }
-      .section-title .btn-back {
-        width: 100%;
-      }
-
-      th, td {
-        padding: 16px 15px; /* Reduce table padding */
-      }
+      .btn-back { width: 100%; justify-content: center; }
+      .status-wrapper { width: 100%; justify-content: center; box-sizing: border-box; }
+      .grid { grid-template-columns: 1fr; gap: 15px; }
+      .glass-card p { font-size: 2.5rem; }
+      .section-title { flex-direction: column; gap: 12px; align-items: flex-start; }
+      .section-title .btn-back { width: 100%; }
+      th, td { padding: 16px 15px; }
     }
-
   </style>
 </head>
 
 <body>
-  <!-- Ambient Liquid Glass Orbs -->
+  <!-- Ambient Liquid Glass Orbs (Subtle on Black) -->
   <div class="bg-orb orb-1"></div>
   <div class="bg-orb orb-2"></div>
   <div class="bg-orb orb-3"></div>
 
   <div class="app-container">
     
+    <div class="admin-disclaimer">
+      // AUTHORIZED PERSONNEL ONLY — SYSTEM DIAGNOSTICS & TELEMETRY //
+    </div>
+
     <div class="header">
       <button class="btn-back" onclick="window.location.href='/'; playClick();">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
-        Hub
+        Return to Hub
       </button>
       <h2 class="header-title">
-        Live Telemetry <span class="version-tag">v2.4</span>
+        Admin Console 
+        <span class="dev-badge">INTERNAL v2.4</span>
       </h2>
       <div class="status-wrapper">
-        <span id="hub-status-text" style="font-size: 0.9rem; font-weight: 800; color: #ccc;">Syncing...</span>
+        <span id="hub-status-text" style="font-family: monospace; font-size: 0.85rem; font-weight: 800; color: #ccc;">AWAITING SIGNAL...</span>
         <span id="hub-status-dot" class="status-dot status-offline"></span>
       </div>
     </div>
 
     <!-- BANNERS -->
     <div id="test-mode-banner" class="banner test-mode-banner">
-      ⚠️ TEST MODE METRICS ACTIVE (DATE: <span id="test-mode-date">...</span>)
+      [WARNING] SIMULATION MODE ACTIVE — DATE OVERRIDE: <span id="test-mode-date">...</span>
     </div>
 
     <div id="offline-banner" class="banner offline-banner">
-      📡 CONNECTION LOST — Dashboard metrics are currently frozen.
+      [FATAL] CONNECTION REFUSED — TELEMETRY FEED OFFLINE.
     </div>
 
     <!-- TELEMETRY GRID -->
@@ -554,7 +525,7 @@
       
       <!-- High-Tech Speedometer Card -->
       <div class="glass-card">
-        <h3>Network Quality</h3>
+        <h3>Server Latency</h3>
         <div class="speedometer-container">
           <svg viewBox="0 0 100 55" class="speedo-svg">
             <path class="speedo-track" d="M 10 50 A 40 40 0 0 1 90 50" />
@@ -568,22 +539,22 @@
       </div>
 
       <div class="glass-card card-primary">
-        <h3>Active Scanners</h3>
+        <h3>Network Nodes</h3>
         <p id="active-scanners">0</p>
       </div>
 
       <div class="glass-card card-purple">
-        <h3>Total Scans (All Time)</h3>
+        <h3>Total DB Scans</h3>
         <p id="tot-scans">0</p>
       </div>
 
       <div class="glass-card card-success">
-        <h3>Today's Check-ins</h3>
+        <h3>Today's Delta</h3>
         <p id="today-scans">0</p>
       </div>
 
       <div class="glass-card">
-        <h3>Kiosk Registrations</h3>
+        <h3>Kiosk Submissions</h3>
         <p id="tot-reg">0</p>
       </div>
 
@@ -591,25 +562,25 @@
 
     <!-- DEVICE TABLE -->
     <div class="section-title">
-      Active Devices on Network
-      <button class="btn-back" style="font-size: 0.8rem; margin: 0; width: auto;" onclick="manualRefresh()">⟳ Refresh Nodes</button>
+      Active Socket Connections
+      <button class="btn-back" style="font-size: 0.75rem; margin: 0; width: auto; font-family: monospace;" onclick="manualRefresh()">> force_refresh()</button>
     </div>
 
     <div class="table-container">
       <table id="device-table">
         <thead>
           <tr>
-            <th>Connection</th>
-            <th>Device Name</th>
-            <th>IP Address</th>
-            <th>Health (Heartbeat)</th>
-            <th>Action</th>
+            <th>Status</th>
+            <th>Node Identifier</th>
+            <th>IP Address (IPv4)</th>
+            <th>Ping / Heartbeat</th>
+            <th>Admin Action</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 40px; font-weight: 600;">
-              Scanning network for active nodes...
+            <td colspan="5" style="text-align: center; color: rgba(255,255,255,0.4); padding: 50px; font-weight: 600; font-family: monospace;">
+              > Scanning subnet for active endpoints...
             </td>
           </tr>
         </tbody>
@@ -626,8 +597,8 @@
         if (audioCtx.state === "suspended") audioCtx.resume();
         const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
         osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.type = "sine"; osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.3, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.type = "sine"; osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
         osc.start(); osc.stop(audioCtx.currentTime + 0.1);
       } catch (e) { }
     }
@@ -639,7 +610,7 @@
 
     // Anti-XSS Sanitizer
     function escapeHTML(str) {
-      if (!str) return "Unknown Device";
+      if (!str) return "Unknown_Device";
       return String(str).replace(/[&<>'"]/g, tag => ({
         '&': '&amp;',
         '<': '&lt;',
@@ -654,7 +625,7 @@
       const valText = document.getElementById('hub-latency');
       
       if (ping < 0) {
-        valText.innerText = "FAIL";
+        valText.innerText = "ERR";
         gauge.style.strokeDashoffset = 125.6; 
         gauge.style.stroke = "var(--danger)";
         return;
@@ -686,7 +657,7 @@
       if (!navigator.onLine) {
         offlineBanner.style.display = "block";
         testBanner.style.display = "none";
-        document.getElementById("hub-status-text").innerText = "Offline";
+        document.getElementById("hub-status-text").innerText = "SYS_OFFLINE";
         document.getElementById("hub-status-dot").className = "status-dot status-offline";
         updateSpeedometer(-1);
         return;
@@ -718,7 +689,7 @@
         const res = await fetch("/api/network-data", { cache: "no-store" });
         const data = await res.json();
 
-        document.getElementById("hub-status-text").innerText = "Live";
+        document.getElementById("hub-status-text").innerText = "SYS_ONLINE";
         document.getElementById("hub-status-dot").className = "status-dot status-good";
 
         const activeCount = Object.keys(data.active_devices).length;
@@ -731,7 +702,7 @@
         tbody.innerHTML = "";
 
         if (activeCount === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgba(255,255,255,0.6); padding:40px; font-weight: 600;">No active devices detected on the network.<br>Ensure scanner screens are unlocked.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:rgba(255,255,255,0.4); padding:40px; font-family: monospace;">> 0 active socket connections found.</td></tr>';
           return;
         }
 
@@ -740,19 +711,19 @@
 
           const secondsAgo = Math.round(Date.now() / 1000 - info.last_seen);
           let statusClass = "status-good";
-          let statusText = "Online";
+          let statusText = "SECURE";
           let barColor = "var(--success)";
           let healthScore = 100;
 
           if (secondsAgo > 10) {
             statusClass = "status-fair";
-            statusText = "Lagging";
+            statusText = "LAGGING";
             barColor = "var(--warning)";
             healthScore = 60;
           }
           if (secondsAgo > 20) {
             statusClass = "status-poor";
-            statusText = "Dropping";
+            statusText = "DROPPING";
             barColor = "var(--danger)";
             healthScore = 20;
           }
@@ -760,8 +731,6 @@
           // XSS Safe Variables
           const safeName = escapeHTML(info.name);
           const safeIp = escapeHTML(info.ip);
-          
-          // Secure string escape for HTML attribute injection
           const jsSafeId = String(deviceId).replace(/'/g, "\\'").replace(/"/g, '\\"');
           const jsSafeName = String(info.name).replace(/'/g, "\\'").replace(/"/g, '\\"');
 
@@ -769,23 +738,23 @@
             <td>
               <div class="status-wrapper" style="background: transparent; padding: 0; border: none; box-shadow: none;">
                 <span class="status-dot ${statusClass}"></span> 
-                <span style="font-size: 0.85rem; color:var(--text-muted);">${statusText}</span>
+                <span style="font-size: 0.75rem; color:var(--text-muted); font-family: monospace;">[${statusText}]</span>
               </div>
             </td>
-            <td><strong style="font-size: 1.1rem; color: #fff; letter-spacing: 0.5px;">${safeName}</strong></td>
-            <td style="font-family: monospace; color: rgba(255,255,255,0.7);">${safeIp}</td>
+            <td><strong style="font-size: 1.05rem; color: #fff; letter-spacing: 0.5px; font-family: var(--font-dev);">${safeName}</strong></td>
+            <td style="font-family: var(--font-dev); color: rgba(255,255,255,0.6);">${safeIp}</td>
             <td>
               <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${barColor};"></div></div>
-              <span class="latency-text">Pinged ${secondsAgo}s ago</span>
+              <span class="latency-text">${secondsAgo}s ago</span>
             </td>
             <td>
-              <button class="btn-edit" onclick="renameDevice('${jsSafeId}', '${jsSafeName}')">Edit Name</button>
+              <button class="btn-edit" onclick="renameDevice('${jsSafeId}', '${jsSafeName}')">RENAME_NODE</button>
             </td>
           `;
           tbody.appendChild(tr);
         }
       } catch (e) {
-        document.getElementById("hub-status-text").innerText = "Hub Offline";
+        document.getElementById("hub-status-text").innerText = "SYS_FAULT";
         document.getElementById("hub-status-dot").className = "status-dot status-poor";
         updateSpeedometer(-1);
       }
@@ -793,7 +762,7 @@
 
     async function renameDevice(deviceId, oldName) {
       playClick();
-      const newName = prompt(`Enter a new custom name for this device:`, oldName);
+      const newName = prompt(`ADMIN OVERRIDE:\nEnter a new network identifier for this node:`, oldName);
       if (newName && newName.trim() !== "" && newName !== oldName) {
         try {
           await fetch("/api/device/rename", {
@@ -803,7 +772,7 @@
           });
           fetchStats(); // Instantly refresh GUI after renaming
         } catch (err) {
-          alert("Failed to rename device. Ensure the hub is online.");
+          alert("FATAL: Failed to rename device. Ensure local hub is active.");
         }
       }
     }
