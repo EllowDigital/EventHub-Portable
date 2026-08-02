@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -47,8 +48,15 @@
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     .header {
@@ -83,8 +91,15 @@
       padding: 6px 12px;
       border-radius: 8px;
     }
-    .btn-back:hover { color: var(--text-main); background: rgba(255, 255, 255, 0.1); }
-    .btn-back:active { transform: scale(0.95); }
+
+    .btn-back:hover {
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-back:active {
+      transform: scale(0.95);
+    }
 
     .header-title {
       margin: 0;
@@ -118,11 +133,30 @@
       transition: var(--transition);
     }
 
-    .net-dot { width: 8px; height: 8px; border-radius: 50%; }
-    .net-excellent { background: var(--success); box-shadow: 0 0 10px var(--success); }
-    .net-fair { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
-    .net-poor { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
-    .net-offline { background: #555; }
+    .net-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .net-excellent {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+
+    .net-fair {
+      background: var(--warning);
+      box-shadow: 0 0 10px var(--warning);
+    }
+
+    .net-poor {
+      background: var(--danger);
+      box-shadow: 0 0 10px var(--danger);
+    }
+
+    .net-offline {
+      background: #555;
+    }
 
     .banner {
       width: 100%;
@@ -137,13 +171,30 @@
       animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       letter-spacing: 0.5px;
     }
+
     @keyframes popIn {
-      0% { transform: scale(0.9); opacity: 0; }
-      100% { transform: scale(1); opacity: 1; }
+      0% {
+        transform: scale(0.9);
+        opacity: 0;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
     }
 
-    .test-mode-banner { background-color: rgba(255, 68, 68, 0.15); color: var(--danger); border: 1px solid var(--danger); }
-    .offline-badge { background-color: rgba(255, 187, 51, 0.15); color: var(--warning); border: 1px solid var(--warning); }
+    .test-mode-banner {
+      background-color: rgba(255, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid var(--danger);
+    }
+
+    .offline-badge {
+      background-color: rgba(255, 187, 51, 0.15);
+      color: var(--warning);
+      border: 1px solid var(--warning);
+    }
 
     .device-identity {
       width: 100%;
@@ -158,10 +209,19 @@
       border: 1px solid rgba(255, 255, 255, 0.08);
       box-sizing: border-box;
       transition: var(--transition);
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
-    .device-identity:hover { background: var(--surface-hover); transform: translateY(-2px); border-color: rgba(0, 210, 255, 0.3); }
-    .device-identity span { color: var(--primary); font-weight: 800; }
+
+    .device-identity:hover {
+      background: var(--surface-hover);
+      transform: translateY(-2px);
+      border-color: rgba(0, 210, 255, 0.3);
+    }
+
+    .device-identity span {
+      color: var(--primary);
+      font-weight: 800;
+    }
 
     .form-container {
       width: 100%;
@@ -184,7 +244,10 @@
       text-transform: uppercase;
       letter-spacing: 1px;
     }
-    .section-title:first-child { margin-top: 0; }
+
+    .section-title:first-child {
+      margin-top: 0;
+    }
 
     .input-row {
       display: flex;
@@ -201,7 +264,7 @@
       margin-bottom: 0;
     }
 
-    .form-container > .input-group {
+    .form-container>.input-group {
       margin-bottom: 20px;
     }
 
@@ -224,7 +287,7 @@
       font-size: 1.05rem;
       transition: var(--transition);
       font-family: inherit;
-      box-shadow: inset 0 2px 10px rgba(0,0,0,0.3);
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.3);
       width: 100%;
       box-sizing: border-box;
       appearance: none;
@@ -242,7 +305,7 @@
     .input-group select:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2), inset 0 2px 10px rgba(0,0,0,0.5);
+      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2), inset 0 2px 10px rgba(0, 0, 0, 0.5);
     }
 
     .input-group input:disabled {
@@ -266,9 +329,17 @@
       font-weight: 800;
     }
 
-    .msg-info { color: var(--primary); }
-    .msg-success { color: var(--success); }
-    .msg-warning { color: var(--warning); }
+    .msg-info {
+      color: var(--primary);
+    }
+
+    .msg-success {
+      color: var(--success);
+    }
+
+    .msg-warning {
+      color: var(--warning);
+    }
 
     .day-chips-container {
       display: flex;
@@ -288,7 +359,7 @@
 
     .chip-content {
       background: var(--bg-dark);
-      border: 2px solid rgba(255,255,255,0.1);
+      border: 2px solid rgba(255, 255, 255, 0.1);
       padding: 16px 20px;
       border-radius: var(--radius-md);
       font-weight: 800;
@@ -296,7 +367,7 @@
       text-align: center;
       font-size: 1.05rem;
       color: var(--text-muted);
-      box-shadow: inset 0 2px 8px rgba(0,0,0,0.3);
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.3);
     }
 
     .day-chip-label:hover .chip-content {
@@ -304,7 +375,7 @@
       color: #fff;
     }
 
-    .day-chip-label input:checked + .chip-content {
+    .day-chip-label input:checked+.chip-content {
       background: rgba(0, 210, 255, 0.15);
       border-color: var(--primary);
       color: var(--primary);
@@ -362,9 +433,12 @@
       transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
-    #toast.show { bottom: 30px; }
+    #toast.show {
+      bottom: 30px;
+    }
 
-    #success-modal, #device-modal {
+    #success-modal,
+    #device-modal {
       display: none;
       position: fixed;
       inset: 0;
@@ -378,7 +452,8 @@
       transition: opacity 0.3s ease;
     }
 
-    #success-modal.show, #device-modal.show {
+    #success-modal.show,
+    #device-modal.show {
       opacity: 1;
     }
 
@@ -395,7 +470,8 @@
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
     }
 
-    #success-modal.show .modal-content, #device-modal.show .dev-modal-content {
+    #success-modal.show .modal-content,
+    #device-modal.show .dev-modal-content {
       transform: scale(1);
     }
 
@@ -409,8 +485,8 @@
       padding: 20px;
       border-radius: var(--radius-md);
       letter-spacing: 3px;
-      border: 1px solid rgba(255,255,255,0.1);
-      box-shadow: inset 0 4px 15px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: inset 0 4px 15px rgba(0, 0, 0, 0.5);
     }
 
     .dev-modal-content {
@@ -421,27 +497,39 @@
       width: 90%;
       max-width: 400px;
       text-align: center;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
       transform: scale(0.8);
       transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
-    .dev-modal-content h3 { margin-top: 0; color: var(--primary); font-size: 1.5rem; font-weight: 800;}
+    .dev-modal-content h3 {
+      margin-top: 0;
+      color: var(--primary);
+      font-size: 1.5rem;
+      font-weight: 800;
+    }
+
     .dev-modal-content input {
       width: 100%;
       padding: 18px;
       background: var(--bg-dark);
       color: #fff;
-      border: 1px solid rgba(255,255,255,0.15);
+      border: 1px solid rgba(255, 255, 255, 0.15);
       border-radius: var(--radius-md);
       box-sizing: border-box;
       margin-bottom: 25px;
       font-size: 1.15rem;
       text-align: center;
       transition: var(--transition);
-      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
     }
-    .dev-modal-content input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2);}
+
+    .dev-modal-content input:focus {
+      border-color: var(--primary);
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2);
+    }
+
     .dev-modal-content button {
       width: 100%;
       padding: 18px;
@@ -455,17 +543,23 @@
       transition: var(--transition);
       box-shadow: 0 4px 15px rgba(0, 210, 255, 0.3);
     }
-    .dev-modal-content button:active { transform: translateY(2px); }
 
+    .dev-modal-content button:active {
+      transform: translateY(2px);
+    }
   </style>
 </head>
 
 <body>
   <div class="app-container">
-    
+
     <div class="header">
       <a href="/" class="btn-back">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"></line>
+          <polyline points="12 19 5 12 12 5"></polyline>
+        </svg>
         Hub
       </a>
       <h3 class="header-title">
@@ -488,8 +582,12 @@
     </div>
 
     <div class="device-identity" onclick="promptDeviceName()">
-      Kiosk Identity: <span id="display-device-name">Loading...</span> 
-      <svg style="vertical-align: middle; margin-left: 5px; color: #888;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+      Kiosk Identity: <span id="display-device-name">Loading...</span>
+      <svg style="vertical-align: middle; margin-left: 5px; color: #888;" width="14" height="14" viewBox="0 0 24 24"
+        fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 20h9"></path>
+        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+      </svg>
     </div>
 
     <div class="form-container">
@@ -499,7 +597,7 @@
         <input type="text" id="f-name" placeholder="Enter full name" />
         <div class="err-msg" id="e-name"></div>
       </div>
-      
+
       <div class="input-row">
         <div class="input-group">
           <label>Mobile Number *</label>
@@ -616,7 +714,9 @@
       <p style="color: #666; font-size: 0.95rem; font-weight: 800; margin-bottom: 25px;" id="modal-countdown">
         Returning to form in 8s...
       </p>
-      <button class="btn-submit" style="margin-top: 0; background: rgba(255,255,255,0.1); color: #fff; box-shadow: none;" onclick="dismissModal()">
+      <button class="btn-submit"
+        style="margin-top: 0; background: rgba(255,255,255,0.1); color: #fff; box-shadow: none;"
+        onclick="dismissModal()">
         Next Registration
       </button>
     </div>
@@ -712,7 +812,7 @@
     }
 
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Kiosk"; }
-    
+
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
       if (!name) {
@@ -728,7 +828,7 @@
       if (val) {
         localStorage.setItem("hub_device_name", val);
         document.getElementById("display-device-name").textContent = val;
-        
+
         const modal = document.getElementById("device-modal");
         modal.classList.remove("show");
         setTimeout(() => modal.style.display = "none", 300);
@@ -799,9 +899,9 @@
     // --- UPGRADED NETWORK PING (Fixes Overwrite Bug) ---
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
-            text = document.getElementById("net-text"),
-            testBanner = document.getElementById("test-mode-banner"),
-            testDate = document.getElementById("test-mode-date");
+        text = document.getElementById("net-text"),
+        testBanner = document.getElementById("test-mode-banner"),
+        testDate = document.getElementById("test-mode-date");
 
       if (!navigator.onLine) {
         dot.className = "net-dot net-offline";
@@ -813,7 +913,7 @@
       try {
         const c = new AbortController();
         const id = setTimeout(() => c.abort(), 5000);
-        
+
         // Pass both ID and Name to ensure Hub tracks this specific device perfectly
         const response = await fetch(
           `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
@@ -822,9 +922,9 @@
         clearTimeout(id);
 
         const dur = performance.now() - start;
-        
-        if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; } 
-        else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; } 
+
+        if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
+        else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; }
         else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
 
         if (response.ok) {
@@ -951,7 +1051,7 @@
       el.textContent = "⚠ " + msg;
       el.className = "err-msg";
     }
-    
+
     function clearFieldErr(key) {
       document.getElementById("f-" + key).classList.remove("err");
       const el = document.getElementById("e-" + key);
@@ -960,9 +1060,9 @@
         el.className = "err-msg";
       }
     }
-    
+
     function clearAllErrors() {
-      ["name","mobile","email","gender","bizname","cat","othercat","address","city","state","pincode"].forEach(clearFieldErr);
+      ["name", "mobile", "email", "gender", "bizname", "cat", "othercat", "address", "city", "state", "pincode"].forEach(clearFieldErr);
       document.getElementById("e-days").textContent = "";
     }
 
@@ -971,31 +1071,31 @@
       let ok = true;
       const name = document.getElementById("f-name").value.trim();
       if (name.length < 2) { setFieldErr("name", "Required (min 2 chars)"); ok = false; }
-      
+
       const mobile = document.getElementById("f-mobile").value.trim();
       if (!/^[6-9]\d{9}$/.test(mobile)) { setFieldErr("mobile", "Valid 10-digit number required"); ok = false; }
-      
+
       const email = document.getElementById("f-email").value.trim();
       if (email && !/^[\w.\-+]+@[\w.\-]+\.\w{2,}$/.test(email)) { setFieldErr("email", "Invalid email"); ok = false; }
-      
+
       if (!document.getElementById("f-gender").value) { setFieldErr("gender", "Required"); ok = false; }
-      
+
       const type = document.getElementById("f-type").value;
       const bizname = document.getElementById("f-bizname").value.trim();
       if (["BUSINESS", "EXHIBITOR", "MEDIA"].includes(type) && !bizname) { setFieldErr("bizname", "Required for this type"); ok = false; }
-      
+
       const cat = catSel.value;
       const othercat = document.getElementById("f-othercat").value.trim();
       if (["BUSINESS", "EXHIBITOR"].includes(type)) {
-        if (!cat) { setFieldErr("cat", "Required"); ok = false; } 
+        if (!cat) { setFieldErr("cat", "Required"); ok = false; }
         else if (cat === "OTHER" && !othercat) { setFieldErr("othercat", "Specify category"); ok = false; }
       }
-      
+
       if (document.getElementById("f-address").value.trim().length < 5) { setFieldErr("address", "Required"); ok = false; }
       if (document.getElementById("f-city").value.trim().length < 2) { setFieldErr("city", "Required"); ok = false; }
       if (document.getElementById("f-state").value.trim().length < 2) { setFieldErr("state", "Required"); ok = false; }
       if (!/^\d{6}$/.test(document.getElementById("f-pincode").value.trim())) { setFieldErr("pincode", "6-digit pincode"); ok = false; }
-      
+
       if (!document.getElementById("day-1").checked && !document.getElementById("day-2").checked && !document.getElementById("day-3").checked) {
         document.getElementById("e-days").textContent = "⚠ Select at least one attendance day";
         ok = false;
@@ -1132,7 +1232,7 @@
     }
 
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") syncServerStatus(); 
+      if (document.visibilityState === "visible") syncServerStatus();
     });
 
     window.addEventListener("load", () => {
@@ -1143,4 +1243,5 @@
     });
   </script>
 </body>
+
 </html>

@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
@@ -64,11 +65,30 @@
       letter-spacing: 0.5px;
     }
 
-    .net-dot { width: 8px; height: 8px; border-radius: 50%; }
-    .net-excellent { background: var(--success); box-shadow: 0 0 10px var(--success); }
-    .net-fair { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
-    .net-poor { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
-    .net-offline { background: #555; }
+    .net-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .net-excellent {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+
+    .net-fair {
+      background: var(--warning);
+      box-shadow: 0 0 10px var(--warning);
+    }
+
+    .net-poor {
+      background: var(--danger);
+      box-shadow: 0 0 10px var(--danger);
+    }
+
+    .net-offline {
+      background: #555;
+    }
 
     /* --- BANNERS --- */
     .banner {
@@ -82,9 +102,26 @@
       box-sizing: border-box;
       display: none;
     }
-    .test-mode-banner { background: rgba(255, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(255, 68, 68, 0.3); }
-    .unsynced-warning { background: rgba(255, 170, 0, 0.1); color: var(--warning); border: 1px solid rgba(255, 170, 0, 0.3); }
-    .unsynced-warning span.subtext { font-size: 0.8rem; font-weight: 500; color: #ccc; margin-top: 6px; display: inline-block; }
+
+    .test-mode-banner {
+      background: rgba(255, 68, 68, 0.1);
+      color: var(--danger);
+      border: 1px solid rgba(255, 68, 68, 0.3);
+    }
+
+    .unsynced-warning {
+      background: rgba(255, 170, 0, 0.1);
+      color: var(--warning);
+      border: 1px solid rgba(255, 170, 0, 0.3);
+    }
+
+    .unsynced-warning span.subtext {
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: #ccc;
+      margin-top: 6px;
+      display: inline-block;
+    }
 
     /* --- Header Branding --- */
     .header {
@@ -134,7 +171,8 @@
     /* --- Responsive Grid System --- */
     .menu-container {
       display: grid;
-      grid-template-columns: 1fr; /* Mobile Default (1 Column) */
+      grid-template-columns: 1fr;
+      /* Mobile Default (1 Column) */
       gap: 20px;
       width: 100%;
     }
@@ -149,7 +187,7 @@
     /* Desktop Layout: 2 Columns, 3rd card spans full width */
     @media (min-width: 950px) {
       .menu-card:nth-child(3) {
-        grid-column: 1 / -1; 
+        grid-column: 1 / -1;
       }
     }
 
@@ -175,7 +213,10 @@
       border-color: rgba(255, 255, 255, 0.15);
       box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
     }
-    .menu-card:active { transform: translateY(1px); }
+
+    .menu-card:active {
+      transform: translateY(1px);
+    }
 
     .icon-box {
       width: 65px;
@@ -189,25 +230,31 @@
       margin-right: 20px;
       flex-shrink: 0;
       border: 1px solid rgba(255, 255, 255, 0.05);
-      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
       transition: transform 0.3s ease;
     }
-    .menu-card:hover .icon-box { transform: scale(1.05); }
 
-    .card-content { display: flex; flex-direction: column; }
-    
-    .card-title { 
-      font-size: 1.25rem; 
-      font-weight: 800; 
-      margin-bottom: 6px; 
-      letter-spacing: 0.5px; 
+    .menu-card:hover .icon-box {
+      transform: scale(1.05);
     }
-    
-    .card-desc { 
-      font-size: 0.85rem; 
-      color: var(--text-dim); 
-      line-height: 1.5; 
-      font-weight: 500; 
+
+    .card-content {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+      letter-spacing: 0.5px;
+    }
+
+    .card-desc {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+      font-weight: 500;
     }
 
     /* --- Support & Contact Section --- */
@@ -220,7 +267,7 @@
       text-align: center;
       margin-top: 40px;
       box-sizing: border-box;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     }
 
     .support-box p {
@@ -248,8 +295,15 @@
       text-transform: uppercase;
       letter-spacing: 1px;
     }
-    .btn-call:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(255, 170, 0, 0.5); }
-    .btn-call:active { transform: translateY(1px); }
+
+    .btn-call:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(255, 170, 0, 0.5);
+    }
+
+    .btn-call:active {
+      transform: translateY(1px);
+    }
 
     /* Desktop Contact Text */
     .desktop-contact {
@@ -264,8 +318,13 @@
 
     /* Toggle Support visibility based on exact screenshots */
     @media (min-width: 650px) {
-      .btn-call { display: none !important; }
-      .desktop-contact { display: block; }
+      .btn-call {
+        display: none !important;
+      }
+
+      .desktop-contact {
+        display: block;
+      }
     }
 
     .footer {
@@ -284,7 +343,7 @@
 
 <body>
   <div class="app-container">
-    
+
     <!-- Top Right Network Status -->
     <div class="top-bar">
       <div id="network-pill" class="network-pill">
@@ -345,10 +404,10 @@
     <!-- Adaptive Support Section -->
     <div class="support-box">
       <p>Experiencing hardware or network issues?</p>
-      
+
       <!-- Shows ONLY on Mobile -->
       <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
-      
+
       <!-- Shows ONLY on Tablets & PCs -->
       <div class="desktop-contact">📞 Support: +91 8960 446 756</div>
     </div>
@@ -418,7 +477,7 @@
         clearTimeout(timeoutId);
 
         const duration = performance.now() - startTime;
-        
+
         if (duration < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
         else if (duration < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; }
         else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
@@ -441,16 +500,17 @@
     }
 
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") syncServerStatus(); 
+      if (document.visibilityState === "visible") syncServerStatus();
     });
 
     window.addEventListener("load", () => {
       syncServerStatus();
       setInterval(syncServerStatus, 4000);
     });
-    
+
     window.addEventListener("online", syncServerStatus);
     window.addEventListener("offline", syncServerStatus);
   </script>
 </body>
+
 </html>
