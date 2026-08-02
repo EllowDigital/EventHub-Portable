@@ -1,67 +1,59 @@
-================================================================================
-                    EVENT HUB - QUICK REFERENCE HANDBOOK
-================================================================================
-
-[1] STARTUP SEQUENCE
-1. Connect Phone A (via USB Tethering) to Laptop A.
-2. Connect RJ45 LAN/Switch to Registration Laptops.
-3. Turn ON Mobile Hotspot on Laptop A.
-4. Connect Scanner Phones (up to 8) to Laptop A's Hotspot.
-5. Launch server_hub.py -> Click "▶ Start Engine".
-6. Start Cloudflare Tunnel (if online) -> Share public link.
-
---------------------------------------------------------------------------------
-[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)
---------------------------------------------------------------------------------
-DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE
--------------------|------------|-------------------------------|---------------
-Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)
-Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras
-Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag
-Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)
-Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning
-Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API
---------------------------------------------------------------------------------
-
-[3] GOLDEN RULES & REMINDERS
-- STARTUP ORDER: Network -> Hotspot -> Server -> Clients.
-- REGISTRATION PCs = HTTP (Port 5000).
-- SCANNERS & GUI = HTTPS (Port 5001) -> *STRICTLY REQUIRED for cameras/live-sync!*
-- SSL WARNING: Accept the "Not Secure" warning on scanners ONCE before the event.
-- NEVER close server_hub.py during the live event.
-- Staff never connect to MySQL directly; APIs handle all traffic.
-
-[4] OFFLINE MODE (INTERNET GOES DOWN)
-- DO NOT PANIC: Local Hotspot & LAN continue working normally.
-- Registration uses Port 5000; Scanners use Port 5001.
-- Remote Cloudflare staff will be DOWN until internet returns.
-
-[5] SYSTEM & POWER OPTIMIZATIONS (CRITICAL)
-- NETWORK PROFILE: Must be "Private" (Windows blocks LAN on "Public").
-- FIREWALL PORTS: Allow TCP 5000, 5001, 3306.
-- ANTIVIRUS: Pause McAfee/Norton/Avast firewalls (they block local traffic).
-- POWER PLAN: Set Screen & Sleep to "Never". 
-- ADAPTERS: Device Manager > Network Adapters > Uncheck "Allow computer to turn off device".
-
-[6] TROUBLESHOOTING & FIXES
-» FIX: DEVICES CAN'T LOAD THE HUB IP
-  1. Check Laptop A's IP via 'ipconfig'.
-  2. Verify devices are on the correct Wi-Fi/LAN.
-  3. Turn OFF all VPNs (they scramble local routing).
-
-» FIX: CLOUDFLARE WON'T OPEN
-  - Change Laptop A DNS to: 1.1.1.1 (Preferred) and 1.0.0.1 (Alternate).
-
-» FIX: NETWORK GLITCHY / DROPPING
-  - Admin PowerShell Command (Run to force allow ports):
-    New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001
-  - Admin CMD (Network Reset):
-    ipconfig /flushdns
-    ipconfig /release
-    ipconfig /renew
-    netsh winsock reset (Requires Restart)
-
-» MANUAL LAN SETUP (FALLBACK)
-  - Server IP: 192.168.10.1 (Subnet: 255.255.255.0)
-  - Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)
-  - Client URL: http://192.168.10.1:5000
+-------------------------------------------------------------------------------------------------------------------------
+                                        EVENT HUB - QUICK REFERENCE HANDBOOK                                                 
+-------------------------------------------------------------------------------------------------------------------------
+[1] STARTUP SEQUENCE                                                                                                         
+1. Connect Phone A (via USB Tethering) to Laptop A.                                                                          
+2. Connect RJ45 LAN/Switch to Registration Laptops.                                                                          
+3. Turn ON Mobile Hotspot on Laptop A.                                                                                       
+4. Connect Scanner Phones (up to 8) to Laptop A's Hotspot.                                                                   
+5. Launch server_hub.py -> Click "▶ Start Engine".                                                                           
+6. Start Cloudflare Tunnel (if online) -> Share public link.                                                                 
+-------------------------------------------------------------------------------------------------------------------------
+[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)                                                                   
+-------------------------------------------------------------------------------------------------------------------------
+DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                                    
+-------------------|------------|-------------------------------|--------------------------------------------------------
+Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)                               
+Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras                                
+Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag                           
+Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)                           
+Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning                                     
+Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API                                       
+-------------------------------------------------------------------------------------------------------------------------
+[3] GOLDEN RULES & REMINDERS                                                                                                 
+- STARTUP ORDER: Network -> Hotspot -> Server -> Clients.                                                                    
+- REGISTRATION PCs = HTTP (Port 5000).                                                                                       
+- SCANNERS & GUI = HTTPS (Port 5001) -> *STRICTLY REQUIRED for cameras/live-sync!*                                           
+- SSL WARNING: Accept the "Not Secure" warning on scanners ONCE before the event.                                            
+- NEVER close server_hub.py during the live event.                                                                           
+- Staff never connect to MySQL directly; APIs handle all traffic.                                                            
+[4] OFFLINE MODE (INTERNET GOES DOWN)                                                                                        
+- DO NOT PANIC: Local Hotspot & LAN continue working normally.                                                               
+- Registration uses Port 5000; Scanners use Port 5001.                                                                       
+- Remote Cloudflare staff will be DOWN until internet returns.                                                                
+[5] SYSTEM & POWER OPTIMIZATIONS (CRITICAL)                                                                                  
+- NETWORK PROFILE: Must be "Private" (Windows blocks LAN on "Public").                                                       
+- FIREWALL PORTS: Allow TCP 5000, 5001, 3306.                                                                                
+- ANTIVIRUS: Pause McAfee/Norton/Avast firewalls (they block local traffic).                                                 
+- POWER PLAN: Set Screen & Sleep to "Never".                                                                                 
+- ADAPTERS: Device Manager > Network Adapters > Uncheck "Allow computer to turn off device".                                 
+[6] TROUBLESHOOTING & FIXES                                                                                                  
+» FIX: DEVICES CAN'T LOAD THE HUB IP                                                                                         
+  1. Check Laptop A's IP via 'ipconfig'.                                                                                     
+  2. Verify devices are on the correct Wi-Fi/LAN.                                                                            
+  3. Turn OFF all VPNs (they scramble local routing).                                                                         
+» FIX: CLOUDFLARE WON'T OPEN                                                                                                 
+  - Change Laptop A DNS to: 1.1.1.1 (Preferred) and 1.0.0.1 (Alternate).                                                      
+» FIX: NETWORK GLITCHY / DROPPING                                                                                            
+  - Admin PowerShell Command (Run to force allow ports):                                                                     
+    New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001    
+  - Admin CMD (Network Reset):                                                                                               
+    ipconfig /flushdns                                                                                                       
+    ipconfig /release                                                                                                        
+    ipconfig /renew                                                                                                          
+    netsh winsock reset (Requires Restart)                                                                                    
+» MANUAL LAN SETUP (FALLBACK)                                                                                                
+  - Server IP: 192.168.10.1 (Subnet: 255.255.255.0)                                                                          
+  - Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)                                                                        
+  - Client URL: http://192.168.10.1:5000                                                                                     
+-------------------------------------------------------------------------------------------------------------------------
