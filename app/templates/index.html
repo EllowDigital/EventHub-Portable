@@ -6,24 +6,22 @@
   <title>TDE UP 2026 — Operations Hub</title>
   <style>
     :root {
-      --bg-dark: #07080c;
-      --surface: #12141c;
-      --surface-hover: #1a1d29;
+      --bg-dark: #0b0d14;
+      --card-bg: #161a26;
       --primary: #00d2ff;
-      --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
-      --warning: #ffbb33;
+      --warning: #ffaa00;
       --danger: #ff4444;
       --text-light: #ffffff;
       --text-dim: #8b93a5;
-      --border-dim: rgba(255, 255, 255, 0.08);
-      --radius-lg: 20px;
-      --transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+      --radius-lg: 16px;
+      --transition: all 0.3s ease;
     }
 
     body {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
-      background: radial-gradient(circle at top center, #161b26, var(--bg-dark));
+      background-color: var(--bg-dark);
+      background-image: radial-gradient(circle at top center, #111520, var(--bg-dark) 80%);
       color: var(--text-light);
       margin: 0;
       padding: 0;
@@ -36,59 +34,41 @@
 
     .app-container {
       width: 100%;
-      max-width: 900px; /* Expands elegantly on PC/Laptop */
-      padding: 15px 20px 40px 20px;
+      max-width: 850px;
+      padding: 20px 20px 40px 20px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      animation: fadeIn 0.5s ease-out;
       box-sizing: border-box;
     }
 
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(15px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    /* Glassmorphism Top Bar */
+    /* --- Top Bar & Network Pill --- */
     .top-bar {
       width: 100%;
       display: flex;
       justify-content: flex-end;
-      margin-bottom: 25px;
-      position: sticky;
-      top: 15px;
-      z-index: 100;
+      margin-bottom: 30px;
     }
 
     .network-pill {
-      font-size: 0.8rem;
-      padding: 10px 16px;
+      font-size: 0.75rem;
+      padding: 8px 16px;
       border-radius: 30px;
-      font-weight: 800;
+      font-weight: 700;
       display: flex;
       align-items: center;
-      gap: 10px;
-      background: rgba(18, 20, 28, 0.85);
-      border: 1px solid var(--border-dim);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-      transition: var(--transition);
+      gap: 8px;
+      background: rgba(18, 22, 32, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
       letter-spacing: 0.5px;
     }
 
-    .net-dot { width: 10px; height: 10px; border-radius: 50%; }
-    .net-excellent { background: var(--success); box-shadow: 0 0 12px var(--success); animation: pulse 2s infinite; }
-    .net-fair { background: var(--warning); box-shadow: 0 0 12px var(--warning); }
-    .net-poor { background: var(--danger); box-shadow: 0 0 12px var(--danger); }
+    .net-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .net-excellent { background: var(--success); box-shadow: 0 0 10px var(--success); }
+    .net-fair { background: var(--warning); box-shadow: 0 0 10px var(--warning); }
+    .net-poor { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
     .net-offline { background: #555; }
-
-    @keyframes pulse {
-      0% { transform: scale(0.95); opacity: 0.8; }
-      50% { transform: scale(1.15); opacity: 1; }
-      100% { transform: scale(0.95); opacity: 0.8; }
-    }
 
     /* --- BANNERS --- */
     .banner {
@@ -96,42 +76,17 @@
       text-align: center;
       padding: 14px;
       font-size: 0.9rem;
-      font-weight: 800;
+      font-weight: 700;
       border-radius: 12px;
       margin-bottom: 20px;
       box-sizing: border-box;
       display: none;
-      animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-      letter-spacing: 0.5px;
     }
+    .test-mode-banner { background: rgba(255, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(255, 68, 68, 0.3); }
+    .unsynced-warning { background: rgba(255, 170, 0, 0.1); color: var(--warning); border: 1px solid rgba(255, 170, 0, 0.3); }
+    .unsynced-warning span.subtext { font-size: 0.8rem; font-weight: 500; color: #ccc; margin-top: 6px; display: inline-block; }
 
-    @keyframes popIn {
-      0% { transform: scale(0.9); opacity: 0; }
-      100% { transform: scale(1); opacity: 1; }
-    }
-
-    .test-mode-banner {
-      background-color: rgba(255, 68, 68, 0.15);
-      color: var(--danger);
-      border: 1px solid var(--danger);
-      box-shadow: 0 4px 20px rgba(255, 68, 68, 0.3);
-    }
-
-    .unsynced-warning {
-      background-color: rgba(255, 187, 51, 0.15);
-      color: var(--warning);
-      border: 1px solid var(--warning);
-      box-shadow: 0 4px 20px rgba(255, 187, 51, 0.3);
-    }
-    .unsynced-warning span.subtext {
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #ddd;
-      margin-top: 6px;
-      display: inline-block;
-    }
-
-    /* Header Branding */
+    /* --- Header Branding --- */
     .header {
       text-align: center;
       margin-bottom: 40px;
@@ -140,10 +95,9 @@
 
     .header h1 {
       margin: 0;
-      font-size: 2.8rem;
+      font-size: clamp(2rem, 5vw, 2.8rem);
       color: var(--text-light);
       letter-spacing: 2px;
-      text-transform: uppercase;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -154,156 +108,150 @@
 
     .header h1 span.highlight {
       color: var(--primary);
-      text-shadow: 0 0 25px rgba(0, 210, 255, 0.5);
+      text-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
     }
 
     .version-tag {
-      font-size: 0.85rem;
-      background: rgba(0, 210, 255, 0.15);
+      font-size: 0.75rem;
+      background: rgba(0, 210, 255, 0.1);
       color: var(--primary);
       padding: 4px 12px;
       border-radius: 20px;
       letter-spacing: 1px;
       border: 1px solid rgba(0, 210, 255, 0.3);
+      font-weight: 700;
     }
 
     .header p {
       margin: 12px 0 0 0;
       color: var(--text-dim);
-      font-size: 1.05rem;
+      font-size: clamp(0.75rem, 2vw, 0.9rem);
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 4px;
+      letter-spacing: 6px;
     }
 
-    /* Modern Fluid Grid for Dashboard Menus */
+    /* --- Responsive Grid System --- */
     .menu-container {
       display: grid;
-      grid-template-columns: 1fr; /* Default Mobile Stacking */
+      grid-template-columns: 1fr; /* Mobile Default (1 Column) */
       gap: 20px;
       width: 100%;
     }
 
-    /* Tablet & Desktop Grid Expansion */
-    @media (min-width: 768px) {
+    /* Tablet Layout: 2 Columns, 3rd card stays in 1st column */
+    @media (min-width: 650px) {
       .menu-container {
-        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        grid-template-columns: 1fr 1fr;
       }
-      /* Make the 3rd odd item span full width to look centered and balanced */
+    }
+
+    /* Desktop Layout: 2 Columns, 3rd card spans full width */
+    @media (min-width: 950px) {
       .menu-card:nth-child(3) {
         grid-column: 1 / -1; 
       }
     }
 
+    /* --- Exact Screen-Matched Card Design --- */
     .menu-card {
       display: flex;
       align-items: center;
-      padding: 25px 20px;
-      background: rgba(18, 20, 28, 0.65);
-      border: 1px solid var(--border-dim);
+      padding: 24px;
+      /* Diagonal Glassmorphism Reflection Exact Match */
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 35%, rgba(0, 0, 0, 0.15) 35.1%, rgba(0, 0, 0, 0.4) 100%), var(--card-bg);
+      border: 1px solid rgba(255, 255, 255, 0.06);
       border-radius: var(--radius-lg);
       text-decoration: none;
       color: var(--text-light);
       transition: var(--transition);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
       position: relative;
       overflow: hidden;
-      box-shadow: inset 0 2px 10px rgba(0,0,0,0.3), 0 5px 15px rgba(0,0,0,0.4);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     }
-
-    /* Glass shine effect on hover */
-    .menu-card::before {
-      content: "";
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 50%;
-      height: 100%;
-      background: linear-gradient(to right, transparent, rgba(255, 255, 255, 0.05), transparent);
-      transform: skewX(-25deg);
-      transition: all 0.6s ease;
-    }
-    .menu-card:hover::before { left: 150%; }
 
     .menu-card:hover {
-      transform: translateY(-5px);
-      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.6);
+      transform: translateY(-4px);
+      border-color: rgba(255, 255, 255, 0.15);
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
     }
-
-    .menu-card:active { transform: translateY(2px) scale(0.98); }
-
-    /* Thematic Card Colors */
-    .card-cyan:hover { border-color: var(--primary); background: rgba(0, 210, 255, 0.08); }
-    .card-green:hover { border-color: var(--success); background: rgba(0, 230, 118, 0.08); }
-    .card-dark:hover { border-color: #888; background: rgba(255, 255, 255, 0.05); }
+    .menu-card:active { transform: translateY(1px); }
 
     .icon-box {
-      width: 70px;
-      height: 70px;
-      border-radius: 18px;
+      width: 65px;
+      height: 65px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 14px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 34px;
+      font-size: 28px;
       margin-right: 20px;
       flex-shrink: 0;
-      transition: transform 0.3s;
-      border: 1px solid rgba(255,255,255,0.05);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+      transition: transform 0.3s ease;
     }
-    .menu-card:hover .icon-box { transform: scale(1.1) rotate(-5deg); }
-
-    .card-cyan .icon-box { background: rgba(0, 210, 255, 0.15); box-shadow: 0 0 20px rgba(0, 210, 255, 0.3); border-color: rgba(0, 210, 255, 0.3); }
-    .card-green .icon-box { background: rgba(0, 230, 118, 0.15); box-shadow: 0 0 20px rgba(0, 230, 118, 0.3); border-color: rgba(0, 230, 118, 0.3); }
-    .card-dark .icon-box { background: rgba(255, 255, 255, 0.08); box-shadow: 0 0 20px rgba(255, 255, 255, 0.1); }
+    .menu-card:hover .icon-box { transform: scale(1.05); }
 
     .card-content { display: flex; flex-direction: column; }
-    .card-title { font-size: 1.3rem; font-weight: 800; margin-bottom: 8px; letter-spacing: 0.5px; }
-    .card-desc { font-size: 0.95rem; color: var(--text-dim); line-height: 1.5; font-weight: 500; }
+    
+    .card-title { 
+      font-size: 1.25rem; 
+      font-weight: 800; 
+      margin-bottom: 6px; 
+      letter-spacing: 0.5px; 
+    }
+    
+    .card-desc { 
+      font-size: 0.85rem; 
+      color: var(--text-dim); 
+      line-height: 1.5; 
+      font-weight: 500; 
+    }
 
-    /* Support & Contact Section */
+    /* --- Support & Contact Section --- */
     .support-box {
       width: 100%;
-      background: rgba(255, 187, 51, 0.05);
-      border: 1px dashed rgba(255, 187, 51, 0.4);
+      background: radial-gradient(ellipse at top, rgba(255, 170, 0, 0.08) 0%, transparent 70%), rgba(15, 15, 15, 0.6);
+      border: 1px dashed rgba(255, 170, 0, 0.3);
       border-radius: var(--radius-lg);
       padding: 30px;
       text-align: center;
       margin-top: 40px;
       box-sizing: border-box;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
     }
 
     .support-box p {
-      margin: 0 0 15px 0;
-      color: #ddd;
-      font-size: 1rem;
-      font-weight: 600;
+      margin: 0 0 20px 0;
+      color: #e2e8f0;
+      font-size: 0.95rem;
+      font-weight: 700;
     }
 
-    /* Mobile Call Button */
+    /* Mobile Call Button Pill */
     .btn-call {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 10px;
-      background: var(--warning);
+      background: linear-gradient(180deg, #ffbc00, #ff9500);
       color: #000;
       text-decoration: none;
-      padding: 16px 32px;
+      padding: 14px 28px;
       border-radius: 30px;
       font-weight: 900;
-      font-size: 1.05rem;
+      font-size: 0.95rem;
       transition: var(--transition);
-      box-shadow: 0 5px 20px rgba(255, 187, 51, 0.3);
+      box-shadow: 0 5px 20px rgba(255, 170, 0, 0.3);
       text-transform: uppercase;
       letter-spacing: 1px;
     }
-    .btn-call:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(255, 187, 51, 0.5); }
-    .btn-call:active { transform: translateY(1px) scale(0.98); box-shadow: 0 2px 10px rgba(255, 187, 51, 0.3); }
+    .btn-call:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(255, 170, 0, 0.5); }
+    .btn-call:active { transform: translateY(1px); }
 
-    /* Desktop Contact Text (Hidden by default on mobile) */
+    /* Desktop Contact Text */
     .desktop-contact {
       display: none;
       font-size: 1.4rem;
@@ -311,23 +259,23 @@
       color: var(--warning);
       margin-top: 10px;
       letter-spacing: 1px;
-      text-shadow: 0 0 15px rgba(255, 187, 51, 0.4);
+      text-shadow: 0 0 20px rgba(255, 170, 0, 0.5);
     }
 
-    /* Device Visibility Logic */
-    @media (min-width: 768px) {
+    /* Toggle Support visibility based on exact screenshots */
+    @media (min-width: 650px) {
       .btn-call { display: none !important; }
       .desktop-contact { display: block; }
     }
 
     .footer {
-      margin-top: 40px;
+      margin-top: 50px;
       text-align: center;
-      color: #666;
-      font-size: 0.85rem;
+      color: #555;
+      font-size: 0.75rem;
       padding-bottom: 20px;
-      line-height: 1.6;
-      font-weight: 600;
+      line-height: 1.8;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1px;
     }
@@ -337,6 +285,7 @@
 <body>
   <div class="app-container">
     
+    <!-- Top Right Network Status -->
     <div class="top-bar">
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
@@ -344,7 +293,7 @@
       </div>
     </div>
 
-    <!-- BANNERS -->
+    <!-- Hidden Banners -->
     <div id="test-mode-banner" class="banner test-mode-banner">
       ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
     </div>
@@ -354,15 +303,15 @@
       <br><span class="subtext">Open the Scanner or Registration tab while online to push them to the Hub.</span>
     </div>
 
-    <!-- HEADER -->
+    <!-- Hub Header -->
     <div class="header">
-      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">v2.4</span></h1>
+      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.4</span></h1>
       <p>Operations Portal</p>
     </div>
 
-    <!-- FLUID MENU GRID -->
+    <!-- Responsive Layout Grid -->
     <div class="menu-container">
-      <a href="/scanner" class="menu-card card-cyan" onclick="playClick()">
+      <a href="/scanner" target="_blank" rel="noopener noreferrer" class="menu-card" onclick="playClick()">
         <div class="icon-box">📷</div>
         <div class="card-content">
           <div class="card-title">Live Scanner</div>
@@ -372,7 +321,7 @@
         </div>
       </a>
 
-      <a href="/register" class="menu-card card-green" onclick="playClick()">
+      <a href="/register" target="_blank" rel="noopener noreferrer" class="menu-card" onclick="playClick()">
         <div class="icon-box">📝</div>
         <div class="card-content">
           <div class="card-title">Kiosk Registration</div>
@@ -382,7 +331,7 @@
         </div>
       </a>
 
-      <a href="/stats" class="menu-card card-dark" onclick="playClick()">
+      <a href="/stats" target="_blank" rel="noopener noreferrer" class="menu-card" onclick="playClick()">
         <div class="icon-box">📊</div>
         <div class="card-content">
           <div class="card-title">Network Statistics</div>
@@ -393,14 +342,14 @@
       </a>
     </div>
 
-    <!-- RESPONSIVE SUPPORT BOX -->
+    <!-- Adaptive Support Section -->
     <div class="support-box">
       <p>Experiencing hardware or network issues?</p>
       
-      <!-- Shows ONLY on Mobile/Tablets -->
+      <!-- Shows ONLY on Mobile -->
       <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
       
-      <!-- Shows ONLY on Laptops/PCs -->
+      <!-- Shows ONLY on Tablets & PCs -->
       <div class="desktop-contact">📞 Support: +91 8960 446 756</div>
     </div>
 
@@ -441,7 +390,6 @@
       }
     }
 
-    // Upgraded Ping Logic to match Scanner/Reg (5-sec timeout)
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot");
       const text = document.getElementById("net-text");
@@ -460,7 +408,7 @@
       const startTime = performance.now();
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 sec tolerant timeout
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
 
         const response = await fetch(`/api/status?device_name=${encodeURIComponent(getDeviceName())}`, {
           method: "GET",
@@ -471,7 +419,6 @@
 
         const duration = performance.now() - startTime;
         
-        // Realistic thresholds for mobile/tunnel
         if (duration < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
         else if (duration < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; }
         else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
@@ -493,14 +440,13 @@
       }
     }
 
-    // Instantly reconnect if browser window/tab is made active again
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") syncServerStatus(); 
     });
 
     window.addEventListener("load", () => {
       syncServerStatus();
-      setInterval(syncServerStatus, 4000); // Pulse check every 4 seconds
+      setInterval(syncServerStatus, 4000);
     });
     
     window.addEventListener("online", syncServerStatus);

@@ -11,7 +11,6 @@ import re
 import time
 import uuid
 import queue
-import collections
 import concurrent.futures
 from dataclasses import dataclass, field
 import ipaddress
@@ -29,15 +28,6 @@ import qrcode
 from PIL import Image, ImageTk
 import webbrowser
 import psutil
-
-try:
-    import matplotlib
-    matplotlib.use("TkAgg")
-    from matplotlib.figure import Figure
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
 
 from flask import Flask, render_template, request, jsonify, Response
 from waitress import create_server 
@@ -219,9 +209,6 @@ NETWORK_LATENCY = {"local_ms": 0, "cloud_ms": 0, "local_status": "OFFLINE", "clo
 network_latency_lock = threading.Lock()
 SERVER_METRICS = {"avg_process_ms": 0.0, "req_count": 0}
 metrics_lock = threading.Lock()
-TRAFFIC_HISTORY = collections.deque([0] * 60, maxlen=60)
-_current_sec_requests = 0
-traffic_lock = threading.Lock()
 
 STATS_CACHE = {
     "total_attendees": 0, "total_registrations": 0,
@@ -288,10 +275,6 @@ def log_request(response):
     if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': 
         return response
     try:
-        global _current_sec_requests
-        with traffic_lock:
-            _current_sec_requests += 1
-
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
             try:
@@ -357,14 +340,6 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             with scan_clients_lock:
                 if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
 
-def traffic_monitor_loop():
-    global _current_sec_requests
-    while True:
-        time.sleep(1)
-        with traffic_lock:
-            hits = _current_sec_requests
-            _current_sec_requests = 0
-        TRAFFIC_HISTORY.append(hits)
 
 def _compute_stats_snapshot():
     sessions = get_cached_sessions()
@@ -790,66 +765,6 @@ def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(
 def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
 
-class NetworkTelemetryWindow(ttk.Toplevel):
-    def __init__(self, parent, hub_instance):
-        super().__init__(parent)
-        self.title("Live API Traffic Analytics")
-        if MATPLOTLIB_AVAILABLE: self.geometry("900x450")
-        else: self.geometry("500x200")
-        self.resizable(False, False)
-        self.hub = hub_instance
-        self.attributes('-topmost', True)
-        self.update_idletasks()
-        self.geometry(f"+{parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)}+{parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)}")
-        self._bg = None
-        self._y_max = 10
-        self.build_ui()
-        self.refresh_meters()
-
-    def build_ui(self):
-        main_frame = ttk.Frame(self, padding=25)
-        main_frame.pack(fill=BOTH, expand=True)
-        ttk.Label(main_frame, text="📈 Live API Traffic Graph", font="-size 16 -weight bold", bootstyle=PRIMARY).pack(anchor=CENTER, pady=(0, 15))
-
-        if MATPLOTLIB_AVAILABLE:
-            chart_frame = ttk.Frame(main_frame)
-            chart_frame.pack(fill=BOTH, expand=True, pady=(0, 15))
-            self.fig = Figure(figsize=(8, 3), dpi=100, facecolor=self.hub.CARD_BG)
-            self.ax = self.fig.add_subplot(111)
-            self.ax.set_facecolor(self.hub.CARD_BG); self.ax.tick_params(colors='white')
-            for spine in self.ax.spines.values(): spine.set_color('#555555')
-            self.line, = self.ax.plot([], [], color='#4CD37E', linewidth=2, label="Req / Sec")
-            self.ax.set_xlim(0, 59)
-            self.ax.set_ylim(0, self._y_max)
-            self.ax.legend(loc="upper right", facecolor=self.hub.CARD_BG, edgecolor="#555555", labelcolor="white")
-            self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
-            self.canvas.get_tk_widget().pack(fill=BOTH, expand=True)
-            self.canvas.draw()
-            self._bg = self.canvas.copy_from_bbox(self.ax.bbox)
-        else:
-            ttk.Label(main_frame, text="(Install 'matplotlib' to view Live Traffic Graph)", font="-size 10 -slant italic", foreground="#888").pack(pady=30)
-        ttk.Button(main_frame, text="Close Window", bootstyle=SECONDARY, command=self.destroy).pack(pady=(10,0))
-
-    def refresh_meters(self):
-        if not self.winfo_exists(): return
-        if MATPLOTLIB_AVAILABLE and hasattr(self, 'line'):
-            y_data = list(TRAFFIC_HISTORY)
-            x_data = list(range(len(y_data)))
-            self.line.set_data(x_data, y_data)
-            peak_needed = max(10, max(y_data) + 5) if y_data else 10
-
-            if peak_needed > self._y_max or self._bg is None:
-                self._y_max = peak_needed
-                self.ax.set_ylim(0, self._y_max)
-                self.canvas.draw()
-                self._bg = self.canvas.copy_from_bbox(self.ax.bbox)
-            else:
-                self.canvas.restore_region(self._bg)
-                self.ax.draw_artist(self.line)
-                self.canvas.blit(self.ax.bbox)
-        self.after(1000, self.refresh_meters)
-
-
 class ServerHub(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.3 (Hardened + Responsive UI)")
@@ -857,6 +772,9 @@ class ServerHub(ttk.Window):
         ww, wh = max(950, min(1600, int(sw * 0.92))), max(650, min(950, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
         self.minsize(1000, 650)
+
+        # Allow exiting fullscreen with the Escape key
+        self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
 
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
@@ -895,7 +813,6 @@ class ServerHub(ttk.Window):
         self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
-        threading.Thread(target=traffic_monitor_loop, daemon=True).start()
 
     def connect_db(self):
         try:
@@ -1018,8 +935,9 @@ class ServerHub(ttk.Window):
     def open_browser(self, url): 
         if url != "Offline": webbrowser.open(url)
         
-    def open_telemetry_window(self): 
-        NetworkTelemetryWindow(self, self)
+    def toggle_fullscreen(self): 
+        is_fullscreen = self.attributes("-fullscreen")
+        self.attributes("-fullscreen", not is_fullscreen)
 
     def _configure_custom_styles(self):
         colors = self.style.colors
@@ -1153,6 +1071,12 @@ class ServerHub(ttk.Window):
         self.cb_test_date.pack(fill=X, pady=(5, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
+        contact_frame = ttk.Labelframe(sidebar, text=" 📞 Support & Help ", padding=10)
+        contact_frame.pack(fill=X, pady=(15, 5))
+        ttk.Label(contact_frame, text="Developer Contact:", font="-size 8 -weight bold", foreground="#888").pack(pady=(0, 2))
+        ttk.Label(contact_frame, text="+91 8960446756", font="-size 11 -weight bold").pack(pady=(0, 8))
+        ttk.Button(contact_frame, text="💬 Chat on WhatsApp", bootstyle="success", command=lambda: self.open_browser("https://wa.me/918960446756")).pack(fill=X)
+
         content = ttk.Frame(self.root_container, padding=20)
         content.pack(side=LEFT, fill=BOTH, expand=True)
         
@@ -1175,7 +1099,7 @@ class ServerHub(ttk.Window):
         actions_f = ttk.Frame(right_hdr)
         actions_f.pack(side=RIGHT, padx=(15, 0))
         ttk.Button(actions_f, text="⟳ Refresh Data", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 4))
-        ttk.Button(actions_f, text="📈 Live Traffic Graph", bootstyle="outline-info", command=self.open_telemetry_window).pack(side=TOP, fill=X)
+        ttk.Button(actions_f, text="⛶ Fullscreen", bootstyle="outline-info", command=self.toggle_fullscreen).pack(side=TOP, fill=X)
         
         hw_f = ttk.Frame(right_hdr)
         hw_f.pack(side=RIGHT)
