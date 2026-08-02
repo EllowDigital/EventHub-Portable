@@ -2,8 +2,27 @@ import os
 import json
 import enum
 import logging
+import threading
+import platform
+import subprocess
 from datetime import datetime
 import pymysql
+
+import tkinter as tk
+
+# Custom tone generator for Windows
+try:
+    import winsound
+    HAS_WINSOUND = True
+except ImportError:
+    HAS_WINSOUND = False
+
+# Text-to-Speech engine fallback for non-Windows
+try:
+    import pyttsx3
+    HAS_TTS = True
+except ImportError:
+    HAS_TTS = False
 
 # PyMySQL provides a pure-Python MySQL driver -- no C compiler required.
 # This makes it answer to the same "MySQLdb" name SQLAlchemy expects.
@@ -140,7 +159,6 @@ def create_mysql_database_if_missing(mysql_url, db_name):
     base_url = mysql_url.rsplit('/', 1)[0]
     try:
         temp_engine = create_engine(base_url, pool_pre_ping=True)
-        # Using engine.begin() ensures an auto-committing transaction block
         with temp_engine.begin() as conn:
             conn.execute(text(f"CREATE DATABASE IF NOT EXISTS {db_name} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"))
             logging.info(f"[MySQL] Verified database '{db_name}' exists.")
@@ -160,7 +178,6 @@ def verify_and_update_columns(engine):
 
         existing_columns = [col['name'] for col in inspector.get_columns(table_name)]
         
-        # Use engine.begin() for safe schema altering (rolls back on failure)
         with engine.begin() as conn:
             for column in table.columns:
                 if column.name not in existing_columns:
@@ -181,9 +198,6 @@ def init_database(db_url, db_name=None, is_mysql=False):
     """Initializes the engine with High-Concurrency pooling parameters."""
     if is_mysql and db_name:
         create_mysql_database_if_missing(db_url, db_name)
-        # Robust Pooling: 
-        # pool_recycle drops connections before MySQL's default 8-hour timeout kills them.
-        # pool_pre_ping tests the socket before every single query to ensure zero dead connections.
         engine = create_engine(
             db_url, 
             echo=False, 
@@ -193,7 +207,6 @@ def init_database(db_url, db_name=None, is_mysql=False):
             pool_pre_ping=True
         )
     else:
-        # SQLite needs check_same_thread=False to support 150+ concurrent Flask Waitress threads
         engine = create_engine(
             db_url, 
             echo=False,
@@ -214,7 +227,6 @@ def get_database_sessions():
     config = load_db_config()
     sessions = {"sqlite": None, "mysql": None}
 
-    # Initialize SQLite Server
     if config.get("sqlite", {}).get("enabled", False):
         sq_config = config["sqlite"]
         db_folder = os.path.join(BASE_DIR, sq_config["folder_name"])
@@ -226,7 +238,6 @@ def get_database_sessions():
         logging.info(f"Initializing Local SQLite Database at {sqlite_path}...")
         sessions["sqlite"] = init_database(sqlite_url)
 
-    # Initialize MySQL Server
     if config.get("mysql", {}).get("enabled", False):
         my_config = config["mysql"]
         db_name = my_config["database"]
@@ -238,9 +249,90 @@ def get_database_sessions():
     return sessions
 
 # ==============================================================================
+# AUDIO, TTS & GUI NOTIFICATION ENGINE
+# ==============================================================================
+
+def play_audio_and_speak(message):
+    """Runs in a background thread: plays a custom chime and speaks the message safely."""
+    # 1. Play Custom High-Tech Startup Tone
+    if HAS_WINSOUND:
+        try:
+            winsound.Beep(880, 150)  # High pitch short
+            winsound.Beep(1200, 300) # Higher pitch long
+        except Exception:
+            pass
+
+    # 2. Speak the text (100% Thread-Safe native OS call)
+    try:
+        if platform.system() == "Windows":
+            # Strip single quotes to prevent breaking the PowerShell command
+            safe_message = message.replace("'", "")
+            
+            # Use native Windows Speech Synthesis via a hidden PowerShell subprocess
+            ps_script = (
+                f"Add-Type -AssemblyName System.Speech; "
+                f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                f"$synth.Rate = 0; "  # Speed: -10 to 10
+                f"$synth.Speak('{safe_message}');"
+            )
+            # CREATE_NO_WINDOW hides the console popup
+            subprocess.run(
+                ["powershell", "-Command", ps_script], 
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        elif HAS_TTS:
+            # Fallback for Mac/Linux using pyttsx3
+            engine = pyttsx3.init()
+            rate = engine.getProperty('rate')
+            engine.setProperty('rate', rate - 20) 
+            engine.say(message)
+            engine.runAndWait()
+    except Exception as e:
+        logging.error(f"TTS Error: {e}")
+
+def show_popup_notification(message, duration_ms=4500):
+    """Creates an auto-closing, frameless GUI popup with dark mode styling."""
+    root = tk.Tk()
+    
+    # Remove window borders for a sleek popup look
+    root.overrideredirect(True)
+    root.configure(bg="#12141c", highlightbackground="#00d2ff", highlightcolor="#00d2ff", highlightthickness=2)
+    
+    # Center the window dynamically
+    window_width = 450
+    window_height = 120
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    x_cordinate = int((screen_width / 2) - (window_width / 2))
+    y_cordinate = int((screen_height / 2) - (window_height / 2))
+    root.geometry(f"{window_width}x{window_height}+{x_cordinate}+{y_cordinate}")
+    
+    # UI Elements
+    title_lbl = tk.Label(root, text="SYSTEM NOTIFICATION", font=("Consolas", 10, "bold"), fg="#00d2ff", bg="#12141c")
+    title_lbl.pack(pady=(10, 0))
+    
+    msg_lbl = tk.Label(root, text=message, font=("Arial", 12, "bold"), fg="#00e676", bg="#12141c", wraplength=400, justify="center")
+    msg_lbl.pack(expand=True, fill=tk.BOTH, padx=15, pady=(0, 10))
+
+    # Fire the audio & TTS on a separate thread so the GUI isn't frozen while speaking
+    threading.Thread(target=play_audio_and_speak, args=(message,), daemon=True).start()
+
+    # Automatically destroy the window after duration_ms
+    root.after(duration_ms, root.destroy)
+    
+    # Keep the window on top of other applications
+    root.attributes('-topmost', True)
+    root.mainloop()
+
+# ==============================================================================
 # ENTRY POINT / TESTING
 # ==============================================================================
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     db_sessions = get_database_sessions()
-    print("Database robust initialization script completed successfully.")
+    
+    success_message = "Database schema initialized successfully. System ready."
+    print(success_message)
+    
+    # Trigger the GUI, Chime, and Thread-Safe TTS
+    show_popup_notification(success_message, duration_ms=4500)

@@ -5,6 +5,7 @@ from logging.handlers import RotatingFileHandler
 import threading
 import socket
 import platform
+import subprocess
 import time
 import queue
 import collections
@@ -27,6 +28,13 @@ try:
         HAS_WINSOUND = False
 except ImportError:
     HAS_WINSOUND = False
+
+# Text-to-Speech engine fallback for Mac/Linux
+try:
+    import pyttsx3
+    HAS_TTS = True
+except ImportError:
+    HAS_TTS = False
 
 # Suppress warnings for local adhoc HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -376,11 +384,12 @@ class GateDisplay(ttk.Window):
             bootstyle="outline-info" if self.sound_enabled else "outline-secondary"
         )
 
-    def play_sound(self, status, message=""):
+    def play_sound(self, status, message="", attendee_name=""):
         if not self.sound_enabled:
             return
         
         def _play():
+            # 1. Play Tone Chimes
             if HAS_WINSOUND:
                 try:
                     if status == "SUCCESS":
@@ -402,7 +411,44 @@ class GateDisplay(ttk.Window):
                 if status != "SUCCESS":
                     time.sleep(0.2)
                     self.bell()
-                    
+
+            # 2. Text-to-Speech Voice Engine
+            speak_text = ""
+            if status == "SUCCESS":
+                speak_text = f"Access Granted. Welcome {attendee_name}." if attendee_name else "Access Granted."
+            elif status == "DUPLICATE":
+                speak_text = "Warning. Duplicate Scan."
+            else:
+                speak_text = "Access Denied."
+
+            try:
+                if platform.system() == "Windows":
+                    # Thread-Safe Windows Native Call with Female Voice Selection
+                    safe_text = speak_text.replace("'", "")
+                    ps_script = (
+                        f"Add-Type -AssemblyName System.Speech; "
+                        f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                        f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
+                        f"$synth.Rate = 0; "
+                        f"$synth.Speak('{safe_text}');"
+                    )
+                    subprocess.run(
+                        ["powershell", "-Command", ps_script], 
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+                elif HAS_TTS:
+                    # Fallback for Mac/Linux
+                    engine = pyttsx3.init()
+                    voices = engine.getProperty('voices')
+                    for voice in voices:
+                        if 'female' in voice.name.lower() or 'zira' in voice.name.lower() or 'samantha' in voice.name.lower():
+                            engine.setProperty('voice', voice.id)
+                            break
+                    engine.say(speak_text)
+                    engine.runAndWait()
+            except Exception as e:
+                logging.error(f"TTS Error: {e}")
+
         threading.Thread(target=_play, daemon=True).start()
 
     def set_placeholder_photo(self):
@@ -491,7 +537,9 @@ class GateDisplay(ttk.Window):
         self.status_banner.configure(text=cfg["banner"], bootstyle=f"inverse-{c_style}")
         self.bottom_banner.configure(text=cfg["bottom"], bootstyle=f"inverse-{c_style}")
         
-        self.play_sound(status_type, message)
+        # Trigger the Sound and Voice Alert
+        att_name = attendee.get("full_name", "") if attendee else ""
+        self.play_sound(status_type, message, att_name)
 
         if attendee:
             category_raw = str(attendee.get("attendee_type", "")).lower()
