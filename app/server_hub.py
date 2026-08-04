@@ -238,19 +238,65 @@ def get_cached_sessions():
     return DB_SESSIONS_CACHE
 
 def _write_self_signed_cert(cert_path, key_path, local_ip):
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "TDE-EventHub-EllowLabs")])
-    san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
-    try: san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
-    except Exception: pass
-        
-    now = datetime.now(timezone.utc)
-    cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(issuer).public_key(key.public_key())
-        .serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=730))
-        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False).sign(key, hashes.SHA256()))
+    # 1. High-Security Key Generation (4096-bit RSA)
+    key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=4096
+    )
 
-    with open(key_path, "wb") as f: f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
-    with open(cert_path, "wb") as f: f.write(cert.public_bytes(serialization.Encoding.PEM))
+    # Capture the exact generation time for the certificate
+    now = datetime.now(timezone.utc)
+    timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # 2. Define Organization, Unit, Common Name, and Issuer Attributes
+    cert_names = [
+        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital"),
+        x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
+        x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, f"Generated: {timestamp_str}"),
+        x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Hub"),
+    ]
+
+    # For self-signed certificates, Subject and Issuer must match
+    subject = x509.Name(cert_names)
+    issuer = x509.Name(cert_names)
+
+    # 3. Subject Alternative Names (SAN) for localhost and your local IP
+    san_entries = [
+        x509.DNSName("localhost"),
+        x509.IPAddress(ipaddress.ip_address("127.0.0.1"))
+    ]
+    try:
+        san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
+    except Exception:
+        pass
+
+    # 4. Build Certificate with SHA-384 Signature AND the CA Flag
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(issuer)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=730))
+        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+        # THIS IS THE MISSING FLAG THAT FIXES THE ANDROID ERROR:
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(key, hashes.SHA384())
+    )
+
+    # 5. Save Private Key and Certificate
+    with open(key_path, "wb") as f:
+        f.write(
+            key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+        )
+
+    with open(cert_path, "wb") as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
 
 def ensure_ssl_certificate(local_ip):
     if not CRYPTOGRAPHY_AVAILABLE: raise RuntimeError("Cryptography package required.")
