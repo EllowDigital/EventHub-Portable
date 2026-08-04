@@ -31,8 +31,8 @@ except ModuleNotFoundError:
 # ==============================================================================
 # 24/7 STABILITY: GLOBAL CRASH HANDLER
 # ==============================================================================
-def global_exception_handler(*args):
-    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc_type, exc_value, exc_traceback))
 
 tk.Tk.report_callback_exception = global_exception_handler
 
@@ -946,22 +946,147 @@ class ConflictDetailDialog(ttk.Toplevel):
 class SyncDashboard(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="EventHub Portable — Sync Manager")
-        self.geometry("1400x850")
-        self.minsize(1200, 720)
-
-        # Center Window
+        
+        # Center Window safely without crashing on smaller monitors
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw - 1400) // 2}+{(sh - 850) // 2 - 20}")
+        w, h = 1400, 850
+        x = max(0, (sw - w) // 2)
+        y = max(0, (sh - h) // 2 - 20)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(1200, 720)
 
         self.gui_queue = queue.Queue()
         self.sync_manager = SyncManager()
         self.is_syncing = False
+        self._is_refreshing_stats = False  # Critical lock for preventing thread overload
+
+        # --- THEME ENGINE ---
+        self.is_light_theme = tk.BooleanVar(value=False)
+        self.canvas_indicators = []
+
+        # --- ANIMATION ASSETS ---
+        self._spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self._spinner_idx = 0
+
+        # --- AUTO SYNC STATE MANAGER ---
+        self.auto_pull_enabled = tk.BooleanVar(value=False)
+        self.auto_pull_val = tk.StringVar(value="15")
+        self.auto_pull_unit = tk.StringVar(value="Minutes")
+        
+        self.auto_push_enabled = tk.BooleanVar(value=False)
+        self.auto_push_val = tk.StringVar(value="15")
+        self.auto_push_unit = tk.StringVar(value="Minutes")
+        
+        self.next_pull_ts = 0
+        self.next_push_ts = 0
+        
+        self.auto_pull_enabled.trace_add("write", self._recalc_pull_ts)
+        self.auto_pull_val.trace_add("write", self._recalc_pull_ts)
+        self.auto_pull_unit.trace_add("write", self._recalc_pull_ts)
+        
+        self.auto_push_enabled.trace_add("write", self._recalc_push_ts)
+        self.auto_push_val.trace_add("write", self._recalc_push_ts)
+        self.auto_push_unit.trace_add("write", self._recalc_push_ts)
+        # -------------------------------
 
         self.build_ui()
         self.process_gui_queue()
         self.refresh_stats_async()
         self._schedule_periodic_refresh()
+        self._auto_sync_loop() # Start automated background cycle
+
+    def toggle_theme(self):
+        """Swaps seamlessly between optimal sunlight readability and dark room low-eye-strain"""
+        theme_name = "cosmo" if self.is_light_theme.get() else "darkly"
+        self.style.theme_use(theme_name)
+        
+        # 1. Adapt dot backgrounds to match the newly swapped frame color perfectly
+        bg_color = self.style.colors.bg
+        for canvas in self.canvas_indicators:
+            canvas.configure(bg=bg_color)
+            
+        # 2. Re-balance text colors inside the log area for absolute perfect contrast
+        if theme_name == "cosmo":
+            self.log_tree.tag_configure('info', foreground='#212529')  # Sharp black
+            self.log_tree.tag_configure('warning', foreground='#d35400') # Burned orange
+            self.log_tree.tag_configure('error', foreground='#c0392b') # Deep red
+            self.conflict_tree.tag_configure('severe', foreground='#c0392b')
+        else:
+            self.log_tree.tag_configure('info', foreground='#e8e8e8') # Soft white
+            self.log_tree.tag_configure('warning', foreground='#ffc046') # Bright orange
+            self.log_tree.tag_configure('error', foreground='#ff5c5c') # Bright red
+            self.conflict_tree.tag_configure('severe', foreground='#ff5c5c')
+            
+        # Force a quick UI paint refresh
+        self.update_idletasks()
+
+    def _get_seconds(self, val_str, unit_str):
+        try:
+            v = int(val_str)
+            if v <= 0: v = 1
+        except ValueError:
+            v = 15 # default fallback to safely handle cleared inputs
+        return v * 60 if unit_str == "Minutes" else v * 3600
+
+    def _recalc_pull_ts(self, *args):
+        if self.auto_pull_enabled.get():
+            self.next_pull_ts = time.time() + self._get_seconds(self.auto_pull_val.get(), self.auto_pull_unit.get())
+        else:
+            self.next_pull_ts = 0
+
+    def _recalc_push_ts(self, *args):
+        if self.auto_push_enabled.get():
+            self.next_push_ts = time.time() + self._get_seconds(self.auto_push_val.get(), self.auto_push_unit.get())
+        else:
+            self.next_push_ts = 0
+
+    def _format_countdown(self, seconds):
+        m, s = divmod(seconds, 60)
+        h, m = divmod(m, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+    def _auto_sync_loop(self):
+        """Safely manages non-conflicting background automation execution & UI Animation"""
+        now = time.time()
+        
+        # Advance animation frame
+        self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_frames)
+        spin = self._spinner_frames[self._spinner_idx]
+
+        # --- UPDATE AUTO-PULL UI ---
+        if self.auto_pull_enabled.get():
+            if self.is_syncing:
+                self.lbl_pull_countdown.configure(text=f"{spin} Syncing...", bootstyle=WARNING)
+            else:
+                rem_pull = max(0, int(self.next_pull_ts - now))
+                self.lbl_pull_countdown.configure(text=f"⏱ {self._format_countdown(rem_pull)}", bootstyle=INFO)
+        else:
+            self.lbl_pull_countdown.configure(text="Off", bootstyle=SECONDARY)
+
+        # --- UPDATE AUTO-PUSH UI ---
+        if self.auto_push_enabled.get():
+            if self.is_syncing:
+                self.lbl_push_countdown.configure(text=f"{spin} Syncing...", bootstyle=WARNING)
+            else:
+                rem_push = max(0, int(self.next_push_ts - now))
+                self.lbl_push_countdown.configure(text=f"⏱ {self._format_countdown(rem_push)}", bootstyle=SUCCESS)
+        else:
+            self.lbl_push_countdown.configure(text="Off", bootstyle=SECONDARY)
+
+        # --- EXECUTE ACTIONS (If unlocked) ---
+        if not self.is_syncing:
+            # Prioritize Pull over Push if both conflict perfectly on the same second. 
+            if self.auto_pull_enabled.get() and self.next_pull_ts and now >= self.next_pull_ts:
+                self._recalc_pull_ts()
+                logging.info("Auto-sync: Initiating scheduled PULL")
+                self.run_pull()
+            elif self.auto_push_enabled.get() and self.next_push_ts and now >= self.next_push_ts:
+                self._recalc_push_ts()
+                logging.info("Auto-sync: Initiating scheduled PUSH")
+                self.run_push()
+        
+        self.after(1000, self._auto_sync_loop)
 
     def process_gui_queue(self):
         for _ in range(50):
@@ -980,30 +1105,36 @@ class SyncDashboard(ttk.Window):
         self.after(3000, self._schedule_periodic_refresh)
 
     def refresh_stats_async(self):
-        """Fires background thread to grab DB counts without freezing UI."""
+        """Fires background thread to grab DB counts. Strictly single-threaded to prevent lag."""
+        if getattr(self, '_is_refreshing_stats', False): return
+        self._is_refreshing_stats = True
+        
         def _fetch():
-            stats = self.sync_manager.get_dashboard_stats()
-            self.gui_queue.put(lambda: self._apply_stats(stats))
+            try:
+                stats = self.sync_manager.get_dashboard_stats()
+                self.gui_queue.put(lambda: self._apply_stats(stats))
+            finally:
+                self._is_refreshing_stats = False
+                
         threading.Thread(target=_fetch, daemon=True).start()
 
-    # --- RESTORED: Custom Stat Card Layout (Border + Color Accent) ---
     def _create_stat_card(self, parent, icon, title, initial_value, style, var_name):
-        outer = ttk.Frame(parent, borderwidth=1, relief="solid")
-        outer.pack(side=LEFT, fill=BOTH, expand=True, padx=6)
+        outer = ttk.Frame(parent, borderwidth=1, relief="ridge")
+        outer.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
         
         ttk.Frame(outer, bootstyle=style, width=4).pack(side=LEFT, fill=Y)
         
-        inner = ttk.Frame(outer, padding=(16, 14))
+        inner = ttk.Frame(outer, padding=(18, 16))
         inner.pack(side=LEFT, fill=BOTH, expand=True)
         
         top_row = ttk.Frame(inner)
-        top_row.pack(fill=X, anchor=W)
+        top_row.pack(fill=X, anchor=NW)
         if icon:
             ttk.Label(top_row, text=icon, font="-size 12").pack(side=LEFT, padx=(0, 6))
         ttk.Label(top_row, text=title, font="-size 9 -weight bold", bootstyle=style).pack(side=LEFT)
         
         val_lbl = ttk.Label(inner, text=initial_value, font="-size 28 -weight bold")
-        val_lbl.pack(anchor=W, pady=(8, 0))
+        val_lbl.pack(anchor=NW, pady=(8, 0))
         
         self.stat_vars[var_name] = val_lbl
 
@@ -1013,16 +1144,16 @@ class SyncDashboard(ttk.Window):
 
         self.build_sidebar(self.root_container)
 
-        content = ttk.Frame(self.root_container, padding=25)
+        content = ttk.Frame(self.root_container, padding=30) # Increased to 30 for elegant modern padding
         content.pack(side=LEFT, fill=BOTH, expand=True)
 
         header_row = ttk.Frame(content)
-        header_row.pack(fill=X, pady=(0, 15))
+        header_row.pack(fill=X, pady=(0, 20))
         
         title_box = ttk.Frame(header_row)
         title_box.pack(side=LEFT)
-        ttk.Label(title_box, text="Sync Dashboard", font="-size 20 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
-        ttk.Label(title_box, text="TDE UP 2026", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
+        ttk.Label(title_box, text="Sync Dashboard", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
+        ttk.Label(title_box, text="TDE UP 2026", font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
 
         ttk.Button(header_row, text="⟳ Refresh Data", bootstyle="outline-info", command=self.refresh_stats_async).pack(side=RIGHT)
         
@@ -1038,34 +1169,40 @@ class SyncDashboard(ttk.Window):
         self._create_stat_card(cards_row1, "🖥️", "KIOSK REG.", "0", SECONDARY, "kiosk_reg")
 
         cards_row2 = ttk.Frame(content)
-        cards_row2.pack(fill=X, pady=(0, 20))
+        cards_row2.pack(fill=X, pady=(0, 25))
         self._create_stat_card(cards_row2, "✔", "TOTAL CHECKED IN", "0", SUCCESS, "checked_in")
         for day in EVENT_DAYS:
             self._create_stat_card(cards_row2, "📅", _format_day_label(day).replace("📅 ", ""), "0", LIGHT, f"day_{day}")
 
         controls_frame = ttk.Frame(content)
-        controls_frame.pack(fill=X, pady=(0, 6))
+        controls_frame.pack(fill=X, pady=(0, 10))
         self.progress = ttk.Progressbar(controls_frame, mode='indeterminate', bootstyle=INFO)
         self.progress.pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
-        self.lbl_status = ttk.Label(controls_frame, text="Ready.")
+        self.lbl_status = ttk.Label(controls_frame, text="Ready.", font="-size 10")
         self.lbl_status.pack(side=LEFT, padx=10)
 
         self.notebook = ttk.Notebook(content)
-        self.notebook.pack(fill=BOTH, expand=True, pady=(14, 0))
+        self.notebook.pack(fill=BOTH, expand=True, pady=(15, 0))
 
         self.build_log_tab()
         self.build_conflicts_tab()
+        
+        # Trigger an initial theme sweep to color everything correctly
+        self.toggle_theme()
 
     def build_sidebar(self, container):
-        sidebar_outer = ttk.Frame(container, width=330)
+        sidebar_outer = ttk.Frame(container, width=380) # Enhanced width for neat spacious components
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
 
-        sidebar = ttk.Frame(sidebar_outer, padding=20)
+        sidebar = ttk.Frame(sidebar_outer, padding=25)
         sidebar.pack(fill=BOTH, expand=True)
 
-        ttk.Label(sidebar, text="EventHub Portable", font="-size 16 -weight bold").pack(anchor=W)
-        ttk.Label(sidebar, text="Data Synchronization", font="-size 10", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 15))
+        ttk.Label(sidebar, text="EventHub Portable", font="-size 18 -weight bold").pack(anchor=W)
+        ttk.Label(sidebar, text="Data Synchronization", font="-size 10", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 12))
+        
+        # Super-slick Light/Dark Mode toggle
+        ttk.Checkbutton(sidebar, text="☀️ Sunlight Mode", variable=self.is_light_theme, bootstyle="round-toggle", command=self.toggle_theme).pack(anchor=W, pady=(0, 20))
 
         conn_frame = ttk.Labelframe(sidebar, text=" CONNECTION STATUS ", padding=15)
         conn_frame.pack(fill=X, pady=(0, 15))
@@ -1102,21 +1239,48 @@ class SyncDashboard(ttk.Window):
         self.btn_push = ttk.Button(pp_row, text="↑ Push Data", bootstyle=SUCCESS, command=self.run_push)
         self.btn_push.pack(side=LEFT, fill=X, expand=True, padx=(4, 0), ipady=4)
 
-        ttk.Button(sidebar, text="⚙ Configure Databases", bootstyle="outline-light", command=lambda: ConfigDialog(self)).pack(fill=X, side=BOTTOM, pady=(20, 0))
+        # --- AUTO SYNC SETTINGS UI ---
+        auto_frame = ttk.Labelframe(sidebar, text=" AUTO SYNC SCHEDULE ", padding=12)
+        auto_frame.pack(fill=X, pady=(10, 20))
+
+        p_row = ttk.Frame(auto_frame)
+        p_row.pack(fill=X, pady=6)
+        ttk.Checkbutton(p_row, text="Auto Pull", variable=self.auto_pull_enabled, bootstyle="info-round-toggle", width=10).pack(side=LEFT, padx=(0,6))
+        ttk.Entry(p_row, textvariable=self.auto_pull_val, width=3).pack(side=LEFT)
+        ttk.Combobox(p_row, textvariable=self.auto_pull_unit, values=["Minutes", "Hours"], width=8, state="readonly").pack(side=LEFT, padx=4)
+        self.lbl_pull_countdown = ttk.Label(p_row, text="Off", font="-size 9 -weight bold", bootstyle=SECONDARY)
+        self.lbl_pull_countdown.pack(side=RIGHT, padx=5)
+
+        pu_row = ttk.Frame(auto_frame)
+        pu_row.pack(fill=X, pady=6)
+        ttk.Checkbutton(pu_row, text="Auto Push", variable=self.auto_push_enabled, bootstyle="success-round-toggle", width=10).pack(side=LEFT, padx=(0,6))
+        ttk.Entry(pu_row, textvariable=self.auto_push_val, width=3).pack(side=LEFT)
+        ttk.Combobox(pu_row, textvariable=self.auto_push_unit, values=["Minutes", "Hours"], width=8, state="readonly").pack(side=LEFT, padx=4)
+        self.lbl_push_countdown = ttk.Label(pu_row, text="Off", font="-size 9 -weight bold", bootstyle=SECONDARY)
+        self.lbl_push_countdown.pack(side=RIGHT, padx=5)
+        # -----------------------------
+
+        ttk.Button(sidebar, text="⚙ Configure Databases", bootstyle="outline-secondary", command=lambda: ConfigDialog(self)).pack(fill=X, side=BOTTOM, pady=(20, 0))
 
     def _create_status_label(self, parent, text, bootstyle):
         row = ttk.Frame(parent)
-        row.pack(fill=X, pady=3)
-        canvas = tk.Canvas(row, width=12, height=12, bg="#1e1e1e", highlightthickness=0)
+        row.pack(fill=X, pady=4)
+        canvas = tk.Canvas(row, width=12, height=12, bg=self.style.colors.bg, highlightthickness=0)
+        self.canvas_indicators.append(canvas)
         dot = canvas.create_oval(2, 2, 10, 10, fill=self.style.colors.get(bootstyle), outline="")
-        canvas.pack(side=LEFT, padx=(0, 6))
-        lbl = ttk.Label(row, text=text, font="-size 9 -weight bold", bootstyle=bootstyle)
+        canvas.pack(side=LEFT, padx=(0, 8))
+        lbl = ttk.Label(row, text=text, font="-size 10 -weight bold", bootstyle=bootstyle)
         lbl.pack(side=LEFT)
         return lbl, canvas, dot
 
-    def _update_status_dot(self, label, canvas, dot, text, color_hex, bootstyle):
+    def _update_status_dot(self, label, canvas, dot, text, bootstyle):
         label.configure(text=text, bootstyle=bootstyle)
-        canvas.itemconfig(dot, fill=color_hex)
+        
+        # Dynamically grabs perfectly themed semantic colors (no more hardcoded hexes!)
+        current_color = self.style.colors.get(bootstyle)
+        canvas.itemconfig(dot, fill=current_color)
+        
+        # Tiny subtle blink effect on change
         canvas.coords(dot, 1, 1, 11, 11)
         self.after(200, lambda: canvas.coords(dot, 2, 2, 10, 10) if canvas.winfo_exists() else None)
 
@@ -1138,10 +1302,6 @@ class SyncDashboard(ttk.Window):
         self.log_tree.heading("Message", text="MESSAGE", anchor=W)
         self.log_tree.column("Time", width=100, stretch=False)
         self.log_tree.column("Level", width=100, stretch=False)
-        
-        self.log_tree.tag_configure('error', foreground='#ff5c5c')
-        self.log_tree.tag_configure('warning', foreground='#ffc046')
-        self.log_tree.tag_configure('info', foreground='#e8e8e8')
 
         scrollbar = ttk.Scrollbar(body, orient=VERTICAL, command=self.log_tree.yview)
         self.log_tree.configure(yscrollcommand=scrollbar.set)
@@ -1179,7 +1339,6 @@ class SyncDashboard(ttk.Window):
         self.conflict_tree.column("full_name", width=160, stretch=False)
         self.conflict_tree.column("local_updated", width=150, stretch=False)
         self.conflict_tree.column("cloud_updated", width=150, stretch=False)
-        self.conflict_tree.tag_configure('severe', foreground='#ff5c5c')
         self.conflict_tree.bind("<Double-1>", self.on_conflict_double_click)
 
         self._conflict_scroll = ttk.Scrollbar(body, orient=VERTICAL, command=self.conflict_tree.yview)
@@ -1189,24 +1348,24 @@ class SyncDashboard(ttk.Window):
 
     def _apply_stats(self, stats):
         if not self.sync_manager.SessionMySQL:
-            self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Offline", "#ff4444", DANGER)
-            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Check Config", "#ff4444", DANGER)
-            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", "#757575", SECONDARY)
+            self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Offline", DANGER)
+            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Check Config", DANGER)
+            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", SECONDARY)
             self.health_meter.configure(bootstyle=DANGER, amountused=0)
             self.lbl_last_sync.configure(text=f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
             self._refresh_conflicts_ui()
             return
 
-        self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Online", "#00e676", SUCCESS)
+        self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Online", SUCCESS)
         if self.sync_manager.SessionSQLite:
-            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Ready", "#00e676", SUCCESS)
+            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Ready", SUCCESS)
         else:
-            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Offline", "#ff4444", DANGER)
+            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Offline", DANGER)
 
         if self.sync_manager.state == SyncState.ERROR: 
-            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Error", "#ff4444", DANGER)
+            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Error", DANGER)
         elif not self.is_syncing: 
-            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", "#757575", SECONDARY)
+            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", SECONDARY)
 
         def safe_set(key, val):
             if self.stat_vars[key].cget("text") != str(val):
@@ -1252,7 +1411,7 @@ class SyncDashboard(ttk.Window):
         self.is_syncing = True
         self._set_controls_state(DISABLED)
         self.progress.start(10)
-        self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, f"Supabase Cloud: {mode.title()}...", "#00d2ff", INFO)
+        self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, f"Supabase Cloud: {mode.title()}...", INFO)
 
     def _unlock_ui(self, msg="Ready."):
         self.is_syncing = False
