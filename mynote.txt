@@ -12,15 +12,15 @@
 
 -------------------------------------------------------------------------------------------------------------------------
 [2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)                                                             	|      
-------------------------------------------------------------------------------------------------------------------------|
-|	DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                 	          |                   
+-------------------------------------------------------------------------------------------------------------------------
+|	DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                 	|                   
 |--------------------|------------|-------------------------------|-----------------------------------------------------|
-|	Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)                        |            
-|	Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras                         |            
-|	Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag                    |            
-|	Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)                    |           
-|	Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning                              |          
-|	Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API                                |         
+|	Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)                  |            
+|	Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras                   |            
+|	Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag              |            
+|	Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)              |           
+|	Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning                        |          
+|	Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API                          |         
 -------------------------------------------------------------------------------------------------------------------------
 
 [3] GOLDEN RULES & REMINDERS                                                                                                 
