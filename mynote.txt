@@ -12,15 +12,15 @@
 
 -------------------------------------------------------------------------------------------------------------------------
 [2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)                                                             	|      
--------------------------------------------------------------------------------------------------------------------------
-|	DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                 	|                   
--------------------|------------|-------------------------------|--------------------------------------------------------
-|	Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)                  |            
-|	Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras                   |            
-|	Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag              |            
-|	Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)              |           
-|	Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning                        |          
-|	Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API                          |         
+------------------------------------------------------------------------------------------------------------------------|
+|	DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                 	          |                   
+|--------------------|------------|-------------------------------|-----------------------------------------------------|
+|	Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)                        |            
+|	Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras                         |            
+|	Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag                    |            
+|	Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)                    |           
+|	Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning                              |          
+|	Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API                                |         
 -------------------------------------------------------------------------------------------------------------------------
 
 [3] GOLDEN RULES & REMINDERS                                                                                                 
@@ -66,5 +66,21 @@
   - Server IP: 192.168.10.1 (Subnet: 255.255.255.0)                                                                          
   - Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)                                                                        
   - Client URL: http://192.168.10.1:5000  
+
+[7] CERTIFICATE INSTALLATION (HTTPS WARNING FIX)                                                                             
+                                                                                      
+» WINDOWS PC INSTALLATION:                                                                                                   
+  1. Rename 'hub_cert.pem' (found in config/certs) to 'hub_cert.crt'.                                                        
+  2. Double-click the file and click 'Install Certificate'.                                                                  
+  3. Select 'Local Machine' as the Store Location.                                                                           
+  4. CRITICAL: Choose 'Place all certificates in the following store' -> Browse -> 'Trusted Root Certification Authorities'.   
+  5. Click Finish and completely restart your web browser.                                                                   
+
+» ANDROID / SAMSUNG INSTALLATION:                                                                                            
+  1. Transfer the certificate to the phone and rename it to 'hub_cert.cer'.                                                  
+  2. WARNING: Do NOT open the file directly from the File Manager (it will ask for a private key).                           
+  3. Open Android Settings -> Security & Privacy -> More security settings -> Encryption & credentials.                      
+  4. Tap 'Install a certificate' -> MUST select 'CA Certificate' (Do not select User/VPN).                                   
+  5. Accept the privacy warning ('Install anyway') and select your 'hub_cert.cer' file.                                      
                                                                                    
 -------------------------------------------------------------------------------------------------------------------------
