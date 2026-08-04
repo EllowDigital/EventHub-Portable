@@ -546,12 +546,8 @@ class OfflineKioskApp(ttk.Window):
                     aid = data.get('attendee_id', 'UNKNOWN ID')
                     self.gui_queue.put(lambda: self.errors['mobile'].configure(text=f"⚠ Already Registered! ID: {aid}", foreground="#ffbb33"))
                     self.gui_queue.put(lambda: self.inputs['mobile'].configure(bootstyle=WARNING))
-                    # 🎤 VOICE ALERT: Duplicate Mobile Number
-                    self.play_sound("DUPLICATE", "Warning. This mobile number is already registered.")
                 else:
                     self.gui_queue.put(lambda: self.errors['mobile'].configure(text="✓ Ready", foreground="#00e676"))
-                    # 🎤 VOICE ALERT: Mobile Available
-                    self.play_sound("SUCCESS", "Number available.")
             elif res.status_code == 404:
                 self.gui_queue.put(lambda: self.errors['mobile'].configure(text="⚠ Backend missing route", foreground="#ff4444"))
         except Exception:

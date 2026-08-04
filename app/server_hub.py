@@ -1001,7 +1001,7 @@ class ServerHub(ttk.Window):
         self.style.configure("Soft.TFrame", background=colors.get("bg"), bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER, borderwidth=1, relief="solid")
         self.style.configure("TLabelframe", background=colors.get("bg"), bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER)
         self.style.configure("TLabelframe.Label", background=colors.get("bg"))
-        self.style.configure("LogHeader.TLabel", background="#252526", foreground="#CCCCCC", font="-size 10 -weight bold", padding=10)
+        self.style.configure("LogHeader.TLabel", background="#252526", foreground="#CCCCCC", font="-size 8 -weight bold", padding=10)
         self.style.configure("Treeview.Heading", background=_mix_hex(self.CARD_BG, colors.get("fg"), 0.12), foreground=_mix_hex(self.CARD_BG, colors.get("fg"), 0.82), bordercolor=BG_BORDER, relief="flat", font="-size 9 -weight bold")
         self.style.map("Treeview.Heading", background=[("active", _mix_hex(self.CARD_BG, colors.get("fg"), 0.20))])
         self.style.configure("Treeview", bordercolor=BG_BORDER, borderwidth=1)
@@ -1023,7 +1023,7 @@ class ServerHub(ttk.Window):
         ttk.Label(hdr, text=title if title else "Live Log Feed", style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
         if clear_cmd: ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
             
-        log_box = ScrolledText(frame, font=("Consolas", 10))
+        log_box = ScrolledText(frame, font=("Consolas", 8))
         log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
         log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
         
@@ -1033,8 +1033,8 @@ class ServerHub(ttk.Window):
         log_box.text.tag_configure("log_warning", foreground="#FFB454")
         log_box.text.tag_configure("log_error", foreground="#FF6B6B")
         log_box.text.tag_configure("log_info", foreground="#5DADE2")
-        log_box.text.tag_configure("log_register", foreground="#6EC6FF", font=("Consolas", 10, "bold"))
-        log_box.text.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 10, "bold"))
+        log_box.text.tag_configure("log_register", foreground="#6EC6FF", font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 8, "bold"))
         return log_box
 
     def build_ui(self):

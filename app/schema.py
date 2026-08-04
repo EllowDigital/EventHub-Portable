@@ -290,7 +290,7 @@ def play_audio_and_speak(message):
     except Exception as e:
         logging.error(f"TTS Error: {e}")
 
-def show_popup_notification(message, duration_ms=4500):
+def show_popup_notification(message, duration_ms=10000):
     """Creates an auto-closing, frameless GUI popup with dark mode styling."""
     root = tk.Tk()
     
