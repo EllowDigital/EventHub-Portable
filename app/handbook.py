@@ -37,6 +37,7 @@ class EventHubApp(ttk.Window):
         self.build_routing_matrix()
         self.build_offline_optimizations()
         self.build_troubleshooting()
+        self.build_certificate_installation()
 
         # Bind window resizing to auto-wrap text perfectly
         self.main_scroll.bind("<Configure>", self.on_window_resize)
@@ -273,6 +274,32 @@ class EventHubApp(ttk.Window):
             sub = ttk.Labelframe(card, text=f" {title} ", padding=10, bootstyle="dark" if self.current_theme_is_dark else "light")
             sub.pack(fill=X, pady=5)
             self.add_responsive_label(sub, desc, font=("Courier", 9))
+
+    def build_certificate_installation(self):
+        card = ttk.Labelframe(self.page, text=" [6] CERTIFICATE INSTALLATION (HTTPS WARNING FIX) ", padding=15, bootstyle="primary")
+        card.pack(fill=X, pady=10)
+
+        self.add_responsive_label(card, "WINDOWS PC INSTALLATION:", font=("Helvetica", 10, "bold"), bootstyle="info")
+        pc_steps = [
+            "1. Rename 'hub_cert.pem' (found in config/certs) to 'hub_cert.crt'.",
+            "2. Double-click the file and click 'Install Certificate'.",
+            "3. Select 'Local Machine' as the Store Location.",
+            "4. CRITICAL: Choose 'Place all certificates in the following store' -> Browse -> 'Trusted Root Certification Authorities'.",
+            "5. Click Finish and completely restart your web browser."
+        ]
+        for s in pc_steps:
+            self.add_responsive_label(card, f"• {s}", font=("Helvetica", 9))
+
+        self.add_responsive_label(card, "ANDROID / SAMSUNG INSTALLATION:", font=("Helvetica", 10, "bold"), bootstyle="success", pady=(10, 2))
+        android_steps = [
+            "1. Transfer the certificate to the phone and rename it to 'hub_cert.cer'.",
+            "2. WARNING: Do NOT open the file directly from the File Manager (it will ask for a private key).",
+            "3. Open Android Settings -> Security & Privacy -> More security settings -> Encryption & credentials.",
+            "4. Tap 'Install a certificate' -> MUST select 'CA Certificate' (Do not select User/VPN).",
+            "5. Accept the privacy warning ('Install anyway') and select your 'hub_cert.cer' file."
+        ]
+        for s in android_steps:
+            self.add_responsive_label(card, f"• {s}", font=("Helvetica", 9))
 
 if __name__ == "__main__":
     app = EventHubApp()
