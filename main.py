@@ -163,14 +163,14 @@ _bootstrap_first_run()
 # TOOL REGISTRY
 # ==============================================================================
 TOOLS = [
-    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Main hub — Flask API & live stats.", "bootstyle": PRIMARY},
-    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Big-screen scan feed for gate entrance.", "bootstyle": INFO},
-    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "Staffed walk-in registration desk.", "bootstyle": SUCCESS},
-    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Pull/push Supabase, resolve conflicts.", "bootstyle": WARNING},
-    {"key": "photos", "icon": "🖼️", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Pull attendee photos for offline use.", "bootstyle": SECONDARY},
-    {"key": "explorer", "icon": "🔍", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Search and inspect attendee profiles.", "bootstyle": SECONDARY},
+    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Central control server.", "bootstyle": PRIMARY},
+    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Live access monitor.", "bootstyle": INFO},
+    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "Walk-in registration desk.", "bootstyle": SUCCESS},
+    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Database synchronization engine.", "bootstyle": WARNING},
+    {"key": "photos", "icon": "🖼️", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Offline photo cache.", "bootstyle": SECONDARY},
+    {"key": "explorer", "icon": "🔍", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Profile search directory.", "bootstyle": SECONDARY},
+    {"key": "handbook", "icon": "📖", "label": "Digital Handbook", "script": "handbook.py", "desc": "Troubleshooting reference guide.", "bootstyle": PRIMARY},
 ]
-
 # ==============================================================================
 # MAIN GUI APPLICATION
 # ==============================================================================
@@ -181,7 +181,7 @@ class LauncherApp(ttk.Window):
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         ww, wh = max(1000, min(1400, int(sw * 0.85))), max(750, min(1000, int(sh * 0.85)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
-        self.minsize(1000, 750)
+        self.minsize(1200, 780)
 
         inject_cloudflared_path()
 
