@@ -94,13 +94,14 @@ TELEMETRY_DATA = {
     "total_dl_mb": 0.0, "total_ul_mb": 0.0
 }
 _telemetry_lock = threading.Lock()
+_global_shutdown_event = threading.Event()
 
 def _telemetry_worker():
     last_time = time.time()
     try: last_io = psutil.net_io_counters()
     except Exception: last_io = None
     
-    while True:
+    while not _global_shutdown_event.is_set():
         try:
             cpu = int(psutil.cpu_percent(interval=None))
             ram = int(psutil.virtual_memory().percent)
@@ -145,7 +146,7 @@ def _telemetry_worker():
                 })
         except Exception as e:
             logging.debug(f"Telemetry Worker Error: {e}")
-        time.sleep(1)
+        _global_shutdown_event.wait(1.0)
 
 threading.Thread(target=_telemetry_worker, daemon=True).start()
 
@@ -164,22 +165,22 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001  
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-DB_WRITER_THREADS = 16            
-DB_JOB_QUEUE_MAXSIZE = 2000       
+DB_WRITER_THREADS = 32            
+DB_JOB_QUEUE_MAXSIZE = 5000       
 DB_JOB_TIMEOUT = 10               
 STATS_REFRESH_INTERVAL_SEC = 3   
-SLOW_REQUEST_THRESHOLD_MS = 300  
+SLOW_REQUEST_THRESHOLD_MS = 250  
 MAX_LOG_LINES = 2000             
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
-_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=10_000_000, backupCount=5, encoding='utf-8')
+_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=15_000_000, backupCount=10, encoding='utf-8')
 _file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
 
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
-app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024  
+app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  
 
 gui_log_callback = None
 SERVER_TEST_MODE = False
@@ -238,17 +239,10 @@ def get_cached_sessions():
     return DB_SESSIONS_CACHE
 
 def _write_self_signed_cert(cert_path, key_path, local_ip):
-    # 1. High-Security Key Generation (4096-bit RSA)
-    key = rsa.generate_private_key(
-        public_exponent=65537,
-        key_size=4096
-    )
-
-    # Capture the exact generation time for the certificate
+    key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
     now = datetime.now(timezone.utc)
     timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    # 2. Define Organization, Unit, Common Name, and Issuer Attributes
     cert_names = [
         x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital"),
         x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
@@ -256,21 +250,13 @@ def _write_self_signed_cert(cert_path, key_path, local_ip):
         x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Hub"),
     ]
 
-    # For self-signed certificates, Subject and Issuer must match
     subject = x509.Name(cert_names)
     issuer = x509.Name(cert_names)
 
-    # 3. Subject Alternative Names (SAN) for localhost and your local IP
-    san_entries = [
-        x509.DNSName("localhost"),
-        x509.IPAddress(ipaddress.ip_address("127.0.0.1"))
-    ]
-    try:
-        san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
-    except Exception:
-        pass
+    san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+    try: san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
+    except Exception: pass
 
-    # 4. Build Certificate with SHA-384 Signature AND the CA Flag
     cert = (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -280,20 +266,12 @@ def _write_self_signed_cert(cert_path, key_path, local_ip):
         .not_valid_before(now)
         .not_valid_after(now + timedelta(days=730))
         .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
-        # THIS IS THE MISSING FLAG THAT FIXES THE ANDROID ERROR:
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(key, hashes.SHA384())
     )
 
-    # 5. Save Private Key and Certificate
     with open(key_path, "wb") as f:
-        f.write(
-            key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.NoEncryption()
-            )
-        )
+        f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
 
     with open(cert_path, "wb") as f:
         f.write(cert.public_bytes(serialization.Encoding.PEM))
@@ -396,8 +374,8 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
 
 def traffic_monitor_loop():
     global _current_sec_requests
-    while True:
-        time.sleep(1)
+    while not _global_shutdown_event.is_set():
+        _global_shutdown_event.wait(1.0)
         with traffic_lock:
             hits = _current_sec_requests
             _current_sec_requests = 0
@@ -424,7 +402,7 @@ def _compute_stats_snapshot():
         session.close()
 
 def stats_refresher_loop():
-    while True:
+    while not _global_shutdown_event.is_set():
         try:
             snapshot = _compute_stats_snapshot()
             if snapshot is not None:
@@ -438,7 +416,7 @@ def stats_refresher_loop():
                     STATS_CACHE["last_error"] = None
         except Exception as e:
             with stats_lock: STATS_CACHE["last_error"] = str(e)
-        time.sleep(STATS_REFRESH_INTERVAL_SEC)
+        _global_shutdown_event.wait(STATS_REFRESH_INTERVAL_SEC)
 
 @dataclass
 class DBJob:
@@ -452,11 +430,11 @@ _db_writer_threads = []
 def _submit_db_job(kind, payload):
     job = DBJob(kind=kind, payload=payload)
     try: DB_WRITE_QUEUE.put(job, timeout=1)
-    except queue.Full: return 503, {"status": "error", "message": "Server heavily loaded."}
+    except queue.Full: return 503, {"status": "error", "message": "Server overloaded. Try again."}
         
     try: return job.future.result(timeout=DB_JOB_TIMEOUT)
-    except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "Request took too long."}
-    except Exception: return 500, {"status": "error", "message": "Internal error."}
+    except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "Database request timed out."}
+    except Exception as e: return 500, {"status": "error", "message": f"Internal process error: {str(e)}"}
 
 def _handle_checkin_job(payload):
     identifier, search_type = payload["identifier"], payload["search_type"]
@@ -465,7 +443,7 @@ def _handle_checkin_job(payload):
     if not identifier: return 400, {"status": "error", "message": "No ID provided"}
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return 503, {"status": "error", "message": "DB offline"}
+    if not mysql_factory: return 503, {"status": "error", "message": "Database offline"}
     
     session = mysql_factory()
     try:
@@ -489,7 +467,7 @@ def _handle_checkin_job(payload):
         current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
 
-        if current_date_str not in date_map: return 400, {"status": "error", "message": "Invalid date"}
+        if current_date_str not in date_map: return 400, {"status": "error", "message": "Invalid date code."}
         today_key = date_map[current_date_str]
         
         att_days = attendee.attendance_days or []
@@ -525,7 +503,7 @@ def _handle_checkin_job(payload):
         except Exception: pass
         log_event_clean("CHECKIN", device_name, f"DB Error", 500)
         logging.error(f"Internal Check-in error: {e}")
-        return 500, {"status": "error", "message": "Internal error."}
+        return 500, {"status": "error", "message": "Internal processing error."}
     finally:
         try: session.close()
         except Exception: pass
@@ -537,12 +515,10 @@ def _handle_register_job(payload):
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
     
-    if not mysql_factory: return 503, {"status": "error", "message": "DB offline"}
+    if not mysql_factory: return 503, {"status": "error", "message": "Database offline"}
     session = mysql_factory()
 
     try:
-        # FIX 2: Dropped .with_for_update() on pre-check to prevent InnoDB gap-lock deadlocks under concurrent registrations.
-        # Mobile is unique in schema.py; IntegrityError fallback handles race conditions cleanly.
         existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
         if existing_main:
             log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
@@ -559,7 +535,7 @@ def _handle_register_job(payload):
                 aid = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
                 if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first(): 
                     return aid
-            raise RuntimeError("ID generation failed")
+            raise RuntimeError("ID generation failed after 5000 attempts")
 
         new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
         today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -587,7 +563,7 @@ def _handle_register_job(payload):
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing: 
                 return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
-            return 500, {"status": "error", "message": "Integrity Error."}
+            return 500, {"status": "error", "message": "Integrity Error: Race condition on registration."}
 
         log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
         return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
@@ -596,29 +572,33 @@ def _handle_register_job(payload):
         try: session.rollback()
         except Exception: pass
         logging.error(f"Internal Register error: {e}")
-        return 500, {"status": "error", "message": "Internal error."}
+        return 500, {"status": "error", "message": "Internal error processing registration."}
     finally:
         try: session.close()
         except Exception: pass
 
 def db_writer_loop(worker_id):
-    logging.info(f"DB writer #{worker_id} ready")
-    while True:
-        job = DB_WRITE_QUEUE.get()
-        if job is None: 
-            DB_WRITE_QUEUE.task_done()
-            break
-            
+    logging.info(f"DB writer #{worker_id} highly-available ready")
+    while not _global_shutdown_event.is_set():
         try:
-            if job.kind == "checkin": result = _handle_checkin_job(job.payload)
-            elif job.kind == "register": result = _handle_register_job(job.payload)
-            else: result = (500, {"status": "error", "message": "Unknown job"})
+            job = DB_WRITE_QUEUE.get(timeout=1.0)
+            if job is None: 
+                DB_WRITE_QUEUE.task_done()
+                break
                 
-            if not job.future.done(): job.future.set_result(result)
-        except Exception as e:
-            if not job.future.done(): job.future.set_exception(e)
-        finally: 
-            DB_WRITE_QUEUE.task_done()
+            try:
+                if job.kind == "checkin": result = _handle_checkin_job(job.payload)
+                elif job.kind == "register": result = _handle_register_job(job.payload)
+                else: result = (500, {"status": "error", "message": "Unknown job payload type."})
+                    
+                if not job.future.done(): job.future.set_result(result)
+            except Exception as e:
+                logging.error(f"Job Processing Exception worker {worker_id}: {e}")
+                if not job.future.done(): job.future.set_exception(e)
+            finally: 
+                DB_WRITE_QUEUE.task_done()
+        except queue.Empty:
+            continue
 
 def start_db_writers():
     for i in range(DB_WRITER_THREADS):
@@ -627,8 +607,10 @@ def start_db_writers():
         _db_writer_threads.append(t)
 
 def stop_db_writers():
+    _global_shutdown_event.set()
     for _ in range(len(_db_writer_threads)): 
-        DB_WRITE_QUEUE.put(None)
+        try: DB_WRITE_QUEUE.put(None, timeout=1.0)
+        except queue.Full: pass
     _db_writer_threads.clear()
 
 @app.route('/')
@@ -705,11 +687,11 @@ def get_network_data():
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
-        q = queue.Queue(maxsize=50)
+        q = queue.Queue(maxsize=100)
         with scan_clients_lock: SCAN_CLIENTS.append(q)
         try:
             while True:
-                try: yield f"data: {json.dumps(q.get(timeout=10))}\n\n"
+                try: yield f"data: {json.dumps(q.get(timeout=15))}\n\n"
                 except queue.Empty: yield ": heartbeat\n\n"
         except GeneratorExit: pass 
         finally:
@@ -747,7 +729,7 @@ def check_mobile():
     if not mobile_number: return jsonify({"status": "error", "message": "Mobile required"}), 400
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return jsonify({"status": "error", "message": "DB offline"}), 503
+    if not mysql_factory: return jsonify({"status": "error", "message": "Database offline"}), 503
     session = mysql_factory()
     try:
         em = session.query(Attendee).filter_by(mobile=mobile_number).first()
@@ -755,22 +737,21 @@ def check_mobile():
         ek = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
         if ek: return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
         return jsonify({"status": "not_found"}), 200
-    except Exception: return jsonify({"status": "error", "message": "Internal error."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Internal processing error."}), 500
     finally:
         try: session.close()
         except Exception: pass
 
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
-    # FIX 4: Added limit/offset pagination to protect connection pool under heavy read loads.
     limit = request.args.get('limit', 500, type=int)
-    limit = max(1, min(limit, 1000)) # Safety cap at 1000 records
+    limit = max(1, min(limit, 1000))
     page = request.args.get('page', 1, type=int)
     offset = max(0, (page - 1) * limit)
 
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return jsonify({"status": "error", "message": "DB offline"}), 503
+    if not mysql_factory: return jsonify({"status": "error", "message": "Database offline"}), 503
     session = mysql_factory()
     try:
         main_att = session.query(Attendee).offset(offset).limit(limit).all()
@@ -796,36 +777,33 @@ def get_all_attendees():
         return jsonify(results), 200
     except Exception as e:
         logging.error(f"Failed to fetch attendees API: {e}")
-        return jsonify({"status": "error", "message": "Internal error."}), 500
+        return jsonify({"status": "error", "message": "Internal processing error."}), 500
     finally:
         try: session.close()
         except Exception: pass
 
-
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        self.server = create_server(app, host=host, port=port, threads=150, connection_limit=500, channel_timeout=15)
+        self.server = create_server(app, host=host, port=port, threads=250, connection_limit=1000, channel_timeout=30)
         self.ctx = app.app_context(); self.ctx.push()
     def run(self):
         try: self.server.run()
-        except Exception: logging.exception("Waitress crashed")
+        except Exception: logging.exception("Waitress engine crashed")
     def shutdown(self): self.server.close()
 
-
 class HttpsFlaskThread(threading.Thread):
-    def __init__(self, app, host, port, numthreads=150):
+    def __init__(self, app, host, port, numthreads=250):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context(); self.ctx.push()
-        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=512)
-        # FIX 5: Explicitly set Cheroot idle timeout parity with Waitress channel_timeout
-        self.server.keep_alive_timeout = 15
+        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=1024)
+        self.server.keep_alive_timeout = 30
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
         try: self.server.start()
-        except Exception: logging.exception("Cheroot crashed")
+        except Exception: logging.exception("Cheroot engine crashed")
     def shutdown(self): self.server.stop()
 
 def get_local_ip():
@@ -842,10 +820,28 @@ def _hex_to_rgb(hex_color): return tuple(int(hex_color.lstrip('#')[i:i+2], 16) f
 def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
 def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
+class AnimatedMeter:
+    """Class to smoothly interpolate (Lerp) meter animations for a responsive, high-framerate feel."""
+    def __init__(self, meter_widget):
+        self.meter = meter_widget
+        self.current_val = 0.0
+        self.target_val = 0.0
+
+    def set_target(self, val):
+        self.target_val = float(val)
+
+    def tick(self):
+        diff = self.target_val - self.current_val
+        if abs(diff) > 0.5:
+            self.current_val += diff * 0.15 
+        else:
+            self.current_val = self.target_val
+        self.meter.amountusedvar.set(int(round(self.current_val)))
+
 
 class ServerHub(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.3 (Hardened + Responsive UI)")
+        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.4 (Performance & Async Edge Edition)")
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         ww, wh = max(950, min(1600, int(sw * 0.92))), max(650, min(950, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
@@ -857,7 +853,6 @@ class ServerHub(ttk.Window):
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
         
-        # FIX 6: Added cf_lock to ensure thread-safe mutation of Cloudflare process attributes
         self.cf_lock = threading.Lock()
         self.cloudflare_url = "Offline"
         self.cf_process = None
@@ -883,14 +878,23 @@ class ServerHub(ttk.Window):
         gui_log_callback = self.log_flask_event
         
         self.build_ui()
+        self.animated_meters = {
+            "cpu": AnimatedMeter(self.mini_meter_cpu),
+            "ram": AnimatedMeter(self.mini_meter_ram),
+            "net": AnimatedMeter(self.mini_meter_net),
+            "api": AnimatedMeter(self.mini_meter_api)
+        }
+
+        # Subdivide UI loop timers for hyper-responsiveness
         self.flush_log_buffers()
         self.process_gui_queue()
         self.refresh_stats()
         self.refresh_hw_meters()
+        self.animation_loop() # 60fps UI Loop
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-        self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
         threading.Thread(target=traffic_monitor_loop, daemon=True).start()
@@ -929,20 +933,20 @@ class ServerHub(ttk.Window):
     def network_ping_daemon(self):
         global NETWORK_LATENCY
         session = requests.Session()
-        session.headers.update({"User-Agent": "EventHub-Agent/1.0"})
-        while True:
+        session.headers.update({"User-Agent": "EventHub-PingDaemon/2.0"})
+        while not _global_shutdown_event.is_set():
             try:
                 future_local = self.ping_executor.submit(self._ping_local, session)
                 future_cloud = self.ping_executor.submit(self._ping_cloud, session)
                 
-                l_ms, l_stat = future_local.result()
-                c_ms, c_stat = future_cloud.result()
+                l_ms, l_stat = future_local.result(timeout=4)
+                c_ms, c_stat = future_cloud.result(timeout=9)
 
                 with network_latency_lock: 
                     NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
             except Exception as e:
-                logging.error(f"Ping Daemon Error: {e}")
-            time.sleep(3.0)
+                logging.error(f"Ping Daemon Processing Error: {e}")
+            _global_shutdown_event.wait(3.0)
 
     def _append_log(self, widget_id, message, tag=None):
         segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
@@ -954,7 +958,6 @@ class ServerHub(ttk.Window):
     def log_flask_event(self, message): 
         self._append_log('flask', message)
 
-    # FIX 1: Protected .after() rescheduling loop with try/finally so errors never kill the log flush loop
     def flush_log_buffers(self):
         if not self.winfo_exists(): return
         try:
@@ -973,7 +976,7 @@ class ServerHub(ttk.Window):
         except Exception as e:
             logging.error(f"flush_log_buffers error: {e}")
         finally:
-            self.after(250, self.flush_log_buffers)
+            self.after(200, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
         if not text_widget.winfo_exists(): return
@@ -989,11 +992,10 @@ class ServerHub(ttk.Window):
             text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
         text_widget.configure(state=DISABLED)
 
-    # FIX 1: Protected .after() rescheduling loop with try/finally & inner try/except for individual tasks
     def process_gui_queue(self):
         if not self.winfo_exists(): return
         try:
-            for _ in range(100):
+            for _ in range(150): # Increased queue throughput to prevent UI stalling
                 try: 
                     task = self.gui_queue.get_nowait()
                     task()
@@ -1004,7 +1006,18 @@ class ServerHub(ttk.Window):
         except Exception as e:
             logging.error(f"process_gui_queue outer error: {e}")
         finally:
-            self.after(30, self.process_gui_queue)
+            self.after(25, self.process_gui_queue)
+
+    def animation_loop(self):
+        """Ticks 60 times a second to ensure perfectly smooth animations for meters."""
+        if not self.winfo_exists(): return
+        try:
+            for anim_meter in self.animated_meters.values():
+                anim_meter.tick()
+        except Exception as e:
+            pass
+        finally:
+            self.after(16, self.animation_loop)
 
     def clear_system_logs(self):
         with self.log_lock: self.log_buffer_flask.clear()
@@ -1300,6 +1313,7 @@ class ServerHub(ttk.Window):
 
     def on_close(self):
         try:
+            _global_shutdown_event.set() 
             if self.http_thread or self.https_thread: 
                 self.stop_flask()
             with self.cf_lock:
@@ -1350,11 +1364,6 @@ class ServerHub(ttk.Window):
         self._append_log('network', f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}")
         self.refresh_stats()
 
-    def _meter_set_value(self, meter, value, cache_key):
-        if self._meter_cache.get(cache_key) != value:
-            meter.amountusedvar.set(value)
-            self._meter_cache[cache_key] = value
-
     def _meter_set_style(self, meter, bootstyle, cache_key):
         if self._meter_cache.get(cache_key) != bootstyle:
             meter.configure(bootstyle=bootstyle)
@@ -1377,14 +1386,14 @@ class ServerHub(ttk.Window):
                 snap_telemetry = dict(TELEMETRY_DATA)
 
             c, r = snap_telemetry.get("cpu", 0), snap_telemetry.get("ram", 0)
-            self._meter_set_value(self.mini_meter_cpu, c, "cpu")
+            self.animated_meters["cpu"].set_target(c)
             self._meter_set_style(self.mini_meter_cpu, SUCCESS if c < 60 else (WARNING if c < 85 else DANGER), "cpu_style")
-            self._meter_set_value(self.mini_meter_ram, r, "ram")
+            self.animated_meters["ram"].set_target(r)
             self._meter_set_style(self.mini_meter_ram, SUCCESS if r < 70 else (WARNING if r < 90 else DANGER), "ram_style")
 
             net_type = snap_telemetry.get("net_type", "Disconnected")
             if net_type == "Disconnected" or net_type == "Offline":
-                self._meter_set_value(self.mini_meter_net, 0, "net")
+                self.animated_meters["net"].set_target(0)
                 self._meter_set_subtext(self.mini_meter_net, "OFFLINE", "net_subtext")
                 self._meter_set_style(self.mini_meter_net, DANGER, "net_style")
                 self.net_tooltip.text = "Internet Disconnected\nNo active interface found."
@@ -1410,14 +1419,14 @@ class ServerHub(ttk.Window):
                 if mbps > 1000: cap = 10000
 
                 self._meter_set_total(self.mini_meter_net, cap, "net_cap")
-                self._meter_set_value(self.mini_meter_net, int(round(mbps)), "net")
+                self.animated_meters["net"].set_target(mbps)
                 self._meter_set_subtext(self.mini_meter_net, net_type.upper()[:7], "net_subtext")
                 self._meter_set_style(self.mini_meter_net, SUCCESS if mbps > 1.0 else INFO, "net_style")
                 self.net_tooltip.text = tt_text
 
             with metrics_lock: snap_metrics = dict(SERVER_METRICS)
             proc_ms = int(snap_metrics["avg_process_ms"])
-            self._meter_set_value(self.mini_meter_api, min(proc_ms, 500), "api")
+            self.animated_meters["api"].set_target(min(proc_ms, 500))
             self._meter_set_style(self.mini_meter_api, SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER), "api_style")
 
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
@@ -1437,13 +1446,11 @@ class ServerHub(ttk.Window):
         finally:
             self.after(1000, self.refresh_hw_meters)
 
-    # FIX 1 & 3: Protected .after() rescheduling loop with try/finally AND added independent ACTIVE_DEVICES pruning
     def refresh_stats(self):
         if not self.winfo_exists(): return
         try:
             current_time = time.time()
             with device_lock:
-                # Prune stale devices directly on GUI thread loop so cleanup doesn't rely on web /stats polling
                 for d_id, data in list(ACTIVE_DEVICES.items()):
                     if current_time - data['last_seen'] >= DEVICE_ONLINE_WINDOW:
                         del ACTIVE_DEVICES[d_id]
@@ -1486,13 +1493,13 @@ class ServerHub(ttk.Window):
         except Exception as e:
             logging.error(f"refresh_stats error: {e}")
         finally:
-            self.after(4000, self.refresh_stats)
+            self.after(3000, self.refresh_stats)
 
     def start_flask(self):
         self.btn_start_flask.configure(state=DISABLED)
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
         start_db_writers()
-        self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} DB writer threads ready.")
+        self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} Multi-threaded highly-available DB writers ready.")
         try:
             self.http_thread = WaitressHttpThread(app, '0.0.0.0', HTTP_PORT)
             self.https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
