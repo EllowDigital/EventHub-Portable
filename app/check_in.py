@@ -19,33 +19,25 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk, ImageOps
 
-# Custom tone generator for Windows (bypasses default OS theme sounds)
-try:
-    if platform.system() == "Windows":
+# ------------------------------------------------------------------------------
+# ENVIRONMENT SETUP & FALLBACKS
+# ------------------------------------------------------------------------------
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+HAS_WINSOUND = False
+if platform.system() == "Windows":
+    try:
         import winsound
         HAS_WINSOUND = True
-    else:
-        HAS_WINSOUND = False
-except ImportError:
-    HAS_WINSOUND = False
+    except ImportError:
+        pass
 
-# Text-to-Speech engine fallback for Mac/Linux
+HAS_TTS = False
 try:
     import pyttsx3
     HAS_TTS = True
 except ImportError:
-    HAS_TTS = False
-
-# Suppress warnings for local adhoc HTTPS certificates
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# ==============================================================================
-# 24/7 STABILITY: GLOBAL CRASH HANDLER
-# ==============================================================================
-def global_exception_handler(*args):
-    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
-
-tk.Tk.report_callback_exception = global_exception_handler
+    pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, 'config', 'checkin.json')
@@ -66,9 +58,17 @@ CATEGORY_STYLES = {
     "default": "secondary"    
 }
 
-# ==============================================================================
+# ------------------------------------------------------------------------------
+# GLOBAL CRASH HANDLER
+# ------------------------------------------------------------------------------
+def global_exception_handler(*args):
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
+
+tk.Tk.report_callback_exception = global_exception_handler
+
+# ------------------------------------------------------------------------------
 # SETTINGS MANAGER
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class ConfigManager:
     def __init__(self):
         self.config = {
@@ -86,20 +86,90 @@ class ConfigManager:
                     content = f.read().strip()
                     if content:
                         self.config.update(json.loads(content))
-            except (json.JSONDecodeError, ValueError) as e:
-                logging.error(f"Config corrupted. Resetting to defaults. Error: {e}")
-                self.save()
             except Exception as e:
-                logging.error(f"Error loading config: {e}")
+                logging.error(f"Config load error: {e}")
+                self.save()
 
     def save(self):
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
         with open(CONFIG_PATH, 'w') as f:
             json.dump(self.config, f, indent=4)
 
-# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# DEDICATED NOTIFICATION ENGINE (AUDIO & TTS)
+# ------------------------------------------------------------------------------
+class NotificationEngine(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.queue = queue.Queue()
+        self.sound_enabled = True
+        self.engine = None
+        
+        if HAS_TTS and platform.system() != "Windows":
+            try:
+                self.engine = pyttsx3.init()
+                for voice in self.engine.getProperty('voices'):
+                    if any(name in voice.name.lower() for name in ['female', 'zira', 'samantha']):
+                        self.engine.setProperty('voice', voice.id)
+                        break
+            except Exception as e:
+                logging.error(f"TTS Init Error: {e}")
+
+    def run(self):
+        while True:
+            task = self.queue.get()
+            if not self.sound_enabled:
+                self.queue.task_done()
+                continue
+                
+            status, message = task.get("status"), task.get("message", "")
+            
+            # 1. Play Tone
+            if HAS_WINSOUND:
+                try:
+                    if status == "SUCCESS":
+                        winsound.Beep(2000, 100)  
+                    elif status == "DUPLICATE":
+                        winsound.Beep(1000, 100) 
+                        time.sleep(0.05)
+                        winsound.Beep(1000, 100)
+                    else:
+                        winsound.Beep(400, 150)
+                        winsound.Beep(300, 300)
+                except Exception:
+                    print('\a') 
+            else:
+                print('\a')
+                if status != "SUCCESS":
+                    time.sleep(0.2)
+                    print('\a')
+
+            # 2. Speak
+            speak_text = "Access Denied." if status not in ["SUCCESS", "DUPLICATE"] else ""
+            if speak_text:
+                if platform.system() == "Windows":
+                    safe_text = speak_text.replace("'", "")
+                    ps_script = (
+                        f"Add-Type -AssemblyName System.Speech; "
+                        f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+                        f"$s.SelectVoiceByHints('Female'); "
+                        f"$s.Speak('{safe_text}');"
+                    )
+                    subprocess.run(["powershell", "-Command", ps_script], creationflags=subprocess.CREATE_NO_WINDOW)
+                elif self.engine:
+                    try:
+                        self.engine.say(speak_text)
+                        self.engine.runAndWait()
+                    except Exception as e:
+                        logging.error(f"TTS Play Error: {e}")
+                        
+            self.queue.task_done()
+
+
+# ------------------------------------------------------------------------------
 # SETTINGS DIALOG
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class SettingsDialog(ttk.Toplevel):
     def __init__(self, parent, config_manager, on_save_callback):
         super().__init__(parent)
@@ -125,17 +195,20 @@ class SettingsDialog(ttk.Toplevel):
 
         ttk.Label(frame, text="⚙️ Terminal Settings", font="-size 18 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 25))
 
-        ttk.Label(frame, text="Hub Server URL (HTTP/HTTPS)", font="-weight bold").pack(anchor=W)
-        self.ent_url = ttk.Entry(frame, font="-size 11")
-        self.ent_url.insert(0, self.config_manager.config["hub_url"])
-        self.ent_url.pack(fill=X, pady=(5, 20), ipady=6)
+        fields = [
+            ("Hub Server URL (HTTP/HTTPS)", "hub_url", self.config_manager.config["hub_url"]),
+            ("Device Identifier Name", "device_name", self.config_manager.config["device_name"])
+        ]
+        
+        self.entries = {}
+        for label_text, key, val in fields:
+            ttk.Label(frame, text=label_text, font="-weight bold").pack(anchor=W)
+            ent = ttk.Entry(frame, font="-size 11")
+            ent.insert(0, val)
+            ent.pack(fill=X, pady=(5, 20), ipady=6)
+            self.entries[key] = ent
 
-        ttk.Label(frame, text="Device Identifier Name", font="-weight bold").pack(anchor=W)
-        self.ent_device = ttk.Entry(frame, font="-size 11")
-        self.ent_device.insert(0, self.config_manager.config["device_name"])
-        self.ent_device.pack(fill=X, pady=(5, 20), ipady=6)
-
-        ttk.Label(frame, text="Local Photo Directory (Relative Path)", font="-weight bold").pack(anchor=W)
+        ttk.Label(frame, text="Local Photo Directory", font="-weight bold").pack(anchor=W)
         photo_frame = ttk.Frame(frame)
         photo_frame.pack(fill=X, pady=(5, 30))
         
@@ -153,24 +226,21 @@ class SettingsDialog(ttk.Toplevel):
         start_dir = os.path.normpath(os.path.join(BASE_DIR, self.ent_photo.get()))
         d = filedialog.askdirectory(initialdir=start_dir)
         if d:
-            try:
-                rel_path = os.path.relpath(d, start=BASE_DIR).replace('\\', '/')
-            except ValueError:
-                rel_path = d
             self.ent_photo.delete(0, END)
-            self.ent_photo.insert(0, rel_path)
+            self.ent_photo.insert(0, os.path.relpath(d, start=BASE_DIR).replace('\\', '/'))
 
     def save(self):
-        self.config_manager.config["hub_url"] = self.ent_url.get().strip().rstrip('/')
-        self.config_manager.config["device_name"] = self.ent_device.get().strip()
+        self.config_manager.config["hub_url"] = self.entries["hub_url"].get().strip().rstrip('/')
+        self.config_manager.config["device_name"] = self.entries["device_name"].get().strip()
         self.config_manager.config["photo_directory"] = self.ent_photo.get().strip()
         self.config_manager.save()
         self.on_save()
         self.destroy()
 
-# ==============================================================================
+
+# ------------------------------------------------------------------------------
 # MAIN GATE DISPLAY APPLICATION
-# ==============================================================================
+# ------------------------------------------------------------------------------
 class GateDisplay(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Gate Terminal")
@@ -186,22 +256,25 @@ class GateDisplay(ttk.Window):
         
         self.gui_queue = queue.Queue()
         self.scan_queue = queue.Queue()  
-        
         self.is_polling = False
-        self.sound_enabled = True
+        
+        self.notifier = NotificationEngine()
+        self.notifier.start()
+        
         self.stats = {"Success": 0, "Duplicate": 0, "Wrong Day": 0, "Errors": 0}
         self.recent_scans = []
         
         self.current_photo = None
         self._placeholder_img_cache = {}
+        self._photo_cache = collections.OrderedDict() 
         self._last_scan_time = 0.0
-        
-        # Deduplication cache to prevent ghost thread events. Increased size for safety with 4 phones.
-        self._processed_sigs = collections.deque(maxlen=100) 
+        self._processed_sigs = collections.deque(maxlen=200) 
 
         self.stream_session = None
         self.api_session = None
 
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
         self.build_ui()
         self.process_queues()
         self.start_threads()
@@ -209,69 +282,77 @@ class GateDisplay(ttk.Window):
     def toggle_theme(self):
         self.current_theme = "flatly" if self.current_theme == "darkly" else "darkly"
         self.style.theme_use(self.current_theme)
-        
+        self.handle_placeholder_colors()
+        if self.lbl_attendee_id.cget("text") == "---":
+            self.set_placeholder_photo()
+
+    def handle_placeholder_colors(self):
         for e in (self.ent_id, self.ent_phone):
             if "e.g." in e.get():
                 e.configure(foreground="gray")
             else:
-                e.configure(foreground="") 
-                
-        if self.lbl_attendee_id.cget("text") == "---":
-            self.set_placeholder_photo()
+                e.configure(foreground="")
 
     def build_ui(self):
+        # 1. Navigation Bar
         self.nav = ttk.Frame(self, padding=20)
         self.nav.pack(fill=X)
         
         title_frame = ttk.Frame(self.nav)
         title_frame.pack(side=LEFT)
-        
         ttk.Label(title_frame, text="🎟️ Gate Display Terminal", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
         self.lbl_subtitle = ttk.Label(title_frame, text=f"{self.config_manager.config['device_name']} • TDE UP 2026", font="-size 11 -weight bold", bootstyle=SECONDARY)
         self.lbl_subtitle.pack(anchor=W, pady=(2, 0))
 
         controls = ttk.Frame(self.nav)
         controls.pack(side=RIGHT)
-        
         ttk.Button(controls, text="🌗 Theme", bootstyle="outline-secondary", command=self.toggle_theme).pack(side=LEFT, padx=6)
         ttk.Button(controls, text="⚙️ Settings", bootstyle="outline-secondary", command=self.open_settings).pack(side=LEFT, padx=6)
         
         self.btn_sound = ttk.Button(controls, text="🔊 Sound", bootstyle="outline-info", command=self.toggle_sound)
         self.btn_sound.pack(side=LEFT, padx=6)
-        
         ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=6)
         
         self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(15, 8))
         self.net_pill.pack(side=LEFT, padx=25)
-        
         self.lbl_hub_status = ttk.Label(self.net_pill, text="● Connecting...", font="-weight bold -size 12", bootstyle=WARNING)
         self.lbl_hub_status.pack(side=LEFT)
 
         ttk.Separator(self, orient=HORIZONTAL).pack(fill=X)
 
+        # 2. Test Banner (Hidden by default)
         self.test_banner = ttk.Frame(self, bootstyle=DANGER)
         self.lbl_test_mode = ttk.Label(self.test_banner, text="⚠️ TEST MODE ACTIVE", font="-weight bold -size 14", bootstyle="inverse-danger")
         self.lbl_test_mode.pack(pady=10)
         
+        # 3. Main Content Wrapper (Responsive Grid)
         self.content = ttk.Frame(self, padding=30)
         self.content.pack(fill=BOTH, expand=True)
+        # FIX: Left panel expands dynamically, Right panel acts as a fixed-width sidebar
+        self.content.columnconfigure(0, weight=1) 
+        self.content.columnconfigure(1, weight=0, minsize=440) 
+        self.content.rowconfigure(0, weight=1)
 
+        # ---------------------------------------------------------
+        # LEFT PANEL (Profile & Details)
+        # ---------------------------------------------------------
         left_panel = ttk.Frame(self.content)
-        left_panel.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 30))
+        left_panel.grid(row=0, column=0, sticky=NSEW, padx=(0, 30))
+        left_panel.columnconfigure(0, weight=1)
+        left_panel.rowconfigure(1, weight=1)
 
         self.status_banner = ttk.Label(left_panel, text="WAITING FOR SCAN...", font="-size 34 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
-        self.status_banner.pack(fill=X, pady=(0, 30), ipady=35)
+        self.status_banner.grid(row=0, column=0, sticky=EW, pady=(0, 30), ipady=35)
 
         profile_frame = ttk.Frame(left_panel)
-        profile_frame.pack(fill=BOTH, expand=True)
-
-        photo_container = ttk.Frame(profile_frame, width=360)
-        photo_container.pack(side=LEFT, fill=Y, padx=(0, 35))
-        photo_container.pack_propagate(False) 
+        profile_frame.grid(row=1, column=0, sticky=NSEW)
+        profile_frame.columnconfigure(1, weight=1) 
+        
+        photo_container = ttk.Frame(profile_frame)
+        photo_container.grid(row=0, column=0, sticky=NS, padx=(0, 35))
         
         photo_border = ttk.Frame(photo_container, bootstyle=SECONDARY, padding=3)
         photo_border.pack(fill=BOTH, expand=True)
-        
         self.lbl_photo = ttk.Label(photo_border, anchor=CENTER)
         self.lbl_photo.pack(fill=BOTH, expand=True)
         
@@ -279,27 +360,38 @@ class GateDisplay(ttk.Window):
         self.lbl_attendee_id.pack(pady=15)
         self.set_placeholder_photo()
 
+        # Text Details
         details = ttk.Frame(profile_frame)
-        details.pack(side=LEFT, fill=BOTH, expand=True)
+        details.grid(row=0, column=1, sticky=NSEW)
         
         header_frame = ttk.Frame(details)
         header_frame.pack(fill=X, pady=(10, 0))
-        header_frame.columnconfigure(0, weight=1) 
-        header_frame.columnconfigure(1, weight=0) 
         
-        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 40 -weight bold", bootstyle=DEFAULT, wraplength=580)
-        self.lbl_name.grid(row=0, column=0, sticky=NW, pady=(0, 5))
+        # FIX: Pack Badge to the right FIRST to guarantee space allocation
+        self.lbl_pass_badge = ttk.Label(header_frame, text="PENDING", font="-size 16 -weight bold", bootstyle="inverse-secondary", padding=(20, 10))
+        self.lbl_pass_badge.pack(side=RIGHT, anchor=NE, padx=(10, 0))
+
+        # FIX: Pack Name to the left filling remaining space
+        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 36 -weight bold", bootstyle=DEFAULT)
+        self.lbl_name.pack(side=LEFT, anchor=NW, fill=X, expand=True, pady=(0, 5))
         
-        self.lbl_pass_badge = ttk.Label(header_frame, text="PENDING", font="-size 18 -weight bold", bootstyle="inverse-secondary", padding=(25, 10))
-        self.lbl_pass_badge.grid(row=0, column=1, sticky=NE, padx=(10, 0))
+        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 18", bootstyle=INFO)
+        self.lbl_company.pack(anchor=W, pady=(8, 35), fill=X)
 
-        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 18", bootstyle=INFO, wraplength=580)
-        self.lbl_company.pack(anchor=W, pady=(8, 35))
+        # FIX: Dynamic Wrap Event to prevent overlapping text on resize
+        def adjust_wraplength(event):
+            badge_width = self.lbl_pass_badge.winfo_reqwidth()
+            available = event.width - badge_width - 30
+            if available > 150:
+                self.lbl_name.configure(wraplength=available)
+                self.lbl_company.configure(wraplength=event.width)
+                
+        header_frame.bind("<Configure>", adjust_wraplength)
 
+        # Grid Data
         grid = ttk.Frame(details)
         grid.pack(fill=BOTH, expand=True)
-        grid.columnconfigure(0, weight=1, minsize=220)
-        grid.columnconfigure(1, weight=1, minsize=220)
+        grid.columnconfigure((0, 1), weight=1, uniform="group1") 
         
         self.fields = {}
         row_col = [
@@ -312,19 +404,24 @@ class GateDisplay(ttk.Window):
             f = ttk.Frame(grid, padding=12)
             f.grid(row=r, column=c, sticky=NSEW, padx=6, pady=6)
             ttk.Label(f, text=f"{label.upper()}", font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-            val = ttk.Label(f, text="---", font="-size 16 -weight bold", wraplength=280)
+            val = ttk.Label(f, text="---", font="-size 16 -weight bold", wraplength=250)
             val.pack(anchor=W, pady=(6,0))
             self.fields[key] = val
 
         self.bottom_banner = ttk.Label(left_panel, text="READY FOR OPERATIONS", font="-size 18 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
-        self.bottom_banner.pack(fill=X, side=BOTTOM, ipady=22)
+        self.bottom_banner.grid(row=2, column=0, sticky=EW, pady=(30,0), ipady=22)
 
-        right_panel = ttk.Frame(self.content, width=440)
-        right_panel.pack(side=RIGHT, fill=Y)
-        right_panel.pack_propagate(False)
+
+        # ---------------------------------------------------------
+        # RIGHT PANEL (Manual Entry & Activity)
+        # ---------------------------------------------------------
+        right_panel = ttk.Frame(self.content)
+        right_panel.grid(row=0, column=1, sticky=NSEW)
+        right_panel.columnconfigure(0, weight=1) # FIX: Forces children to stretch across the sidebar space
+        right_panel.rowconfigure(3, weight=1)
 
         lookup = ttk.Labelframe(right_panel, text=" 🔍 Manual Entry ", padding=25)
-        lookup.pack(fill=X, pady=(0, 25))
+        lookup.grid(row=0, column=0, sticky=EW, pady=(0, 25))
         
         self.ent_phone = self.create_placeholder_entry(lookup, "Phone Number (e.g. 90000...)")
         self.ent_phone.pack(fill=X, pady=(0, 15), ipady=8)
@@ -337,28 +434,28 @@ class GateDisplay(ttk.Window):
         ttk.Button(lookup, text="PROCESS MANUAL SCAN", bootstyle=SUCCESS, command=self.handle_manual_submit).pack(fill=X, ipady=8)
 
         stats_frame = ttk.Frame(right_panel)
-        stats_frame.pack(fill=X, pady=(0, 30))
+        stats_frame.grid(row=1, column=0, sticky=EW, pady=(0, 30))
+        stats_frame.columnconfigure((0, 1), weight=1)
         
         self.stat_labels = {}
         for idx, (title, color) in enumerate([("Success", SUCCESS), ("Duplicate", WARNING), ("Wrong Day", SECONDARY), ("Errors", DANGER)]):
             f = ttk.Frame(stats_frame, borderwidth=1, relief=SOLID, padding=15)
             f.grid(row=idx//2, column=idx%2, sticky=NSEW, padx=5, pady=5)
-            stats_frame.columnconfigure(idx%2, weight=1)
             
             val = ttk.Label(f, text="0", font="-size 26 -weight bold", bootstyle=color)
             val.pack(anchor=CENTER)
             ttk.Label(f, text=title.upper(), font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=CENTER)
             self.stat_labels[title] = val
 
-        ttk.Label(right_panel, text="🕒 RECENT ACTIVITY", font="-size 13 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 12))
+        ttk.Label(right_panel, text="🕒 RECENT ACTIVITY", font="-size 13 -weight bold", bootstyle=PRIMARY).grid(row=2, column=0, sticky=NW, pady=(0, 12))
         self.list_frame = ttk.Frame(right_panel)
-        self.list_frame.pack(fill=BOTH, expand=True)
+        self.list_frame.grid(row=3, column=0, sticky=NSEW)
 
     def create_placeholder_entry(self, parent, placeholder_text):
         entry = ttk.Entry(parent, font="-size 12")
         entry.insert(0, placeholder_text)
         entry.configure(foreground='gray')
-
+        
         def on_focus_in(event):
             if entry.get() == placeholder_text:
                 entry.delete(0, END)
@@ -374,84 +471,23 @@ class GateDisplay(ttk.Window):
         return entry
 
     def handle_manual_submit(self):
-        if self.ent_id.get() and "Attendee ID" not in self.ent_id.get():
+        id_val = self.ent_id.get()
+        phone_val = self.ent_phone.get()
+        
+        if id_val and "Attendee ID" not in id_val:
             self.manual_scan('id')
-        elif self.ent_phone.get() and "Phone Number" not in self.ent_phone.get():
+        elif phone_val and "Phone Number" not in phone_val:
             self.manual_scan('phone')
 
     def toggle_sound(self):
-        self.sound_enabled = not self.sound_enabled
+        self.notifier.sound_enabled = not self.notifier.sound_enabled
         self.btn_sound.configure(
-            text="🔊 Sound" if self.sound_enabled else "🔇 Muted", 
-            bootstyle="outline-info" if self.sound_enabled else "outline-secondary"
+            text="🔊 Sound" if self.notifier.sound_enabled else "🔇 Muted", 
+            bootstyle="outline-info" if self.notifier.sound_enabled else "outline-secondary"
         )
-
-    def play_sound(self, status, message="", attendee_name=""):
-        if not self.sound_enabled:
-            return
-        
-        def _play():
-            # 1. Play Tone Chimes
-            if HAS_WINSOUND:
-                try:
-                    if status == "SUCCESS":
-                        winsound.Beep(2000, 100)  
-                    elif status == "DUPLICATE":
-                        winsound.Beep(1000, 100) 
-                        time.sleep(0.05)
-                        winsound.Beep(1000, 100)
-                    else:
-                        if "Denied" in message:
-                            winsound.Beep(400, 150)
-                            winsound.Beep(300, 300)
-                        else:
-                            winsound.Beep(200, 600)
-                except Exception:
-                    self.bell() 
-            else:
-                self.bell()
-                if status != "SUCCESS":
-                    time.sleep(0.2)
-                    self.bell()
-
-            # 2. Text-to-Speech Voice Engine (Removed SUCCESS and DUPLICATE speech)
-            speak_text = ""
-            if status not in ["SUCCESS", "DUPLICATE"]:
-                speak_text = "Access Denied."
-
-            # Only run the heavy TTS engine if there's actually a message to speak
-            if speak_text:
-                try:
-                    if platform.system() == "Windows":
-                        safe_text = speak_text.replace("'", "")
-                        ps_script = (
-                            f"Add-Type -AssemblyName System.Speech; "
-                            f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                            f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
-                            f"$synth.Rate = 0; "
-                            f"$synth.Speak('{safe_text}');"
-                        )
-                        subprocess.run(
-                            ["powershell", "-Command", ps_script], 
-                            creationflags=subprocess.CREATE_NO_WINDOW
-                        )
-                    elif HAS_TTS:
-                        engine = pyttsx3.init()
-                        voices = engine.getProperty('voices')
-                        for voice in voices:
-                            if 'female' in voice.name.lower() or 'zira' in voice.name.lower() or 'samantha' in voice.name.lower():
-                                engine.setProperty('voice', voice.id)
-                                break
-                        engine.say(speak_text)
-                        engine.runAndWait()
-                except Exception as e:
-                    logging.error(f"TTS Error: {e}")
-
-        threading.Thread(target=_play, daemon=True).start()
 
     def set_placeholder_photo(self):
         bg_color = '#e9ecef' if self.current_theme == "flatly" else '#222222'
-        
         if bg_color not in self._placeholder_img_cache:
             img = Image.new('RGB', (340, 340), color=bg_color)
             self._placeholder_img_cache[bg_color] = ImageTk.PhotoImage(img)
@@ -460,6 +496,11 @@ class GateDisplay(ttk.Window):
         self.lbl_photo.configure(image=self.current_photo)
 
     def async_load_photo(self, attendee_id):
+        if attendee_id in self._photo_cache:
+            self.update_photo_ui(self._photo_cache[attendee_id])
+            self._photo_cache.move_to_end(attendee_id)
+            return
+
         def _load():
             rel_dir = self.config_manager.config.get("photo_directory", DEFAULT_PHOTO_DIR)
             abs_directory = os.path.normpath(os.path.join(BASE_DIR, rel_dir))
@@ -472,11 +513,16 @@ class GateDisplay(ttk.Window):
                         img = Image.open(path)
                         img = ImageOps.fit(img, (340, 340), Image.Resampling.LANCZOS)
                         photo_image = ImageTk.PhotoImage(img)
+                        
+                        self._photo_cache[attendee_id] = photo_image
+                        if len(self._photo_cache) > 50:
+                            self._photo_cache.popitem(last=False)
+                            
                         self.gui_queue.put(lambda p=photo_image: self.update_photo_ui(p))
                         photo_found = True
                         break
                     except Exception as e:
-                        logging.error(f"Error loading photo: {e}")
+                        logging.error(f"Photo error: {e}")
             
             if not photo_found:
                 self.gui_queue.put(self.set_placeholder_photo)
@@ -488,34 +534,41 @@ class GateDisplay(ttk.Window):
         self.lbl_photo.configure(image=self.current_photo)
 
     def process_queues(self):
-        for _ in range(50):
-            try: self.gui_queue.get_nowait()()
-            except queue.Empty: break
-
-        for _ in range(5):
+        while not self.gui_queue.empty():
             try:
-                event_data = self.scan_queue.get_nowait()
-                self.update_ui_with_event(event_data)
+                task = self.gui_queue.get_nowait()
+                task()
             except queue.Empty: break
+            except Exception as e: logging.error(f"GUI queue task failed: {e}")
 
-        # OPTIMIZATION: Reduced polling frequency to save CPU cycles (50ms = 20 checks/sec)
+        scans_to_process = []
+        while not self.scan_queue.empty() and len(scans_to_process) < 5:
+            try: scans_to_process.append(self.scan_queue.get_nowait())
+            except queue.Empty: break
+            
+        for event in scans_to_process:
+            self.update_ui_with_event(event)
+
         self.after(50, self.process_queues)
+
+    def trigger_banner_animation(self, c_style):
+        original_style = f"inverse-{c_style}"
+        flash_style = "light" if self.current_theme == "darkly" else "dark"
+        
+        self.status_banner.configure(bootstyle=f"inverse-{flash_style}")
+        self.after(100, lambda: self.status_banner.configure(bootstyle=original_style))
 
     def update_ui_with_event(self, event_data):
         status_type = event_data.get("status", "ERROR")
         message = event_data.get("message", "Unknown error")
         attendee = event_data.get("attendee")
         scanner_dev = event_data.get("device", "Unknown Scanner")
-        
         raw_ts = event_data.get("timestamp", "")
         
-        # --- EVENT DEDUPLICATION ---
         aid = attendee.get("attendee_id", "unknown") if attendee else "none"
         event_sig = f"{raw_ts}_{aid}_{status_type}"
         
-        if event_sig in self._processed_sigs:
-            return 
-            
+        if event_sig in self._processed_sigs: return 
         self._processed_sigs.append(event_sig)
 
         time_str = datetime.now().strftime("%I:%M %p")
@@ -533,22 +586,17 @@ class GateDisplay(ttk.Window):
         cfg = configs.get(status_type, configs["ERROR"])
         c_style = cfg["color"]
         
-        self.status_banner.configure(text=cfg["banner"], bootstyle=f"inverse-{c_style}")
+        self.status_banner.configure(text=cfg["banner"])
         self.bottom_banner.configure(text=cfg["bottom"], bootstyle=f"inverse-{c_style}")
+        self.trigger_banner_animation(c_style)
         
-        # Trigger the Sound Alert
-        att_name = attendee.get("full_name", "") if attendee else ""
-        self.play_sound(status_type, message, att_name)
+        self.notifier.queue.put({"status": status_type, "message": message})
 
         if attendee:
             category_raw = str(attendee.get("attendee_type", "")).lower()
             badge_style = CATEGORY_STYLES.get(category_raw, CATEGORY_STYLES["default"])
             
-            self.lbl_pass_badge.configure(
-                bootstyle=f"inverse-{badge_style}", 
-                text=category_raw.upper() if category_raw else "UNKNOWN"
-            )
-
+            self.lbl_pass_badge.configure(bootstyle=f"inverse-{badge_style}", text=category_raw.upper() if category_raw else "UNKNOWN")
             self.lbl_name.configure(text=attendee.get("full_name", "").upper(), bootstyle="default")
             self.lbl_company.configure(text=attendee.get("business_name") or "General Admission", bootstyle="info" if c_style=="success" else c_style)
             self.lbl_attendee_id.configure(text=attendee.get("attendee_id", ""))
@@ -570,7 +618,6 @@ class GateDisplay(ttk.Window):
             self.lbl_company.configure(text="---", bootstyle=SECONDARY)
             self.lbl_attendee_id.configure(text="---")
             self.lbl_pass_badge.configure(bootstyle="inverse-secondary", text="N/A")
-            
             for lbl in self.fields.values(): lbl.configure(text="---")
             self.set_placeholder_photo()
 
@@ -580,17 +627,9 @@ class GateDisplay(ttk.Window):
             self.stat_labels[key].configure(text=str(self.stats[key]))
 
     def add_recent_scan(self, name, att_id, style, time_str):
-        # Create the new card frame
         card = ttk.Frame(self.list_frame, bootstyle=style, borderwidth=1, relief=SOLID)
         
-        # CORRECTED LOGIC: Force the new card to render *above* the existing cards in the UI
-        if self.recent_scans:
-            card.pack(fill=X, pady=5, padx=2, before=self.recent_scans[0])
-        else:
-            card.pack(fill=X, pady=5, padx=2)
-        
         lbl_style = f"inverse-{style}"
-        
         top = ttk.Frame(card, bootstyle=style)
         top.pack(fill=X, padx=14, pady=(10, 0))
         ttk.Label(top, text=f"👤 {name}", font="-size 12 -weight bold", bootstyle=lbl_style).pack(side=LEFT)
@@ -601,10 +640,20 @@ class GateDisplay(ttk.Window):
         ttk.Label(bot, text=att_id, font="-size 10", bootstyle=lbl_style).pack(side=LEFT)
         ttk.Label(bot, text="✓ OK" if style=="success" else "⚠ WARN", font="-weight bold", bootstyle=lbl_style).pack(side=RIGHT)
         
-        # Keep track of the active widgets in the list
+        if self.recent_scans:
+            card.pack(fill=X, pady=0, padx=2, before=self.recent_scans[0])
+        else:
+            card.pack(fill=X, pady=0, padx=2)
+            
+        def expand_card(c, target_pad, step=1):
+            current = int(c.pack_info().get('pady', 0))
+            if current < target_pad:
+                c.pack_configure(pady=current+step)
+                self.after(10, lambda: expand_card(c, target_pad, step))
+                
+        expand_card(card, 5)
         self.recent_scans.insert(0, card)
         
-        # Enforce max 5 limit and securely destroy old widgets from memory
         if len(self.recent_scans) > 5:
             old = self.recent_scans.pop()
             old.destroy()
@@ -616,20 +665,16 @@ class GateDisplay(ttk.Window):
             if self.api_session: self.api_session.close()
         except Exception: pass
         
-        # Fresh isolated network pools
         self.stream_session = requests.Session()
-        self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/1.0", "Connection": "keep-alive"})
+        self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/2.0", "Connection": "keep-alive"})
         
         self.api_session = requests.Session()
-        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/1.0", "Connection": "close"})
+        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/2.0", "Connection": "close"})
 
         self.is_polling = True
         
-        self.stream_thread = threading.Thread(target=self.listen_to_server_stream, daemon=True)
-        self.stream_thread.start()
-        
-        self.status_thread = threading.Thread(target=self.poll_server_status, daemon=True)
-        self.status_thread.start()
+        threading.Thread(target=self.listen_to_server_stream, daemon=True).start()
+        threading.Thread(target=self.poll_server_status, daemon=True).start()
 
     def poll_server_status(self):
         while self.is_polling:
@@ -649,15 +694,9 @@ class GateDisplay(ttk.Window):
                         self.update_test_banner(tm, td)
                     ))
                 else:
-                    self.gui_queue.put(lambda l=latency: (
-                        self.update_net_pill(f"● Error {resp.status_code} • {l}ms", "danger"),
-                        self.update_test_banner(False, "")
-                    ))
+                    self.gui_queue.put(lambda l=latency: (self.update_net_pill(f"● Error {resp.status_code}", "danger"), self.update_test_banner(False, "")))
             except Exception:
-                self.gui_queue.put(lambda: (
-                    self.update_net_pill("● Offline / Timeout", "danger"),
-                    self.update_test_banner(False, "")
-                ))
+                self.gui_queue.put(lambda: (self.update_net_pill("● Offline / Timeout", "danger"), self.update_test_banner(False, "")))
             
             time.sleep(3)
 
@@ -665,35 +704,39 @@ class GateDisplay(ttk.Window):
         if is_test_mode:
             self.lbl_test_mode.configure(text=f"⚠️ TEST MODE ACTIVE (OVERRIDE: {test_date})")
             if not self.test_banner.winfo_ismapped(): self.test_banner.pack(fill=X, before=self.content)
-        else:
-            if self.test_banner.winfo_ismapped(): self.test_banner.pack_forget()
+        elif self.test_banner.winfo_ismapped(): 
+            self.test_banner.pack_forget()
 
     def listen_to_server_stream(self):
+        backoff = 1
         while self.is_polling:
             hub_url = self.config_manager.config.get('hub_url', '').rstrip('/')
             url = f"{hub_url}/api/stream-scans"
             
             try:
-                with self.stream_session.get(url, stream=True, timeout=(5, 20), verify=False) as response:
+                with self.stream_session.get(url, stream=True, timeout=(5, 30), verify=False) as response:
                     if response.status_code == 200:
+                        backoff = 1 
                         for line in response.iter_lines():
                             if not self.is_polling: break
                             if line:
                                 decoded = line.decode('utf-8')
                                 if decoded.startswith("data: "):
                                     try: self.scan_queue.put(json.loads(decoded[6:]))
-                                    except Exception: pass
+                                    except Exception as e: logging.error(f"SSE JSON Error: {e}")
                     else:
-                        time.sleep(3)
-            except Exception:
-                time.sleep(3)
+                        time.sleep(backoff)
+            except Exception as e:
+                logging.warning(f"Stream dropped. Reconnecting in {backoff}s. ({e})")
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 10) 
 
     def update_net_pill(self, text, style_name):
         self.lbl_hub_status.configure(text=text, bootstyle=style_name)
 
     def manual_scan(self, lookup_type):
         current_time = time.time()
-        if current_time - getattr(self, '_last_scan_time', 0) < 1.5:
+        if current_time - self._last_scan_time < 1.0:
             return 
         self._last_scan_time = current_time
 
@@ -744,6 +787,14 @@ class GateDisplay(ttk.Window):
         self.lbl_subtitle.config(text=f"{self.config_manager.config['device_name']} • TDE UP 2026")
         time.sleep(0.5)
         self.start_threads()
+
+    def on_close(self):
+        self.is_polling = False
+        try:
+            if self.stream_session: self.stream_session.close()
+            if self.api_session: self.api_session.close()
+        except Exception: pass
+        self.destroy()
 
 if __name__ == "__main__":
     app = GateDisplay()
