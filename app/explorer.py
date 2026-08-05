@@ -19,7 +19,9 @@ from PIL import Image, ImageTk, ImageOps
 
 # Import SQLAlchemy components for direct DB connections
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 
 # Suppress insecure HTTPS warnings for local hub connections
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -79,6 +81,99 @@ class APIRecord:
         except Exception:
             self.created_at = datetime.min
 
+
+# ==============================================================================
+# CUSTOM UI DIALOGS (EASY DB CONFIGURATION)
+# ==============================================================================
+class DatabaseConfigDialog(tk.Toplevel):
+    def __init__(self, parent, current_uri, on_save_callback):
+        super().__init__(parent)
+        self.title("MySQL Database Configuration")
+        self.geometry("450x420")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+        
+        # Center the dialog
+        self.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (450 // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (420 // 2)
+        self.geometry(f"+{x}+{y}")
+
+        self.on_save_callback = on_save_callback
+        
+        # Parse existing URI to populate fields
+        host, port, user, pwd, db = "localhost", "3306", "root", "", "tde_database"
+        if current_uri and "mysql+pymysql" in current_uri:
+            try:
+                url_obj = make_url(current_uri)
+                host = url_obj.host or "localhost"
+                port = str(url_obj.port) if url_obj.port else "3306"
+                user = url_obj.username or ""
+                pwd = url_obj.password or ""
+                db = url_obj.database or ""
+            except Exception:
+                pass
+
+        # UI Layout
+        container = ttk.Frame(self, padding=25)
+        container.pack(fill=BOTH, expand=True)
+        
+        ttk.Label(container, text="MySQL Connection Details", font="-size 14 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 5))
+        ttk.Label(container, text="Enter your database credentials below.", font="-size 9", foreground="gray").pack(anchor=W, pady=(0, 20))
+
+        # Form Fields
+        self.vars = {
+            "host": tk.StringVar(value=host),
+            "port": tk.StringVar(value=port),
+            "user": tk.StringVar(value=user),
+            "pwd": tk.StringVar(value=pwd),
+            "db": tk.StringVar(value=db)
+        }
+
+        self._build_field(container, "Host Address:", self.vars["host"], "e.g., localhost or 192.168.1.5")
+        self._build_field(container, "Port:", self.vars["port"], "e.g., 3306")
+        self._build_field(container, "Username:", self.vars["user"], "e.g., root")
+        self._build_field(container, "Password:", self.vars["pwd"], "Leave blank if no password", is_password=True)
+        self._build_field(container, "Database Name:", self.vars["db"], "e.g., tde_database")
+
+        # Buttons
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(fill=X, pady=(20, 0))
+        
+        ttk.Button(btn_frame, text="Test Connection", bootstyle="outline-info", command=self.test_connection).pack(side=LEFT)
+        ttk.Button(btn_frame, text="Save Settings", bootstyle="success", command=self.save_settings).pack(side=RIGHT, padx=(10, 0))
+        ttk.Button(btn_frame, text="Cancel", bootstyle="secondary", command=self.destroy).pack(side=RIGHT)
+
+    def _build_field(self, parent, label_text, text_var, placeholder="", is_password=False):
+        frame = ttk.Frame(parent)
+        frame.pack(fill=X, pady=4)
+        ttk.Label(frame, text=label_text, width=15, font="-size 9 -weight bold").pack(side=LEFT)
+        entry = ttk.Entry(frame, textvariable=text_var, show="*" if is_password else "")
+        entry.pack(side=LEFT, fill=X, expand=True)
+
+    def build_uri(self):
+        h, po, u, pw, d = (self.vars[k].get().strip() for k in ["host", "port", "user", "pwd", "db"])
+        auth = f"{u}:{pw}" if pw else u
+        port_str = f":{po}" if po else ":3306"
+        return f"mysql+pymysql://{auth}@{h}{port_str}/{d}"
+
+    def test_connection(self):
+        uri = self.build_uri()
+        try:
+            engine = create_engine(uri, connect_args={"connect_timeout": 3})
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            messagebox.showinfo("Success", "Connection successful!\nThe database is reachable.", parent=self)
+        except SQLAlchemyError as e:
+            messagebox.showerror("Connection Failed", f"Could not connect to the database.\n\nError:\n{str(e).split(']')[0]}]", parent=self)
+
+    def save_settings(self):
+        uri = self.build_uri()
+        self.on_save_callback(uri)
+        self.destroy()
+
+
 # ==============================================================================
 # MAIN APPLICATION
 # ==============================================================================
@@ -87,9 +182,9 @@ class AttendeeExplorer(ttk.Window):
         super().__init__(themename="darkly", title="TDE UP 2026 — Attendee Explorer")
         
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        ww, wh = max(1150, min(1450, int(sw * 0.90))), max(750, min(950, int(sh * 0.90)))
+        ww, wh = max(1200, min(1450, int(sw * 0.90))), max(800, min(950, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 20)}")
-        self.minsize(1100, 750)
+        self.minsize(1150, 750)
         
         self.gui_queue = queue.Queue()
         self.SessionMySQL = None
@@ -105,12 +200,7 @@ class AttendeeExplorer(ttk.Window):
 
         # Setup Resilient API Session with Auto-Retries
         self.api_session = requests.Session()
-        retries = Retry(
-            total=5,
-            backoff_factor=0.5,
-            status_forcelist=[500, 502, 503, 504],
-            raise_on_status=False
-        )
+        retries = Retry(total=5, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504], raise_on_status=False)
         self.api_session.mount('http://', HTTPAdapter(max_retries=retries))
         self.api_session.mount('https://', HTTPAdapter(max_retries=retries))
         
@@ -123,7 +213,7 @@ class AttendeeExplorer(ttk.Window):
         self._auto_refresh_loop()
 
     # ==========================================================================
-    # COLOR MATH & STYLES 
+    # COLOR MATH & STYLES (ENHANCED UI)
     # ==========================================================================
     def _hex_to_rgb(self, hex_color):
         return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
@@ -142,15 +232,17 @@ class AttendeeExplorer(ttk.Window):
         self.style.configure("Card.TFrame", background=self.CARD_BG, bordercolor=self.SOFT_BORDER, borderwidth=1, relief="solid")
         self.style.configure("Flat.TFrame", background=self.CARD_BG)
         
-        self.style.configure("Treeview", rowheight=28, font="-size 10")
-        self.style.configure("Treeview.Heading", font="-size 10 -weight bold")
+        # Enhanced Treeview for better list readability
+        self.style.configure("Treeview", rowheight=34, font="-size 10", borderwidth=0)
+        self.style.configure("Treeview.Heading", font="-size 10 -weight bold", padding=(5, 8))
+        self.style.map('Treeview', background=[('selected', colors.get('primary'))], foreground=[('selected', 'white')])
+        
         self.style.configure("PurpleBadge.TLabel", background="#9b59b6", foreground="#ffffff", padding=(10, 4))
 
     # ==========================================================================
-    # DATABASE & CONFIGURATIONS (INTEGRATED WITH EXPLORER.JSON)
+    # DATABASE & CONFIGURATIONS
     # ==========================================================================
     def connect_db(self):
-        """Robust MySQL connection handling explorer.json overrides"""
         try:
             db_uri = None
             if os.path.exists(EXPLORER_CONFIG):
@@ -159,16 +251,13 @@ class AttendeeExplorer(ttk.Window):
                     db_uri = conf.get("mysql_uri")
 
             if db_uri:
-                # 1. Prioritize MySQL URI from explorer.json
-                engine = create_engine(db_uri)
+                engine = create_engine(db_uri, pool_pre_ping=True, pool_recycle=3600)
                 self.SessionMySQL = sessionmaker(bind=engine)
             else:
-                # 2. Fallback to schema.py defined DB sessions
                 sessions = get_database_sessions()
                 self.SessionMySQL = sessions.get('mysql')
 
             if self.SessionMySQL:
-                # Test connection ping
                 sess = self.SessionMySQL()
                 sess.execute(text("SELECT 1"))
                 sess.close()
@@ -178,57 +267,47 @@ class AttendeeExplorer(ttk.Window):
             self.SessionMySQL = None
         return False
 
-    def configure_db_url(self):
-        """Saves MySQL credentials to explorer.json"""
-        current_uri = ""
+    def get_current_mysql_uri(self):
         if os.path.exists(EXPLORER_CONFIG):
             try:
                 with open(EXPLORER_CONFIG, 'r') as f:
-                    conf = json.load(f)
-                    current_uri = conf.get("mysql_uri", "")
+                    return json.load(f).get("mysql_uri", "")
             except Exception: pass
+        return ""
 
-        new_uri = simpledialog.askstring(
-            "MySQL Configuration", 
-            "Enter MySQL Connection URI:\n(e.g., mysql+pymysql://username:password@localhost/dbname)", 
-            initialvalue=current_uri, 
-            parent=self
-        )
-        
-        if new_uri is not None:
-            new_uri = new_uri.strip()
-            try:
-                config_data = {}
-                if os.path.exists(EXPLORER_CONFIG):
-                    with open(EXPLORER_CONFIG, 'r') as f:
-                        config_data = json.load(f)
-                        
-                config_data["mysql_uri"] = new_uri
-                
-                with open(EXPLORER_CONFIG, 'w') as f:
-                    json.dump(config_data, f, indent=4)
+    def save_mysql_uri(self, uri):
+        try:
+            config_data = {}
+            if os.path.exists(EXPLORER_CONFIG):
+                with open(EXPLORER_CONFIG, 'r') as f:
+                    config_data = json.load(f)
                     
-                messagebox.showinfo("Saved", "MySQL URI saved to explorer.json!\nThe app will connect using these details.")
-                self.combo_source.current(0)
-                self.load_data_async(is_manual=True)
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to save DB Config: {e}")
+            config_data["mysql_uri"] = uri
+            
+            with open(EXPLORER_CONFIG, 'w') as f:
+                json.dump(config_data, f, indent=4)
+                
+            messagebox.showinfo("Saved", "Database configuration saved successfully!\nReconnecting...")
+            self.combo_source.current(0)
+            self.load_data_async(is_manual=True)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save DB Config: {e}")
 
-    def get_hub_url(self):
-        """Reads API configuration from explorer.json"""
-        if os.path.exists(EXPLORER_CONFIG):
-            try:
-                with open(EXPLORER_CONFIG, 'r') as f:
-                    conf = json.load(f)
-                    return conf.get("hub_url", "http://127.0.0.1:5000").rstrip("/")
-            except Exception: pass
-        return "http://127.0.0.1:5000"
+    def configure_db_url(self):
+        """Opens the new, easy-to-use custom Database config dialog"""
+        current_uri = self.get_current_mysql_uri()
+        DatabaseConfigDialog(self, current_uri, self.save_mysql_uri)
 
     def configure_api_url(self):
-        """Saves API URL to explorer.json"""
-        current_url = self.get_hub_url()
+        current_url = "http://127.0.0.1:5000"
+        if os.path.exists(EXPLORER_CONFIG):
+            try:
+                with open(EXPLORER_CONFIG, 'r') as f:
+                    current_url = json.load(f).get("hub_url", current_url)
+            except Exception: pass
+
         new_url = simpledialog.askstring(
-            "Portable API Configuration", 
+            "API Configuration", 
             "Enter the Hub API Server URL:\n(e.g., http://192.168.1.100:5000)", 
             initialvalue=current_url, 
             parent=self
@@ -236,21 +315,15 @@ class AttendeeExplorer(ttk.Window):
         
         if new_url is not None:
             new_url = new_url.strip()
-            if not new_url.startswith("http"):
-                new_url = "http://" + new_url
-                
+            if not new_url.startswith("http"): new_url = "http://" + new_url
             try:
                 config_data = {}
                 if os.path.exists(EXPLORER_CONFIG):
                     with open(EXPLORER_CONFIG, 'r') as f:
                         config_data = json.load(f)
-                        
                 config_data["hub_url"] = new_url
-                
                 with open(EXPLORER_CONFIG, 'w') as f:
                     json.dump(config_data, f, indent=4)
-                    
-                messagebox.showinfo("Saved", f"API URL updated in explorer.json to:\n{new_url}")
                 self.combo_source.current(1)
                 self.load_data_async(is_manual=True)
             except Exception as e:
@@ -260,35 +333,34 @@ class AttendeeExplorer(ttk.Window):
     # UI CONSTRUCTION
     # ==========================================================================
     def build_ui(self):
-        main_container = ttk.Frame(self, padding=20)
+        main_container = ttk.Frame(self, padding=25)
         main_container.pack(fill=BOTH, expand=True)
 
         # -- HEADER & CONTROLS --
         header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=X, pady=(0, 15))
+        header_frame.pack(fill=X, pady=(0, 20))
 
         title_box = ttk.Frame(header_frame)
         title_box.pack(side=LEFT)
-        ttk.Label(title_box, text="Attendee Explorer", font="-size 24 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
+        ttk.Label(title_box, text="Attendee Explorer", font="-size 26 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
         ttk.Label(title_box, text="SEARCH, INSPECT & EXPORT PROFILES", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
 
         action_box = ttk.Frame(header_frame)
         action_box.pack(side=RIGHT, anchor=S)
         
         self.lbl_record_count = ttk.Label(action_box, text="Loading records...", font="-size 11 -weight bold", bootstyle=INFO)
-        self.lbl_record_count.pack(side=LEFT, padx=(0, 10))
+        self.lbl_record_count.pack(side=LEFT, padx=(0, 15))
         
         self.lbl_conn_status = ttk.Label(action_box, text="● Syncing...", font="-size 10 -weight bold", bootstyle=SECONDARY)
-        self.lbl_conn_status.pack(side=LEFT, padx=(0, 15))
+        self.lbl_conn_status.pack(side=LEFT, padx=(0, 20))
         
         self.combo_source = ttk.Combobox(action_box, values=["Source: MySQL (Direct DB)", "Source: Hub API (Portable)"], state="readonly", width=25, font="-size 10 -weight bold")
         self.combo_source.current(0)
         self.combo_source.pack(side=LEFT, padx=(0, 5))
         self.combo_source.bind("<<ComboboxSelected>>", lambda e: self.load_data_async(is_manual=False))
         
-        # New Settings Buttons
-        ttk.Button(action_box, text="⚙️ DB", bootstyle="outline-warning", command=self.configure_db_url).pack(side=LEFT, padx=(0, 5))
-        ttk.Button(action_box, text="⚙️ API", bootstyle="outline-secondary", command=self.configure_api_url).pack(side=LEFT, padx=(0, 15))
+        ttk.Button(action_box, text="⚙️ DB Config", bootstyle="outline-warning", command=self.configure_db_url).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(action_box, text="⚙️ API Config", bootstyle="outline-secondary", command=self.configure_api_url).pack(side=LEFT, padx=(0, 20))
         
         self.auto_refresh_var = tk.BooleanVar(value=True)
         self.chk_auto = ttk.Checkbutton(action_box, text="Auto-Refresh", variable=self.auto_refresh_var, bootstyle="info-round-toggle")
@@ -313,11 +385,11 @@ class AttendeeExplorer(ttk.Window):
 
         # LEFT PANEL: SEARCH, DATAGRID & PAGINATION
         left_frame = ttk.Frame(split_frame)
-        left_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 15))
+        left_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 20))
 
         # -- ADVANCED FILTER BAR --
-        filter_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=10)
-        filter_frame.pack(fill=X, pady=(0, 10))
+        filter_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=12)
+        filter_frame.pack(fill=X, pady=(0, 15))
         
         ttk.Label(filter_frame, text="🔍", font="-size 12", background=self.CARD_BG).pack(side=LEFT, padx=(5, 5))
         self.ent_search = ttk.Entry(filter_frame, font="-size 10", width=22)
@@ -325,7 +397,7 @@ class AttendeeExplorer(ttk.Window):
         self.ent_search.bind("<KeyRelease>", lambda e: self.apply_filters())
 
         ttk.Label(filter_frame, text="Type:", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, padx=(5, 5))
-        self.combo_type = ttk.Combobox(filter_frame, values=["All Types", "GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"], state="readonly", width=12)
+        self.combo_type = ttk.Combobox(filter_frame, values=["All Types", "GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"], state="readonly", width=14)
         self.combo_type.current(0)
         self.combo_type.pack(side=LEFT, padx=(0, 15))
         self.combo_type.bind("<<ComboboxSelected>>", lambda e: self.apply_filters())
@@ -336,14 +408,18 @@ class AttendeeExplorer(ttk.Window):
         self.combo_sort.pack(side=LEFT, padx=(0, 15))
         self.combo_sort.bind("<<ComboboxSelected>>", lambda e: self.apply_filters())
 
-        ttk.Button(filter_frame, text="Clear", bootstyle="secondary-link", command=self.clear_filters).pack(side=RIGHT, padx=(5, 5))
+        ttk.Button(filter_frame, text="Clear Filters", bootstyle="secondary-link", command=self.clear_filters).pack(side=RIGHT, padx=(5, 5))
 
         # -- TREEVIEW CONTAINER --
-        tree_card = ttk.Frame(left_frame, style="Card.TFrame", padding=2)
+        tree_card = ttk.Frame(left_frame, style="Card.TFrame", padding=1)
         tree_card.pack(fill=BOTH, expand=True)
 
         cols = ("ID", "Name", "Mobile", "Type", "City", "Synced")
         self.tree = ttk.Treeview(tree_card, columns=cols, show="headings", bootstyle=INFO)
+        
+        # Tags for alternating row colors
+        self.tree.tag_configure('evenrow', background=self.CARD_BG)
+        self.tree.tag_configure('oddrow', background=self._mix_hex(self.CARD_BG, "#ffffff", 0.03))
         
         headings = {"ID": "ATTENDEE ID", "Name": "FULL NAME", "Mobile": "MOBILE", "Type": "TYPE", "City": "CITY", "Synced": "CLOUD SYNC"}
         for col, text in headings.items():
@@ -365,58 +441,58 @@ class AttendeeExplorer(ttk.Window):
         scrollbar.pack(side=RIGHT, fill=Y)
 
         # -- PAGINATION CONTROL BAR --
-        pagi_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=8)
-        pagi_frame.pack(fill=X, pady=(10, 0))
+        pagi_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=10)
+        pagi_frame.pack(fill=X, pady=(15, 0))
 
-        ttk.Label(pagi_frame, text="Page Size:", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, padx=(5, 5))
-        self.combo_page_size = ttk.Combobox(pagi_frame, values=["50", "100", "500", "1000", "1500", "2000"], state="readonly", width=6)
+        ttk.Label(pagi_frame, text="Rows per page:", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, padx=(5, 5))
+        self.combo_page_size = ttk.Combobox(pagi_frame, values=["50", "100", "500", "1000", "1500", "2000"], state="readonly", width=7)
         self.combo_page_size.set("100")
-        self.combo_page_size.pack(side=LEFT, padx=(0, 15))
+        self.combo_page_size.pack(side=LEFT, padx=(0, 20))
         self.combo_page_size.bind("<<ComboboxSelected>>", self.on_page_size_change)
 
         self.btn_first = ttk.Button(pagi_frame, text="⏮ First", bootstyle="secondary-outline", width=8, command=self.first_page)
-        self.btn_first.pack(side=LEFT, padx=2)
+        self.btn_first.pack(side=LEFT, padx=3)
         
         self.btn_prev = ttk.Button(pagi_frame, text="◀ Prev", bootstyle="secondary-outline", width=8, command=self.prev_page)
-        self.btn_prev.pack(side=LEFT, padx=2)
+        self.btn_prev.pack(side=LEFT, padx=3)
 
-        self.lbl_page_info = ttk.Label(pagi_frame, text="Page 1 of 1 (0 records)", font="-size 9 -weight bold", background=self.CARD_BG)
-        self.lbl_page_info.pack(side=LEFT, padx=15)
+        self.lbl_page_info = ttk.Label(pagi_frame, text="Page 1 of 1 (0 records)", font="-size 10 -weight bold", background=self.CARD_BG)
+        self.lbl_page_info.pack(side=LEFT, padx=20)
 
         self.btn_next = ttk.Button(pagi_frame, text="Next ▶", bootstyle="secondary-outline", width=8, command=self.next_page)
-        self.btn_next.pack(side=LEFT, padx=2)
+        self.btn_next.pack(side=LEFT, padx=3)
 
         self.btn_last = ttk.Button(pagi_frame, text="Last ⏭", bootstyle="secondary-outline", width=8, command=self.last_page)
-        self.btn_last.pack(side=LEFT, padx=2)
+        self.btn_last.pack(side=LEFT, padx=3)
 
         # RIGHT PANEL: PROFILE & PHOTO CARD
-        right_frame = ttk.Frame(split_frame, width=380)
+        right_frame = ttk.Frame(split_frame, width=400)
         right_frame.pack(side=RIGHT, fill=Y)
         right_frame.pack_propagate(False)
 
-        profile_card = ttk.Frame(right_frame, style="Card.TFrame", padding=20)
+        profile_card = ttk.Frame(right_frame, style="Card.TFrame", padding=25)
         profile_card.pack(fill=BOTH, expand=True)
 
-        ttk.Label(profile_card, text="ATTENDEE PROFILE", font="-size 12 -weight bold", background=self.CARD_BG, foreground="gray").pack(anchor=W, pady=(0, 10))
+        ttk.Label(profile_card, text="ATTENDEE PROFILE", font="-size 12 -weight bold", background=self.CARD_BG, foreground="gray").pack(anchor=W, pady=(0, 15))
 
         self.lbl_photo = ttk.Label(profile_card, text="Select an attendee to\nview profile details.", justify=CENTER, background=self.CARD_BG, font="-size 10", foreground="gray")
-        self.lbl_photo.pack(pady=(0, 10))
+        self.lbl_photo.pack(pady=(0, 15))
         
-        self.lbl_profile_name = ttk.Label(profile_card, text="--", font="-size 16 -weight bold", background=self.CARD_BG, wraplength=330)
+        self.lbl_profile_name = ttk.Label(profile_card, text="--", font="-size 18 -weight bold", background=self.CARD_BG, wraplength=340)
         self.lbl_profile_name.pack(anchor=W)
-        self.lbl_profile_id = ttk.Label(profile_card, text="--", font="-size 10 -weight bold", background=self.CARD_BG, bootstyle=SECONDARY)
-        self.lbl_profile_id.pack(anchor=W, pady=(0, 10))
+        self.lbl_profile_id = ttk.Label(profile_card, text="--", font="-size 11 -weight bold", background=self.CARD_BG, bootstyle=SECONDARY)
+        self.lbl_profile_id.pack(anchor=W, pady=(0, 15))
 
         self.badge_frame = ttk.Frame(profile_card, style="Flat.TFrame")
-        self.badge_frame.pack(fill=X, anchor=W, pady=(0, 10))
+        self.badge_frame.pack(fill=X, anchor=W, pady=(0, 15))
         
         self.lbl_badge_type = ttk.Label(self.badge_frame, text="TYPE", font="-size 9 -weight bold", padding=(10, 4), bootstyle="inverse-secondary")
-        self.lbl_badge_type.pack(side=LEFT, padx=(0, 8))
+        self.lbl_badge_type.pack(side=LEFT, padx=(0, 10))
         
         self.lbl_badge_sync = ttk.Label(self.badge_frame, text="SYNC", font="-size 9 -weight bold", padding=(10, 4), bootstyle="inverse-secondary")
         self.lbl_badge_sync.pack(side=LEFT)
 
-        ttk.Separator(profile_card).pack(fill=X, pady=(0, 10))
+        ttk.Separator(profile_card).pack(fill=X, pady=(0, 15))
 
         details_frame = ttk.Frame(profile_card, style="Flat.TFrame")
         details_frame.pack(fill=BOTH, expand=True)
@@ -433,21 +509,21 @@ class AttendeeExplorer(ttk.Window):
 
         for i, (label_text, var) in enumerate(self.profile_vars.items()):
             row = ttk.Frame(details_frame, style="Flat.TFrame")
-            row.pack(fill=X, pady=(3, 3))
+            row.pack(fill=X, pady=(4, 4))
             
-            ttk.Label(row, text=f"{label_text.upper()}", width=11, font="-size 8 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, anchor=N)
+            ttk.Label(row, text=f"{label_text.upper()}", width=12, font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, anchor=N)
             ttk.Label(row, textvariable=var, font="-size 10", background=self.CARD_BG, wraplength=230).pack(side=LEFT, fill=X, expand=True, anchor=N)
             
             if i < len(self.profile_vars) - 1:
-                ttk.Separator(details_frame).pack(fill=X, pady=1)
+                ttk.Separator(details_frame).pack(fill=X, pady=2)
 
     def _build_mini_stat(self, parent, title, bootstyle, is_purple=False):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(15, 10))
-        frame.pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(20, 12))
+        frame.pack(side=LEFT, fill=X, expand=True, padx=(0, 15))
         
         ttk.Label(frame, text=title, font="-size 9 -weight bold", foreground="gray", background=self.CARD_BG).pack(anchor=W)
         
-        val_lbl = ttk.Label(frame, text="0", font="-size 24 -weight bold", background=self.CARD_BG)
+        val_lbl = ttk.Label(frame, text="0", font="-size 26 -weight bold", background=self.CARD_BG)
         val_lbl.pack(anchor=W, pady=(2, 0))
         
         if is_purple:
@@ -487,7 +563,10 @@ class AttendeeExplorer(ttk.Window):
             try:
                 combined = []
                 if "API" in mode:
-                    hub_url = self.get_hub_url()
+                    hub_url = "http://127.0.0.1:5000"
+                    if os.path.exists(EXPLORER_CONFIG):
+                        with open(EXPLORER_CONFIG, 'r') as f:
+                            hub_url = json.load(f).get("hub_url", hub_url)
                     combined = self._fetch_api_in_batches(hub_url)
                     self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● API: Connected", bootstyle=SUCCESS))
                 else:
@@ -495,7 +574,7 @@ class AttendeeExplorer(ttk.Window):
                         self.connect_db()
                     if not self.SessionMySQL:
                         self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● DB: Offline", bootstyle=DANGER))
-                        raise Exception("MySQL database connection is unavailable.")
+                        raise Exception("MySQL database connection is unavailable. Check DB Config.")
                         
                     combined = self._fetch_mysql_in_batches(batch_size=10000)
                     self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● DB: Connected", bootstyle=SUCCESS))
@@ -514,7 +593,6 @@ class AttendeeExplorer(ttk.Window):
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _fetch_mysql_in_batches(self, batch_size=10000):
-        """Fetches 2 Lakh+ records from MySQL using LIMIT & OFFSET chunking"""
         all_records = []
         if not self.SessionMySQL and not self.connect_db():
             raise Exception("Cannot establish MySQL connection.")
@@ -527,9 +605,7 @@ class AttendeeExplorer(ttk.Window):
                 if not batch: break
                 all_records.extend(batch)
                 offset += len(batch)
-                
-                curr_count = len(all_records)
-                self.gui_queue.put(lambda c=curr_count: self.lbl_record_count.configure(text=f"Loaded {c:,} records...", bootstyle=INFO))
+                self.gui_queue.put(lambda c=len(all_records): self.lbl_record_count.configure(text=f"Loaded {c:,} records...", bootstyle=INFO))
 
             offset = 0
             while True:
@@ -537,13 +613,11 @@ class AttendeeExplorer(ttk.Window):
                 if not batch: break
                 all_records.extend(batch)
                 offset += len(batch)
-                
-                curr_count = len(all_records)
-                self.gui_queue.put(lambda c=curr_count: self.lbl_record_count.configure(text=f"Loaded {c:,} records...", bootstyle=INFO))
+                self.gui_queue.put(lambda c=len(all_records): self.lbl_record_count.configure(text=f"Loaded {c:,} records...", bootstyle=INFO))
 
             return all_records
         except Exception as e:
-            logging.warning(f"MySQL error during chunk fetch, re-connecting... ({e})")
+            logging.warning(f"MySQL error, re-connecting... ({e})")
             session.close()
             self.connect_db()
             raise e
@@ -694,13 +768,17 @@ class AttendeeExplorer(ttk.Window):
         end_idx = min(start_idx + self.page_size, total_items)
         page_items = self.filtered_attendees[start_idx:end_idx]
 
-        for att in page_items:
+        for i, att in enumerate(page_items):
             sync_status = "Pending ⏳" if getattr(att, 'needs_cloud_sync', False) else "Synced ✓"
             att_type = att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type)
+            
+            # Apply Zebra Striping tags (odd/even rows)
+            row_tag = 'evenrow' if i % 2 == 0 else 'oddrow'
+            
             self.tree.insert('', END, iid=att.attendee_id, values=(
                 att.attendee_id, att.full_name, att.mobile, att_type,
                 f"{att.city}, {att.state}", sync_status
-            ))
+            ), tags=(row_tag,))
 
         self.lbl_page_info.configure(text=f"Page {self.current_page} of {self.total_pages:,} (Total: {total_items:,})")
         self.lbl_record_count.configure(text=f"Showing {start_idx+1:,}-{end_idx:,} of {total_items:,} records", bootstyle=INFO)
@@ -729,6 +807,10 @@ class AttendeeExplorer(ttk.Window):
 
         for index, (val, k) in enumerate(data_list):
             self.tree.move(k, '', index)
+            
+        # Re-apply zebra striping after sort
+        for i, item in enumerate(self.tree.get_children('')):
+            self.tree.item(item, tags=('evenrow' if i % 2 == 0 else 'oddrow',))
 
     # ==========================================================================
     # PROFILE RENDERING 
