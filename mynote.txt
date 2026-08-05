@@ -3,10 +3,10 @@
 -------------------------------------------------------------------------------------------------------------------------
 
 [1] STARTUP SEQUENCE                                                                                                         
-1. Connect Phone A (via USB Tethering) to Laptop A.                                                                          
+1. Connect Master Phone A (via USB Tethering) to Laptop A.                                                                          
 2. Connect RJ45 LAN/Switch to Registration Laptops.                                                                          
 3. Turn ON Mobile Hotspot on Laptop A.                                                                                       
-4. Connect Scanner Phones (up to 8) to Laptop A's Hotspot.                                                                   
+4. Connect Mobile Scanners (up to 8) to Laptop A's Hotspot.                                                                   
 5. Launch server_hub.py -> Click "▶ Start Engine".                                                                           
 6. Start Cloudflare Tunnel (if online) -> Share public link.                                              
 
@@ -81,6 +81,108 @@
   2. WARNING: Do NOT open the file directly from the File Manager (it will ask for a private key).                           
   3. Open Android Settings -> Security & Privacy -> More security settings -> Encryption & credentials.                      
   4. Tap 'Install a certificate' -> MUST select 'CA Certificate' (Do not select User/VPN).                                   
-  5. Accept the privacy warning ('Install anyway') and select your 'hub_cert.cer' file.                                      
+  5. Accept the privacy warning ('Install anyway') and select your 'hub_cert.cer' file.                                   
+
+[8] MYSQL DATABASE & NETWORK TUNING (LAN & PERFORMANCE)
+
+» 1. ENABLE LAN / RJ45 / WI-FI ACCESS (my.ini REQUIRED)
+  - CRITICAL: Network binding cannot be changed live. It MUST be done in the file.
+  - Open: C:\ProgramData\MySQL\MySQL Server 8.4\my.ini (Note: ProgramData is a hidden folder).
+  - Find the [mysqld] section and add/change this exact line (Use * to support IPv4 & IPv6 natively):
+    bind-address=*
+  - Save the file and restart the MySQL Service (Admin CMD: net stop MySQL84 && net start MySQL84).
+
+» 2. ADD REMOTE USER FOR LAN ACCESS (MySQL Shell)
+  - Open Command Prompt and log in: mysql -u root -p
+  - Run these exact commands to allow any laptop/PC on the network to connect:
+    CREATE USER IF NOT EXISTS 'event_admin'@'%' IDENTIFIED BY 'EventHub123!';
+    GRANT ALL PRIVILEGES ON *.* TO 'event_admin'@'%';
+    FLUSH PRIVILEGES;
+    EXIT;
+  - Other laptops can now connect using the Host Laptop's IP (e.g., 192.168.1.X) and these credentials.
+
+» 3. PERFORMANCE TUNING: METHOD A - PERMANENT TEXT EDIT (my.ini)
+  - Open my.ini and locate the [mysqld] section.
+  - Paste the complete Event Hub tuning block directly into the file:
+    
+    # === EVENT HUB - PERFORMANCE TUNING (4GB RAM BASELINE) ===
+    max_connections=150
+    max_connect_errors=10000
+    wait_timeout=600
+    interactive_timeout=600
+    net_read_timeout=60
+    net_write_timeout=120
+    max_allowed_packet=64M
+    tmp_table_size=32M
+    max_heap_table_size=32M
+    table_open_cache=2000
+    thread_cache_size=50
+    sort_buffer_size=1M
+    join_buffer_size=1M
+    read_buffer_size=256K
+    read_rnd_buffer_size=256K
+    default-storage-engine=InnoDB
+    innodb_file_per_table=1
+    innodb_flush_method=unbuffered
+    innodb_flush_log_at_trx_commit=2
+    innodb_log_buffer_size=16M
+    innodb_redo_log_capacity=256M
+    innodb_io_capacity=500
+    innodb_io_capacity_max=1000
+    disable-log-bin
+    slow_query_log=1
+    long_query_time=2
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+    
+    # --- RAM BASED SETTINGS (Set based on Host PC Total RAM) ---
+    # [ 4GB RAM -> 1G ]  [ 8GB RAM -> 4G ]  [ 16GB RAM -> 8G ]  [ 24GB RAM -> 12G ]  [ 32GB RAM -> 16G ]
+    innodb_buffer_pool_size=1G
+    innodb_buffer_pool_instances=1
+    # ======================================
+
+  - Requires restarting the MySQL service (Admin CMD: net stop MySQL84 && net start MySQL84).
+
+» 4. PERFORMANCE TUNING: METHOD B - LIVE SHELL (NO MY.INI EDITING)
+  - Use this to apply changes INSTANTLY without restarting the server.
+  - Using 'SET PERSIST' saves the changes for future reboots without touching my.ini.
+  - Note: 'innodb_log_buffer_size', 'innodb_buffer_pool_instances', 'innodb_flush_method', and 'disable-log-bin' MUST be done via Method A.
+  - Open MySQL Shell (mysql -u root -p) and paste this block:
+
+    SET PERSIST max_connections = 150;
+    SET PERSIST max_connect_errors = 10000;
+    SET PERSIST wait_timeout = 600;
+    SET PERSIST interactive_timeout = 600;
+    SET PERSIST net_read_timeout = 60;
+    SET PERSIST net_write_timeout = 120;
+    SET PERSIST max_allowed_packet = 67108864;
+    SET PERSIST tmp_table_size = 33554432;
+    SET PERSIST max_heap_table_size = 33554432;
+    SET PERSIST table_open_cache = 2000;
+    SET PERSIST thread_cache_size = 50;
+    SET PERSIST sort_buffer_size = 1048576;
+    SET PERSIST join_buffer_size = 1048576;
+    SET PERSIST read_buffer_size = 262144;
+    SET PERSIST read_rnd_buffer_size = 262144;
+    SET PERSIST innodb_file_per_table = 1;
+    SET PERSIST innodb_flush_log_at_trx_commit = 2;
+    SET PERSIST innodb_redo_log_capacity = 268435456;
+    SET PERSIST innodb_io_capacity = 500;
+    SET PERSIST innodb_io_capacity_max = 1000;
+    SET PERSIST slow_query_log = 1;
+    SET PERSIST long_query_time = 2;
+    SET PERSIST character_set_server = 'utf8mb4';
+    SET PERSIST collation_server = 'utf8mb4_unicode_ci';
+
+  - Set Buffer Pool dynamically (values MUST be in exact bytes in the shell):
+    [ 4 GB RAM PC  -> 1G  ] : SET PERSIST innodb_buffer_pool_size = 1073741824;
+    [ 8 GB RAM PC  -> 4G  ] : SET PERSIST innodb_buffer_pool_size = 4294967296;
+    [ 16 GB RAM PC -> 8G  ] : SET PERSIST innodb_buffer_pool_size = 8589934592;
+    [ 24 GB RAM PC -> 12G ] : SET PERSIST innodb_buffer_pool_size = 12884901888;
+    [ 32 GB RAM PC -> 16G ] : SET PERSIST innodb_buffer_pool_size = 17179869184;
+
+» 5. VERIFY CHANGES (MySQL Shell)
+  - To confirm LAN is open and RAM is allocated, open MySQL Shell and run:
+    SHOW GLOBAL VARIABLES WHERE Variable_name IN ('bind_address', 'innodb_buffer_pool_size', 'max_connections');   
                                                                                    
 -------------------------------------------------------------------------------------------------------------------------
