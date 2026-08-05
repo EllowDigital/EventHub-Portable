@@ -17,6 +17,10 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk, ImageOps
 
+# Import SQLAlchemy components for direct DB connections
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+
 # Suppress insecure HTTPS warnings for local hub connections
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -46,7 +50,6 @@ os.makedirs(CONFIG_DIR, exist_ok=True)
 
 # ==============================================================================
 # API MOCK OBJECT
-# Allows JSON API data to act exactly like SQLAlchemy objects
 # ==============================================================================
 class APIRecord:
     def __init__(self, d):
@@ -76,7 +79,6 @@ class APIRecord:
         except Exception:
             self.created_at = datetime.min
 
-
 # ==============================================================================
 # MAIN APPLICATION
 # ==============================================================================
@@ -96,9 +98,19 @@ class AttendeeExplorer(ttk.Window):
         self.current_sort_col = None
         self.sort_reverse = False
         
+        # Pagination Control Variables
+        self.current_page = 1
+        self.page_size = 100
+        self.total_pages = 1
+
         # Setup Resilient API Session with Auto-Retries
         self.api_session = requests.Session()
-        retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+        retries = Retry(
+            total=5,
+            backoff_factor=0.5,
+            status_forcelist=[500, 502, 503, 504],
+            raise_on_status=False
+        )
         self.api_session.mount('http://', HTTPAdapter(max_retries=retries))
         self.api_session.mount('https://', HTTPAdapter(max_retries=retries))
         
@@ -132,18 +144,78 @@ class AttendeeExplorer(ttk.Window):
         
         self.style.configure("Treeview", rowheight=28, font="-size 10")
         self.style.configure("Treeview.Heading", font="-size 10 -weight bold")
-        
         self.style.configure("PurpleBadge.TLabel", background="#9b59b6", foreground="#ffffff", padding=(10, 4))
 
+    # ==========================================================================
+    # DATABASE & CONFIGURATIONS (INTEGRATED WITH EXPLORER.JSON)
+    # ==========================================================================
     def connect_db(self):
+        """Robust MySQL connection handling explorer.json overrides"""
         try:
-            sessions = get_database_sessions()
-            self.SessionMySQL = sessions.get('mysql')
+            db_uri = None
+            if os.path.exists(EXPLORER_CONFIG):
+                with open(EXPLORER_CONFIG, 'r') as f:
+                    conf = json.load(f)
+                    db_uri = conf.get("mysql_uri")
+
+            if db_uri:
+                # 1. Prioritize MySQL URI from explorer.json
+                engine = create_engine(db_uri)
+                self.SessionMySQL = sessionmaker(bind=engine)
+            else:
+                # 2. Fallback to schema.py defined DB sessions
+                sessions = get_database_sessions()
+                self.SessionMySQL = sessions.get('mysql')
+
+            if self.SessionMySQL:
+                # Test connection ping
+                sess = self.SessionMySQL()
+                sess.execute(text("SELECT 1"))
+                sess.close()
+                return True
         except Exception as e:
             logging.error(f"Database Connection Failed: {e}")
+            self.SessionMySQL = None
+        return False
+
+    def configure_db_url(self):
+        """Saves MySQL credentials to explorer.json"""
+        current_uri = ""
+        if os.path.exists(EXPLORER_CONFIG):
+            try:
+                with open(EXPLORER_CONFIG, 'r') as f:
+                    conf = json.load(f)
+                    current_uri = conf.get("mysql_uri", "")
+            except Exception: pass
+
+        new_uri = simpledialog.askstring(
+            "MySQL Configuration", 
+            "Enter MySQL Connection URI:\n(e.g., mysql+pymysql://username:password@localhost/dbname)", 
+            initialvalue=current_uri, 
+            parent=self
+        )
+        
+        if new_uri is not None:
+            new_uri = new_uri.strip()
+            try:
+                config_data = {}
+                if os.path.exists(EXPLORER_CONFIG):
+                    with open(EXPLORER_CONFIG, 'r') as f:
+                        config_data = json.load(f)
+                        
+                config_data["mysql_uri"] = new_uri
+                
+                with open(EXPLORER_CONFIG, 'w') as f:
+                    json.dump(config_data, f, indent=4)
+                    
+                messagebox.showinfo("Saved", "MySQL URI saved to explorer.json!\nThe app will connect using these details.")
+                self.combo_source.current(0)
+                self.load_data_async(is_manual=True)
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save DB Config: {e}")
 
     def get_hub_url(self):
-        """Reads exclusive configuration from explorer.json"""
+        """Reads API configuration from explorer.json"""
         if os.path.exists(EXPLORER_CONFIG):
             try:
                 with open(EXPLORER_CONFIG, 'r') as f:
@@ -153,10 +225,11 @@ class AttendeeExplorer(ttk.Window):
         return "http://127.0.0.1:5000"
 
     def configure_api_url(self):
+        """Saves API URL to explorer.json"""
         current_url = self.get_hub_url()
         new_url = simpledialog.askstring(
             "Portable API Configuration", 
-            "Enter the Hub API Server URL (e.g., http://192.168.1.100:5000):", 
+            "Enter the Hub API Server URL:\n(e.g., http://192.168.1.100:5000)", 
             initialvalue=current_url, 
             parent=self
         )
@@ -178,17 +251,16 @@ class AttendeeExplorer(ttk.Window):
                     json.dump(config_data, f, indent=4)
                     
                 messagebox.showinfo("Saved", f"API URL updated in explorer.json to:\n{new_url}")
-                
                 self.combo_source.current(1)
                 self.load_data_async(is_manual=True)
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save URL: {e}")
 
     # ==========================================================================
-    # UI CONSTRUCTION (RESPONSIVE & CLEAN)
+    # UI CONSTRUCTION
     # ==========================================================================
     def build_ui(self):
-        main_container = ttk.Frame(self, padding=25)
+        main_container = ttk.Frame(self, padding=20)
         main_container.pack(fill=BOTH, expand=True)
 
         # -- HEADER & CONTROLS --
@@ -206,7 +278,6 @@ class AttendeeExplorer(ttk.Window):
         self.lbl_record_count = ttk.Label(action_box, text="Loading records...", font="-size 11 -weight bold", bootstyle=INFO)
         self.lbl_record_count.pack(side=LEFT, padx=(0, 10))
         
-        # Live Connection Indicator
         self.lbl_conn_status = ttk.Label(action_box, text="● Syncing...", font="-size 10 -weight bold", bootstyle=SECONDARY)
         self.lbl_conn_status.pack(side=LEFT, padx=(0, 15))
         
@@ -215,7 +286,9 @@ class AttendeeExplorer(ttk.Window):
         self.combo_source.pack(side=LEFT, padx=(0, 5))
         self.combo_source.bind("<<ComboboxSelected>>", lambda e: self.load_data_async(is_manual=False))
         
-        ttk.Button(action_box, text="⚙️", bootstyle="outline-secondary", command=self.configure_api_url).pack(side=LEFT, padx=(0, 15))
+        # New Settings Buttons
+        ttk.Button(action_box, text="⚙️ DB", bootstyle="outline-warning", command=self.configure_db_url).pack(side=LEFT, padx=(0, 5))
+        ttk.Button(action_box, text="⚙️ API", bootstyle="outline-secondary", command=self.configure_api_url).pack(side=LEFT, padx=(0, 15))
         
         self.auto_refresh_var = tk.BooleanVar(value=True)
         self.chk_auto = ttk.Checkbutton(action_box, text="Auto-Refresh", variable=self.auto_refresh_var, bootstyle="info-round-toggle")
@@ -225,9 +298,9 @@ class AttendeeExplorer(ttk.Window):
         self.btn_refresh = ttk.Button(action_box, text="⟳ Refresh Data", bootstyle="primary", command=lambda: self.load_data_async(is_manual=True))
         self.btn_refresh.pack(side=LEFT, padx=5)
 
-        # -- ANALYTICS HEADER (ATTENDEE TYPES) --
+        # -- ANALYTICS HEADER --
         stats_frame = ttk.Frame(main_container)
-        stats_frame.pack(fill=X, pady=(0, 20))
+        stats_frame.pack(fill=X, pady=(0, 15))
         
         self.lbl_stat_gen = self._build_mini_stat(stats_frame, "GENERAL PASS", "primary")
         self.lbl_stat_biz = self._build_mini_stat(stats_frame, "BUSINESS PASS", "warning")
@@ -238,13 +311,13 @@ class AttendeeExplorer(ttk.Window):
         split_frame = ttk.Frame(main_container)
         split_frame.pack(fill=BOTH, expand=True)
 
-        # LEFT PANEL: SEARCH & DATAGRID
+        # LEFT PANEL: SEARCH, DATAGRID & PAGINATION
         left_frame = ttk.Frame(split_frame)
-        left_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 20))
+        left_frame.pack(side=LEFT, fill=BOTH, expand=True, padx=(0, 15))
 
         # -- ADVANCED FILTER BAR --
-        filter_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=12)
-        filter_frame.pack(fill=X, pady=(0, 15))
+        filter_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=10)
+        filter_frame.pack(fill=X, pady=(0, 10))
         
         ttk.Label(filter_frame, text="🔍", font="-size 12", background=self.CARD_BG).pack(side=LEFT, padx=(5, 5))
         self.ent_search = ttk.Entry(filter_frame, font="-size 10", width=22)
@@ -265,7 +338,7 @@ class AttendeeExplorer(ttk.Window):
 
         ttk.Button(filter_frame, text="Clear", bootstyle="secondary-link", command=self.clear_filters).pack(side=RIGHT, padx=(5, 5))
 
-        # -- TREEVIEW --
+        # -- TREEVIEW CONTAINER --
         tree_card = ttk.Frame(left_frame, style="Card.TFrame", padding=2)
         tree_card.pack(fill=BOTH, expand=True)
 
@@ -291,8 +364,33 @@ class AttendeeExplorer(ttk.Window):
         self.tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side=RIGHT, fill=Y)
 
-        # RIGHT PANEL: PROFILE & PHOTO CARD (FIXED CLIPPING & OVERLAPS)
-        right_frame = ttk.Frame(split_frame, width=420)
+        # -- PAGINATION CONTROL BAR --
+        pagi_frame = ttk.Frame(left_frame, style="Card.TFrame", padding=8)
+        pagi_frame.pack(fill=X, pady=(10, 0))
+
+        ttk.Label(pagi_frame, text="Page Size:", font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, padx=(5, 5))
+        self.combo_page_size = ttk.Combobox(pagi_frame, values=["50", "100", "500", "1000", "1500", "2000"], state="readonly", width=6)
+        self.combo_page_size.set("100")
+        self.combo_page_size.pack(side=LEFT, padx=(0, 15))
+        self.combo_page_size.bind("<<ComboboxSelected>>", self.on_page_size_change)
+
+        self.btn_first = ttk.Button(pagi_frame, text="⏮ First", bootstyle="secondary-outline", width=8, command=self.first_page)
+        self.btn_first.pack(side=LEFT, padx=2)
+        
+        self.btn_prev = ttk.Button(pagi_frame, text="◀ Prev", bootstyle="secondary-outline", width=8, command=self.prev_page)
+        self.btn_prev.pack(side=LEFT, padx=2)
+
+        self.lbl_page_info = ttk.Label(pagi_frame, text="Page 1 of 1 (0 records)", font="-size 9 -weight bold", background=self.CARD_BG)
+        self.lbl_page_info.pack(side=LEFT, padx=15)
+
+        self.btn_next = ttk.Button(pagi_frame, text="Next ▶", bootstyle="secondary-outline", width=8, command=self.next_page)
+        self.btn_next.pack(side=LEFT, padx=2)
+
+        self.btn_last = ttk.Button(pagi_frame, text="Last ⏭", bootstyle="secondary-outline", width=8, command=self.last_page)
+        self.btn_last.pack(side=LEFT, padx=2)
+
+        # RIGHT PANEL: PROFILE & PHOTO CARD
+        right_frame = ttk.Frame(split_frame, width=380)
         right_frame.pack(side=RIGHT, fill=Y)
         right_frame.pack_propagate(False)
 
@@ -304,7 +402,7 @@ class AttendeeExplorer(ttk.Window):
         self.lbl_photo = ttk.Label(profile_card, text="Select an attendee to\nview profile details.", justify=CENTER, background=self.CARD_BG, font="-size 10", foreground="gray")
         self.lbl_photo.pack(pady=(0, 10))
         
-        self.lbl_profile_name = ttk.Label(profile_card, text="--", font="-size 18 -weight bold", background=self.CARD_BG, wraplength=360)
+        self.lbl_profile_name = ttk.Label(profile_card, text="--", font="-size 16 -weight bold", background=self.CARD_BG, wraplength=330)
         self.lbl_profile_name.pack(anchor=W)
         self.lbl_profile_id = ttk.Label(profile_card, text="--", font="-size 10 -weight bold", background=self.CARD_BG, bootstyle=SECONDARY)
         self.lbl_profile_id.pack(anchor=W, pady=(0, 10))
@@ -338,18 +436,18 @@ class AttendeeExplorer(ttk.Window):
             row.pack(fill=X, pady=(3, 3))
             
             ttk.Label(row, text=f"{label_text.upper()}", width=11, font="-size 8 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT, anchor=N)
-            ttk.Label(row, textvariable=var, font="-size 10", background=self.CARD_BG, wraplength=260).pack(side=LEFT, fill=X, expand=True, anchor=N)
+            ttk.Label(row, textvariable=var, font="-size 10", background=self.CARD_BG, wraplength=230).pack(side=LEFT, fill=X, expand=True, anchor=N)
             
             if i < len(self.profile_vars) - 1:
                 ttk.Separator(details_frame).pack(fill=X, pady=1)
 
     def _build_mini_stat(self, parent, title, bootstyle, is_purple=False):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(15, 12))
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(15, 10))
         frame.pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
         
         ttk.Label(frame, text=title, font="-size 9 -weight bold", foreground="gray", background=self.CARD_BG).pack(anchor=W)
         
-        val_lbl = ttk.Label(frame, text="0", font="-size 26 -weight bold", background=self.CARD_BG)
+        val_lbl = ttk.Label(frame, text="0", font="-size 24 -weight bold", background=self.CARD_BG)
         val_lbl.pack(anchor=W, pady=(2, 0))
         
         if is_purple:
@@ -360,7 +458,7 @@ class AttendeeExplorer(ttk.Window):
         return val_lbl
 
     # ==========================================================================
-    # THREAD-SAFE DATA LOADING & QUEUE (RESILIENT AUTO-HEALING)
+    # THREAD-SAFE DATA LOADING & BATCH FETCHING
     # ==========================================================================
     def _process_gui_queue(self):
         for _ in range(50):
@@ -374,7 +472,7 @@ class AttendeeExplorer(ttk.Window):
     def _auto_refresh_loop(self):
         if self.auto_refresh_var.get():
             self.load_data_async(is_manual=False)
-        self.after(10000, self._auto_refresh_loop)
+        self.after(15000, self._auto_refresh_loop)
 
     def load_data_async(self, is_manual=False):
         mode = self.combo_source.get()
@@ -382,33 +480,24 @@ class AttendeeExplorer(ttk.Window):
         if is_manual:
             self.btn_refresh.configure(state=DISABLED, text="Loading...")
             
-        if self.lbl_record_count.cget("text") != "Fetch Failed (Offline)":
-            self.lbl_record_count.configure(text="Syncing records...", bootstyle=INFO)
+        if "Failed" not in self.lbl_record_count.cget("text"):
+            self.lbl_record_count.configure(text="Fetching records in batches...", bootstyle=INFO)
         
         def _fetch():
             try:
+                combined = []
                 if "API" in mode:
                     hub_url = self.get_hub_url()
-                    api_endpoint = f"{hub_url}/api/attendees"
-                    try:
-                        resp = self.api_session.get(api_endpoint, timeout=4, verify=False)
-                        resp.raise_for_status()
-                        data = resp.json()
-                        combined = [APIRecord(d) for d in data]
-                        self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● API: Connected", bootstyle=SUCCESS))
-                    except Exception as e:
-                        self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● API: Offline", bootstyle=DANGER))
-                        raise Exception(f"Failed to reach Hub Server at {hub_url}.")
+                    combined = self._fetch_api_in_batches(hub_url)
+                    self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● API: Connected", bootstyle=SUCCESS))
                 else:
                     if not self.SessionMySQL:
+                        self.connect_db()
+                    if not self.SessionMySQL:
                         self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● DB: Offline", bootstyle=DANGER))
-                        raise Exception("MySQL connection is not configured or active.")
+                        raise Exception("MySQL database connection is unavailable.")
                         
-                    session = self.SessionMySQL()
-                    main_att = session.query(Attendee).all()
-                    kiosk_att = session.query(OfflineKioskAttendee).all()
-                    combined = main_att + kiosk_att
-                    session.close()
+                    combined = self._fetch_mysql_in_batches(batch_size=10000)
                     self.gui_queue.put(lambda: self.lbl_conn_status.configure(text="● DB: Connected", bootstyle=SUCCESS))
                 
                 self.gui_queue.put(lambda c=combined: self._apply_data(c))
@@ -416,8 +505,6 @@ class AttendeeExplorer(ttk.Window):
             except Exception as e:
                 logging.error(f"Failed to load data: {e}")
                 self.gui_queue.put(lambda: self.lbl_record_count.configure(text="Fetch Failed (Offline)", bootstyle=DANGER))
-                
-                # Only show popup if user manually clicked refresh
                 if is_manual:
                     self.gui_queue.put(lambda err=str(e): messagebox.showerror("Connection Error", err))
             finally:
@@ -426,30 +513,92 @@ class AttendeeExplorer(ttk.Window):
                 
         threading.Thread(target=_fetch, daemon=True).start()
 
+    def _fetch_mysql_in_batches(self, batch_size=10000):
+        """Fetches 2 Lakh+ records from MySQL using LIMIT & OFFSET chunking"""
+        all_records = []
+        if not self.SessionMySQL and not self.connect_db():
+            raise Exception("Cannot establish MySQL connection.")
+
+        session = self.SessionMySQL()
+        try:
+            offset = 0
+            while True:
+                batch = session.query(Attendee).offset(offset).limit(batch_size).all()
+                if not batch: break
+                all_records.extend(batch)
+                offset += len(batch)
+                
+                curr_count = len(all_records)
+                self.gui_queue.put(lambda c=curr_count: self.lbl_record_count.configure(text=f"Loaded {c:,} records...", bootstyle=INFO))
+
+            offset = 0
+            while True:
+                batch = session.query(OfflineKioskAttendee).offset(offset).limit(batch_size).all()
+                if not batch: break
+                all_records.extend(batch)
+                offset += len(batch)
+                
+                curr_count = len(all_records)
+                self.gui_queue.put(lambda c=curr_count: self.lbl_record_count.configure(text=f"Loaded {c:,} records...", bootstyle=INFO))
+
+            return all_records
+        except Exception as e:
+            logging.warning(f"MySQL error during chunk fetch, re-connecting... ({e})")
+            session.close()
+            self.connect_db()
+            raise e
+        finally:
+            try: session.close()
+            except: pass
+
+    def _fetch_api_in_batches(self, hub_url, batch_size=5000):
+        all_records = []
+        offset = 0
+        while True:
+            api_endpoint = f"{hub_url}/api/attendees?limit={batch_size}&offset={offset}"
+            try:
+                resp = self.api_session.get(api_endpoint, timeout=10, verify=False)
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception:
+                if offset == 0:
+                    resp = self.api_session.get(f"{hub_url}/api/attendees", timeout=10, verify=False)
+                    resp.raise_for_status()
+                    data = resp.json()
+                else:
+                    break
+
+            batch_data = data["items"] if isinstance(data, dict) and "items" in data else (data if isinstance(data, list) else [])
+            if not batch_data: break
+
+            records = [APIRecord(d) for d in batch_data]
+            all_records.extend(records)
+            self.gui_queue.put(lambda c=len(all_records): self.lbl_record_count.configure(text=f"Loaded {c:,} API records...", bootstyle=INFO))
+
+            if len(batch_data) < batch_size or len(records) == len(data): break
+            offset += len(batch_data)
+        return all_records
+
     def _apply_data(self, records):
         sel = self.tree.selection()
         selected_id = sel[0] if sel else None
 
         self.all_attendees = records
-        
         counts = {"GENERAL": 0, "BUSINESS": 0, "MEDIA": 0, "EXHIBITOR": 0}
+        
         for att in records:
             atype = att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type)
-            atype = atype.upper()
-            if atype in counts:
-                counts[atype] += 1
-            else:
-                counts["GENERAL"] += 1 
+            counts[atype.upper()] = counts.get(atype.upper(), 0) + 1
                 
-        self.lbl_stat_gen.configure(text=str(counts["GENERAL"]))
-        self.lbl_stat_biz.configure(text=str(counts["BUSINESS"]))
-        self.lbl_stat_med.configure(text=str(counts["MEDIA"]))
-        self.lbl_stat_exh.configure(text=str(counts["EXHIBITOR"]))
+        self.lbl_stat_gen.configure(text=f"{counts.get('GENERAL', 0):,}")
+        self.lbl_stat_biz.configure(text=f"{counts.get('BUSINESS', 0):,}")
+        self.lbl_stat_med.configure(text=f"{counts.get('MEDIA', 0):,}")
+        self.lbl_stat_exh.configure(text=f"{counts.get('EXHIBITOR', 0):,}")
         
         self.apply_filters(preserve_selection=selected_id)
 
     # ==========================================================================
-    # FILTERING & SORTING ENGINE
+    # FILTERING, SORTING & UI PAGINATION ENGINE
     # ==========================================================================
     def clear_filters(self):
         self.ent_search.delete(0, END)
@@ -488,27 +637,84 @@ class AttendeeExplorer(ttk.Window):
             filtered.sort(key=lambda x: getattr(x, 'full_name', '').lower(), reverse=True)
 
         self.filtered_attendees = filtered
+        self.current_page = 1
+        self.render_page(preserve_selection=preserve_selection)
 
+    # ==========================================================================
+    # PAGINATION CONTROL HANDLERS
+    # ==========================================================================
+    def on_page_size_change(self, event=None):
+        try:
+            self.page_size = int(self.combo_page_size.get())
+        except ValueError:
+            self.page_size = 100
+        self.current_page = 1
+        self.render_page()
+
+    def first_page(self):
+        if self.current_page > 1:
+            self.current_page = 1
+            self.render_page()
+
+    def prev_page(self):
+        if self.current_page > 1:
+            self.current_page -= 1
+            self.render_page()
+
+    def next_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page += 1
+            self.render_page()
+
+    def last_page(self):
+        if self.current_page < self.total_pages:
+            self.current_page = self.total_pages
+            self.render_page()
+
+    def render_page(self, preserve_selection=None):
         for item in self.tree.get_children():
             self.tree.delete(item)
-            
-        for att in filtered:
+
+        total_items = len(self.filtered_attendees)
+        if total_items == 0:
+            self.lbl_page_info.configure(text="Page 0 of 0 (0 records)")
+            self.lbl_record_count.configure(text="Showing 0 records", bootstyle=INFO)
+            self.btn_first.configure(state=DISABLED)
+            self.btn_prev.configure(state=DISABLED)
+            self.btn_next.configure(state=DISABLED)
+            self.btn_last.configure(state=DISABLED)
+            return
+
+        self.total_pages = max(1, (total_items + self.page_size - 1) // self.page_size)
+        
+        if self.current_page > self.total_pages: self.current_page = self.total_pages
+        if self.current_page < 1: self.current_page = 1
+
+        start_idx = (self.current_page - 1) * self.page_size
+        end_idx = min(start_idx + self.page_size, total_items)
+        page_items = self.filtered_attendees[start_idx:end_idx]
+
+        for att in page_items:
             sync_status = "Pending ⏳" if getattr(att, 'needs_cloud_sync', False) else "Synced ✓"
             att_type = att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type)
-            
             self.tree.insert('', END, iid=att.attendee_id, values=(
                 att.attendee_id, att.full_name, att.mobile, att_type,
                 f"{att.city}, {att.state}", sync_status
             ))
-            
-        self.lbl_record_count.configure(text=f"Showing {len(self.filtered_attendees)} records", bootstyle=INFO)
+
+        self.lbl_page_info.configure(text=f"Page {self.current_page} of {self.total_pages:,} (Total: {total_items:,})")
+        self.lbl_record_count.configure(text=f"Showing {start_idx+1:,}-{end_idx:,} of {total_items:,} records", bootstyle=INFO)
+
+        self.btn_first.configure(state=NORMAL if self.current_page > 1 else DISABLED)
+        self.btn_prev.configure(state=NORMAL if self.current_page > 1 else DISABLED)
+        self.btn_next.configure(state=NORMAL if self.current_page < self.total_pages else DISABLED)
+        self.btn_last.configure(state=NORMAL if self.current_page < self.total_pages else DISABLED)
 
         if preserve_selection and self.tree.exists(preserve_selection):
             self.tree.selection_set(preserve_selection)
             self.on_row_select(None)
 
     def sort_treeview(self, col):
-        """Manual column click sorting fallback"""
         if self.current_sort_col == col:
             self.sort_reverse = not self.sort_reverse
         else:
@@ -627,8 +833,7 @@ class AttendeeExplorer(ttk.Window):
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
         
-        if not file_path:
-            return
+        if not file_path: return
             
         try:
             with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
@@ -649,7 +854,7 @@ class AttendeeExplorer(ttk.Window):
                         att.city, att.state, att.pincode, reg_date, sync_status
                     ])
                     
-            messagebox.showinfo("Export Successful", f"Successfully exported {len(self.filtered_attendees)} records to:\n{file_path}")
+            messagebox.showinfo("Export Successful", f"Successfully exported {len(self.filtered_attendees):,} records to:\n{file_path}")
         except Exception as e:
             logging.error(f"CSV Export failed: {e}")
             messagebox.showerror("Export Failed", f"Could not save file:\n{e}")
