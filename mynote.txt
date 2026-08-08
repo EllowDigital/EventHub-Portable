@@ -1,109 +1,109 @@
--------------------------------------------------------------------------------------------------------------------------
-|                                       EVENT HUB - QUICK REFERENCE HANDBOOK                                            |   
--------------------------------------------------------------------------------------------------------------------------
+========================================================================================
+|                       EVENT HUB - QUICK REFERENCE HANDBOOK                           |   
+========================================================================================
 
-[1] STARTUP SEQUENCE                                                                                                         
-1. Connect Master Phone A (via USB Tethering) to Laptop A.                                                                          
-2. Connect RJ45 LAN/Switch to Registration Laptops.                                                                          
-3. Turn ON Mobile Hotspot on Laptop A.                                                                                       
-4. Connect Mobile Scanners (up to 8) to Laptop A's Hotspot.                                                                   
-5. Launch server_hub.py -> Click "▶ Start Engine".                                                                           
-6. Start Cloudflare Tunnel (if online) -> Share public link.                                              
+[1] STARTUP SEQUENCE
+1. Connect Master Phone A (via USB Tethering) to Laptop A[cite: 2].
+2. Connect RJ45 LAN/Switch to Registration Laptops[cite: 2].
+3. Turn ON Mobile Hotspot on Laptop A[cite: 2].
+4. Connect Mobile Scanners (up to 8) to Laptop A's Hotspot[cite: 2].
+5. Launch server_hub.py -> Click "▶ Start Engine"[cite: 2].
+6. Start Cloudflare Tunnel (if online) -> Share public link[cite: 2].
 
--------------------------------------------------------------------------------------------------------------------------
-[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)                                                             	|      
--------------------------------------------------------------------------------------------------------------------------
-|	DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                 	|                   
-|--------------------|------------|-------------------------------|-----------------------------------------------------|
-|	Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)                  |            
-|	Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras                   |            
-|	Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag              |            
-|	Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)              |           
-|	Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning                        |          
-|	Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API                          |         
--------------------------------------------------------------------------------------------------------------------------
+========================================================================================
+[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)[cite: 2]                   |
+========================================================================================
+| DEVICE             | NETWORK    | TARGET URL (ENGINE)           | PURPOSE                                  
+|--------------------|------------|-------------------------------|-----------------------------------------
+| Kiosk Laptops      | LAN        | http://<IP>:5000 (Waitress)   | Fast data entry (No SSL lag)[cite: 2].                  
+| Mobile Scanners    | Wi-Fi      | https://<IP>:5001 (Cheroot)   | Unlocks iOS/Android cameras[cite: 2].                   
+| Master Phone A     | USB Tether | https://<IP>:5001 (Cheroot)   | Hardwired scanner; immune to lag[cite: 2].             
+| Gate Displays      | Wi-Fi/LAN  | https://<IP>:5001 (Cheroot)   | Instant GUI updates (Unbuffered)[cite: 2].             
+| Roving Staff       | 4G/5G      | https://<tunnel>.trycloudflare| Secure remote scanning[cite: 2].                        
+| Background Sync    | USB/Wi-Fi  | (Runs Automatically)          | Cloudinary Photo API[cite: 2].                          
+========================================================================================
 
-[3] GOLDEN RULES & REMINDERS                                                                                                 
-- STARTUP ORDER: Network -> Hotspot -> Server -> Clients.                                                                    
-- REGISTRATION PCs = HTTP (Port 5000).                                                                                       
-- SCANNERS & GUI = HTTPS (Port 5001) -> *STRICTLY REQUIRED for cameras/live-sync!*                                           
-- SSL WARNING: Accept the "Not Secure" warning on scanners ONCE before the event.                                            
-- NEVER close server_hub.py during the live event.                                                                           
-- Staff never connect to MySQL directly; APIs handle all traffic.                    
+[3] GOLDEN RULES & REMINDERS
+- STARTUP ORDER: Network -> Hotspot -> Server -> Clients[cite: 2].
+- REGISTRATION PCs = HTTP (Port 5000)[cite: 2].
+- SCANNERS & GUI = HTTPS (Port 5001) -> STRICTLY REQUIRED for cameras/live-sync![cite: 2]
+- NEVER close server_hub.py during the live event[cite: 2].
+- Staff never connect to MySQL directly; APIs handle all traffic[cite: 2].
 
-[4] OFFLINE MODE (INTERNET GOES DOWN)                                                                                        
-- DO NOT PANIC: Local Hotspot & LAN continue working normally.                                                               
-- Registration uses Port 5000; Scanners use Port 5001.                                                                       
-- Remote Cloudflare staff will be DOWN until internet returns.                       
+[4] OFFLINE MODE (INTERNET GOES DOWN)
+- DO NOT PANIC: Local Hotspot & LAN continue working normally[cite: 2].
+- Registration uses Port 5000; Scanners use Port 5001[cite: 2].
+- Remote Cloudflare staff will be DOWN until internet returns[cite: 2].
 
-[5] SYSTEM & POWER OPTIMIZATIONS (CRITICAL)                                                                                  
-- NETWORK PROFILE: Must be "Private" (Windows blocks LAN on "Public").                                                       
-- FIREWALL PORTS: Allow TCP 5000, 5001, 3306.                                                                                
-- ANTIVIRUS: Pause McAfee/Norton/Avast firewalls (they block local traffic).                                                 
-- POWER PLAN: Set Screen & Sleep to "Never".                                                                                 
-- ADAPTERS: Device Manager > Network Adapters > Uncheck "Allow computer to turn off device".           
+[5] SYSTEM & POWER OPTIMIZATIONS (CRITICAL)
+- NETWORK PROFILE: Must be "Private" (Windows blocks LAN on "Public")[cite: 2].
+- FIREWALL PORTS: Allow TCP 5000, 5001, 3306[cite: 2].
+- ANTIVIRUS: Pause McAfee/Norton/Avast firewalls (they block local traffic)[cite: 2].
+- POWER PLAN: Set Screen & Sleep to "Never"[cite: 2].
+- ADAPTERS: Device Manager > Network Adapters > Uncheck "Allow computer to turn off device"[cite: 2].
 
-[6] TROUBLESHOOTING & FIXES            
+[6] TROUBLESHOOTING & FIXES
                                                                                       
-» FIX: DEVICES CAN'T LOAD THE HUB IP                                                                                         
-  1. Check Laptop A's IP via 'ipconfig'.                                                                                     
-  2. Verify devices are on the correct Wi-Fi/LAN.                                                                            
-  3. Turn OFF all VPNs (they scramble local routing).         
+» FIX: DEVICES CAN'T LOAD THE HUB IP
+  1. Check Laptop A's IP via 'ipconfig'[cite: 2].
+  2. Verify devices are on the correct Wi-Fi/LAN[cite: 2].
+  3. Turn OFF all VPNs (they scramble local routing)[cite: 2].
 
-» FIX: CLOUDFLARE WON'T OPEN                                                                                                 
-  - Change Laptop A DNS to: 1.1.1.1 (Preferred) and 1.0.0.1 (Alternate).    
+» FIX: CLOUDFLARE WON'T OPEN
+  - Change Laptop A DNS to: 1.1.1.1 (Preferred) and 1.0.0.1 (Alternate)[cite: 2].
 
-» FIX: NETWORK GLITCHY / DROPPING                                                                                            
-  - Admin PowerShell Command (Run to force allow ports):                                                                     
-    New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001    
-  - Admin CMD (Network Reset):                                                                                               
-    ipconfig /flushdns                                                                                                       
-    ipconfig /release                                                                                                        
-    ipconfig /renew                                                                                                          
-    netsh winsock reset (Requires Restart)    
+» FIX: NETWORK GLITCHY / DROPPING
+  - Admin PowerShell Command (Run to force allow ports)[cite: 2]:
+    New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001
+  - Admin CMD (Network Reset)[cite: 2]:
+    ipconfig /flushdns
+    ipconfig /release
+    ipconfig /renew
+    netsh winsock reset (Requires Restart)
 
-» MANUAL LAN SETUP (FALLBACK)                                                                                                
-  - Server IP: 192.168.10.1 (Subnet: 255.255.255.0)                                                                          
-  - Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)                                                                        
-  - Client URL: http://192.168.10.1:5000  
+» MANUAL LAN SETUP (FALLBACK)[cite: 2]
+  - Server IP: 192.168.10.1 (Subnet: 255.255.255.0)
+  - Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)
+  - Client URL: http://192.168.10.1:5000
 
-[7] CERTIFICATE INSTALLATION (HTTPS WARNING FIX)                                                                             
+[7] CERTIFICATE INSTALLATION (HTTPS WARNING FIX) - UPDATED ARCHITECTURE
                                                                                       
-» WINDOWS PC INSTALLATION:                                                                                                   
-  1. Rename 'hub_cert.pem' (found in config/certs) to 'hub_cert.crt'.                                                        
-  2. Double-click the file and click 'Install Certificate'.                                                                  
-  3. Select 'Local Machine' as the Store Location.                                                                           
-  4. CRITICAL: Choose 'Place all certificates in the following store' -> Browse -> 'Trusted Root Certification Authorities'.   
-  5. Click Finish and completely restart your web browser.                                                                   
+» WINDOWS PC INSTALLATION:
+  1. Locate 'rootCA.pem' (found in config/certs) and rename to 'rootCA.crt'.
+  2. Double-click the file and click 'Install Certificate'.
+  3. Select 'Local Machine' as the Store Location.
+  4. CRITICAL: Choose 'Place all certificates in the following store' -> Browse -> 'Trusted Root Certification Authorities'.
+  5. Click Finish and completely restart your web browser.
 
-» ANDROID / SAMSUNG INSTALLATION:                                                                                            
-  1. Transfer the certificate to the phone and rename it to 'hub_cert.cer'.                                                  
-  2. WARNING: Do NOT open the file directly from the File Manager (it will ask for a private key).                           
-  3. Open Android Settings -> Security & Privacy -> More security settings -> Encryption & credentials.                      
-  4. Tap 'Install a certificate' -> MUST select 'CA Certificate' (Do not select User/VPN).                                   
-  5. Accept the privacy warning ('Install anyway') and select your 'hub_cert.cer' file.                                   
+» ANDROID / iOS DEVICE INSTALLATION:
+  1. Transfer the 'rootCA.pem' certificate to the phone and rename it to 'rootCA.cer'.
+  2. WARNING: Do NOT open the file directly from the File Manager.
+  3. Open Android Settings -> Security & Privacy -> More security settings -> Encryption & credentials.
+  4. Tap 'Install a certificate' -> MUST select 'CA Certificate' (Do not select User/VPN).
+  5. Accept the privacy warning ('Install anyway') and select your 'rootCA.cer' file.
+  (For iOS: Install Profile in Settings -> General -> About -> Certificate Trust Settings -> Enable Full Trust).
 
 [8] MYSQL DATABASE & NETWORK TUNING (LAN & PERFORMANCE)
 
 » 1. ENABLE LAN / RJ45 / WI-FI ACCESS (my.ini REQUIRED)
-  - CRITICAL: Network binding cannot be changed live. It MUST be done in the file.
-  - Open: C:\ProgramData\MySQL\MySQL Server 8.4\my.ini (Note: ProgramData is a hidden folder).
-  - Find the [mysqld] section and add/change this exact line (Use * to support IPv4 & IPv6 natively):
+  - CRITICAL: Network binding cannot be changed live. It MUST be done in the file[cite: 2].
+  - Open: C:\ProgramData\MySQL\MySQL Server 8.4\my.ini (Note: ProgramData is a hidden folder)[cite: 2].
+  - Find the [mysqld] section and add/change this exact line (Use * to support IPv4 & IPv6 natively)[cite: 2]:
     bind-address=*
-  - Save the file and restart the MySQL Service (Admin CMD: net stop MySQL84 && net start MySQL84).
+  - Save the file and restart the MySQL Service (Admin CMD: net stop MySQL84 && net start MySQL84)[cite: 2].
 
 » 2. ADD REMOTE USER FOR LAN ACCESS (MySQL Shell)
-  - Open Command Prompt and log in: mysql -u root -p
-  - Run these exact commands to allow any laptop/PC on the network to connect:
+  - Open Command Prompt and log in: mysql -u root -p[cite: 2]
+  - Run these exact commands to allow any laptop/PC on the network to connect[cite: 2]:
     CREATE USER IF NOT EXISTS 'event_admin'@'%' IDENTIFIED BY 'EventHub123!';
     GRANT ALL PRIVILEGES ON *.* TO 'event_admin'@'%';
     FLUSH PRIVILEGES;
     EXIT;
-  - Other laptops can now connect using the Host Laptop's IP (e.g., 192.168.1.X) and these credentials.
+  - Other laptops can now connect using the Host Laptop's IP (e.g., 192.168.1.X) and these credentials[cite: 2].
 
 » 3. PERFORMANCE TUNING: METHOD A - PERMANENT TEXT EDIT (my.ini)
-  - Open my.ini and locate the [mysqld] section.
-  - Paste the complete Event Hub tuning block directly into the file:
+  - Open my.ini and locate the [mysqld] section[cite: 2].
+  - Paste the complete Event Hub tuning block directly into the file[cite: 2]:
     
     # === EVENT HUB - PERFORMANCE TUNING (4GB RAM BASELINE) ===
     max_connections=150
@@ -141,13 +141,14 @@
     innodb_buffer_pool_instances=1
     # ======================================
 
-  - Requires restarting the MySQL service (Admin CMD: net stop MySQL84 && net start MySQL84).
+  - Requires restarting the MySQL service (Admin CMD: net stop MySQL84 && net start MySQL84)[cite: 2].
 
 » 4. PERFORMANCE TUNING: METHOD B - LIVE SHELL (NO MY.INI EDITING)
-  - Use this to apply changes INSTANTLY without restarting the server.
-  - Using 'SET PERSIST' saves the changes for future reboots without touching my.ini.
-  - Note: 'innodb_log_buffer_size', 'innodb_buffer_pool_instances', 'innodb_flush_method', and 'disable-log-bin' MUST be done via Method A.
-  - Open MySQL Shell (mysql -u root -p) and paste this block:
+  - Use this to apply changes INSTANTLY without restarting the server[cite: 2].
+  - Using 'SET PERSIST' saves the changes for future reboots without touching my.ini[cite: 2].
+  - Note: 'innodb_log_buffer_size', 'innodb_buffer_pool_instances', 'innodb_flush_method', and 
+    'disable-log-bin' MUST be done via Method A[cite: 2].
+  - Open MySQL Shell (mysql -u root -p) and paste this block[cite: 2]:
 
     SET PERSIST max_connections = 150;
     SET PERSIST max_connect_errors = 10000;
@@ -174,7 +175,7 @@
     SET PERSIST character_set_server = 'utf8mb4';
     SET PERSIST collation_server = 'utf8mb4_unicode_ci';
 
-  - Set Buffer Pool dynamically (values MUST be in exact bytes in the shell):
+  - Set Buffer Pool dynamically (values MUST be in exact bytes in the shell)[cite: 2]:
     [ 4 GB RAM PC  -> 1G  ] : SET PERSIST innodb_buffer_pool_size = 1073741824;
     [ 8 GB RAM PC  -> 4G  ] : SET PERSIST innodb_buffer_pool_size = 4294967296;
     [ 16 GB RAM PC -> 8G  ] : SET PERSIST innodb_buffer_pool_size = 8589934592;
@@ -182,7 +183,5 @@
     [ 32 GB RAM PC -> 16G ] : SET PERSIST innodb_buffer_pool_size = 17179869184;
 
 » 5. VERIFY CHANGES (MySQL Shell)
-  - To confirm LAN is open and RAM is allocated, open MySQL Shell and run:
-    SHOW GLOBAL VARIABLES WHERE Variable_name IN ('bind_address', 'innodb_buffer_pool_size', 'max_connections');   
-                                                                                   
--------------------------------------------------------------------------------------------------------------------------
+  - To confirm LAN is open and RAM is allocated, open MySQL Shell and run[cite: 2]:
+    SHOW GLOBAL VARIABLES WHERE Variable_name IN ('bind_address', 'innodb_buffer_pool_size', 'max_connections');
