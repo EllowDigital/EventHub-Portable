@@ -168,7 +168,10 @@ CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 DB_WRITER_THREADS = 32            
 DB_JOB_QUEUE_MAXSIZE = 5000       
 DB_JOB_TIMEOUT = 10               
-STATS_REFRESH_INTERVAL_SEC = 3   
+
+# Optimized from 3 seconds to 30 seconds to prevent full table scans from locking the CPU 
+# when handling lakhs of attendees. Live UI stats are updated in-memory instantly instead.
+STATS_REFRESH_INTERVAL_SEC = 30  
 SLOW_REQUEST_THRESHOLD_MS = 250  
 MAX_LOG_LINES = 2000             
 
@@ -238,53 +241,6 @@ def get_cached_sessions():
                     return None
     return DB_SESSIONS_CACHE
 
-def _write_self_signed_cert(cert_path, key_path, local_ip):
-    key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
-    now = datetime.now(timezone.utc)
-    timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-    cert_names = [
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital"),
-        x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
-        x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, f"Generated: {timestamp_str}"),
-        x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Hub"),
-    ]
-
-    subject = x509.Name(cert_names)
-    issuer = x509.Name(cert_names)
-
-    san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
-    try: san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
-    except Exception: pass
-
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(issuer)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now)
-        .not_valid_after(now + timedelta(days=730))
-        .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(key, hashes.SHA384())
-    )
-
-    with open(key_path, "wb") as f:
-        f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
-
-    with open(cert_path, "wb") as f:
-        f.write(cert.public_bytes(serialization.Encoding.PEM))
-
-import os
-import ipaddress
-import logging
-from datetime import datetime, timezone, timedelta
-from cryptography import x509
-from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-
 def _ensure_root_ca(ca_cert_path, ca_key_path):
     """Generates a long-term Root CA certificate strictly compliant with iOS/Android."""
     if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
@@ -300,7 +256,6 @@ def _ensure_root_ca(ca_cert_path, ca_key_path):
             x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Root CA"),
         ])
 
-        # X.509 v3 Subject Key Identifier
         ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
 
         cert = (
@@ -310,7 +265,7 @@ def _ensure_root_ca(ca_cert_path, ca_key_path):
             .public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now)
-            .not_valid_after(now + timedelta(days=3650))  # 10 Years
+            .not_valid_after(now + timedelta(days=3650))  
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
             .add_extension(ski, critical=False)
             .add_extension(
@@ -370,7 +325,6 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
         except ValueError:
             logging.warning(f"Invalid IP address format provided for SAN: {local_ip}")
 
-        # Strict linking to the Root CA
         ski = x509.SubjectKeyIdentifier.from_public_key(server_key.public_key())
         aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key())
 
@@ -381,7 +335,7 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
             .public_key(server_key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now)
-            .not_valid_after(now + timedelta(days=365))  # Valid for 1 Year
+            .not_valid_after(now + timedelta(days=365)) 
             .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(ski, critical=False)
@@ -436,20 +390,16 @@ def ensure_ssl_certificate(local_ip):
     cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
     key_path = os.path.join(CERT_DIR, 'hub_key.pem')
 
-    # 1. Ensure persistent Root CA exists
     _ensure_root_ca(ca_cert_path, ca_key_path)
 
-    # 2. Check if existing server cert is valid AND includes the current IP
     reuse_existing = False
     if os.path.exists(cert_path) and os.path.exists(key_path):
         try:
             with open(cert_path, "rb") as f:
                 c = x509.load_pem_x509_certificate(f.read())
             
-            # Check 1: Expiration (Must have at least 30 days left)
             is_valid_time = c.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(days=30)
             
-            # Check 2: Does it contain the current network IP?
             san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             san_ips = san_ext.value.get_values_for_type(x509.IPAddress)
             has_current_ip = ipaddress.ip_address(local_ip) in san_ips
@@ -463,7 +413,6 @@ def ensure_ssl_certificate(local_ip):
             logging.warning(f"Existing certificate invalid or unreadable, will regenerate. Reason: {e}")
             reuse_existing = False
 
-    # 3. Issue a new server cert if missing, expired, or IP address changed
     if not reuse_existing:
         logging.info(f"Generating new server certificate for IP: {local_ip}")
         _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
@@ -592,7 +541,8 @@ def stats_refresher_loop():
                     STATS_CACHE["last_error"] = None
         except Exception as e:
             with stats_lock: STATS_CACHE["last_error"] = str(e)
-        _global_shutdown_event.wait(STATS_REFRESH_INTERVAL_SEC)
+        # Slower DB polling. Relying on live memory updates to handle lakhs of data smoothly
+        _global_shutdown_event.wait(STATS_REFRESH_INTERVAL_SEC) 
 
 @dataclass
 class DBJob:
@@ -669,6 +619,15 @@ def _handle_checkin_job(payload):
         attendee.needs_cloud_sync, attendee.needs_sheet_sync, attendee.needs_local_sync, attendee.local_modified = True, True, False, True
 
         session.commit()
+        
+        # Optimize Performance: Live RAM Counter Updates to prevent massive DB overhead 
+        with stats_lock:
+            if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
+            elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
+            elif current_date_str == "2026-09-01": STATS_CACHE["chk_01"] += 1
+            STATS_CACHE["total_scans"] += 1
+            STATS_CACHE["today_scans"] += 1
+            
         success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
         log_event_clean("CHECKIN", device_name, success_msg, 200)
         broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
@@ -734,6 +693,17 @@ def _handle_register_job(payload):
         try:
             session.add(new_kiosk_reg)
             session.commit()
+            
+            # Optimize Performance: Live RAM Counter Updates 
+            with stats_lock:
+                STATS_CACHE["total_registrations"] += 1
+                if today_date == "2026-08-30": 
+                    STATS_CACHE["chk_30"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                elif today_date == "2026-08-31": 
+                    STATS_CACHE["chk_31"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                elif today_date == "2026-09-01": 
+                    STATS_CACHE["chk_01"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                
         except IntegrityError:
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
@@ -1061,12 +1031,11 @@ class ServerHub(ttk.Window):
             "api": AnimatedMeter(self.mini_meter_api)
         }
 
-        # Subdivide UI loop timers for hyper-responsiveness
         self.flush_log_buffers()
         self.process_gui_queue()
         self.refresh_stats()
         self.refresh_hw_meters()
-        self.animation_loop() # 60fps UI Loop
+        self.animation_loop()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
@@ -1094,16 +1063,25 @@ class ServerHub(ttk.Window):
     def _ping_cloud(self, session):
         with self.cf_lock:
             cf_url = self.cloudflare_url
-        if cf_url == "Offline":
+            
+        if cf_url == "Offline" or cf_url == "Pending":
             return 0, "OFFLINE"
+            
         start = time.time()
         try:
-            session.get(f"{cf_url}/api/status", timeout=7, verify=False)
+            session.get(f"{cf_url}/api/status", timeout=(3, 7), verify=False)
             return int((time.time() - start) * 1000), "ONLINE"
-        except Exception as e:
-            if getattr(self, "_last_ping_err", "") != str(e): 
-                self._append_log('cf', f"[PING ERROR] {str(e)[:100]}...")
-                self._last_ping_err = str(e)
+        except requests.exceptions.RequestException as e:
+            # Handles Cloudflare DNS propagation delay gracefully without spamming the log
+            err_msg = str(e)
+            if "Max retries exceeded" in err_msg or "NameResolutionError" in err_msg:
+                clean_msg = "DNS resolution pending or tunnel unreachable."
+            else:
+                clean_msg = err_msg[:100] + "..."
+                
+            if getattr(self, "_last_ping_err", "") != clean_msg: 
+                self._append_log('cf', f"[PING ERROR] {clean_msg}")
+                self._last_ping_err = clean_msg
             return 0, "OFFLINE"
 
     def network_ping_daemon(self):
@@ -1171,7 +1149,7 @@ class ServerHub(ttk.Window):
     def process_gui_queue(self):
         if not self.winfo_exists(): return
         try:
-            for _ in range(150): # Increased queue throughput to prevent UI stalling
+            for _ in range(150): 
                 try: 
                     task = self.gui_queue.get_nowait()
                     task()
@@ -1185,7 +1163,6 @@ class ServerHub(ttk.Window):
             self.after(25, self.process_gui_queue)
 
     def animation_loop(self):
-        """Ticks 60 times a second to ensure perfectly smooth animations for meters."""
         if not self.winfo_exists(): return
         try:
             for anim_meter in self.animated_meters.values():
@@ -1216,7 +1193,7 @@ class ServerHub(ttk.Window):
         self._append_log('network', f"[CLIPBOARD] Copied: {text}")
 
     def open_browser(self, url): 
-        if url != "Offline": webbrowser.open(url)
+        if url != "Offline" and url != "Pending": webbrowser.open(url)
         
     def toggle_fullscreen(self): 
         is_fullscreen = self.attributes("-fullscreen")
@@ -1337,7 +1314,7 @@ class ServerHub(ttk.Window):
         
         self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font="-size 8", foreground="gray", cursor="hand2")
         self.lbl_cf_link.pack(pady=5)
-        self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url != "Offline" else None)
+        self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url not in ["Offline", "Pending"] else None)
         
         cf_btn_row = ttk.Frame(cf_frame)
         cf_btn_row.pack(fill=X, pady=(2, 5))
@@ -1725,6 +1702,10 @@ class ServerHub(ttk.Window):
         self.btn_stop_cf.configure(state=NORMAL)
         self._cf_connecting = True
         self._animate_cf_connecting()
+        
+        with self.cf_lock:
+            self.cloudflare_url = "Pending"
+            
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
 
         def _run_cf():
@@ -1741,15 +1722,21 @@ class ServerHub(ttk.Window):
                         m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
                         if m:
                             tunnel_url = m.group(0)
-                            with self.cf_lock:
-                                self.cloudflare_url = tunnel_url
                             url_found = True
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
-                            time.sleep(30)
-                            self.gui_queue.put(lambda u=tunnel_url: self.update_qr(self.lbl_cf_qr, u))
-                            self.gui_queue.put(lambda u=tunnel_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
-                            self.gui_queue.put(self._mark_cf_live)
-                            self._append_log('cf', f"[SUCCESS] Tunnel active: {tunnel_url}")
+                            
+                            # Multi-threading the DNS wait so stdout parsing isn't blocked
+                            def finalize_tunnel(t_url):
+                                time.sleep(30)
+                                with self.cf_lock:
+                                    self.cloudflare_url = t_url
+                                self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
+                                self.gui_queue.put(lambda u=t_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
+                                self.gui_queue.put(self._mark_cf_live)
+                                self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
+                                
+                            threading.Thread(target=finalize_tunnel, args=(tunnel_url,), daemon=True).start()
+                            
             except FileNotFoundError:
                 self.gui_queue.put(self.stop_cf)
                 self._append_log('cf', "[ERROR] 'cloudflared' not found in PATH.")
