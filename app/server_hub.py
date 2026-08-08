@@ -166,13 +166,13 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001  
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-DB_WRITER_THREADS = 48            
-DB_JOB_QUEUE_MAXSIZE = 20000               
+DB_WRITER_THREADS = 64            
+DB_JOB_QUEUE_MAXSIZE = 50000               
 DB_JOB_TIMEOUT = 10               
 
 STATS_REFRESH_INTERVAL_SEC = 300  
 SLOW_REQUEST_THRESHOLD_MS = 250  
-MAX_LOG_LINES = 2500             
+MAX_LOG_LINES = 1000             
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
 _file_handler = RotatingFileHandler(LOG_FILE, maxBytes=25_000_000, backupCount=10, encoding='utf-8')
@@ -975,7 +975,8 @@ def get_all_attendees():
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        self.server = create_server(app, host=host, port=port, threads=250, connection_limit=1000, channel_timeout=30)
+        # INCREASED CAPACITIES for load testing
+        self.server = create_server(app, host=host, port=port, threads=500, connection_limit=2000, channel_timeout=30)
         self.ctx = app.app_context(); self.ctx.push()
     def run(self):
         try: self.server.run()
@@ -983,12 +984,13 @@ class WaitressHttpThread(threading.Thread):
     def shutdown(self): self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
-    def __init__(self, app, host, port, numthreads=250):
+    def __init__(self, app, host, port, numthreads=500):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context(); self.ctx.push()
-        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=1024)
+        # INCREASED CAPACITIES for load testing
+        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=2048)
         self.server.keep_alive_timeout = 30
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
@@ -1184,28 +1186,39 @@ class ServerHub(ttk.Window):
     def _write_logs_to_widget(self, text_widget, log_batches):
         if not text_widget.winfo_exists(): return
         text_widget.configure(state=NORMAL)
+        
+        # --- THROWING FIX: Extreme Load Anti-Freeze ---
+        # Dropping to render extremely massive queues limits Tkinter bottlenecking 
+        # (It is still logged perfectly in the text file)
+        if len(log_batches) > 100:
+            log_batches = log_batches[-100:]
+            text_widget.insert(END, f"[{datetime.now().strftime('%H:%M:%S')}] [SYSTEM] Extremely high load detected! UI skipped older logs to maintain performance. Check log file for full history.\n", "log_warning")
+
         for segments in log_batches:
             for txt, tg in segments: 
                 if tg: text_widget.insert(END, txt, tg)
                 else: text_widget.insert(END, txt)
             text_widget.insert(END, "\n")
         text_widget.see(END)
+        
         lc = int(text_widget.index('end-1c').split('.')[0])
         if lc > MAX_LOG_LINES: 
             text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
+            
         text_widget.configure(state=DISABLED)
 
     def process_gui_queue(self):
         if not self.winfo_exists(): return
+        
+        start_time = time.perf_counter()
         try:
-            for _ in range(150): 
+            # --- YIELD FIX: Enforce time-boundary so mainloop never freezes ---
+            while time.perf_counter() - start_time < 0.015:  # Maximum 15 milliseconds allowed per tick
                 try: 
                     task = self.gui_queue.get_nowait()
                     task()
                 except queue.Empty: 
                     break
-                except Exception as e:
-                    logging.error(f"gui_queue task execution error: {e}")
         except Exception as e:
             logging.error(f"process_gui_queue outer error: {e}")
         finally:
@@ -1545,7 +1558,6 @@ class ServerHub(ttk.Window):
         self.log_tabs.add(tab_cf, text="☁️ Cloudflare Tunnel")
         self.log_cf = self._create_log_box(tab_cf, "Tunnel Status", self.clear_cf_logs, side=TOP, padx=0)
         
-        # Re-inserted Yellow TType Footer
         footer = ttk.Frame(content, style="TFrame")
         footer.pack(fill=X, pady=(5, 0))
         ttk.Label(
