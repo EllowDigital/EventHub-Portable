@@ -46,7 +46,7 @@ try:
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-    from cryptography.x509.oid import NameOID
+    from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
     CRYPTOGRAPHY_AVAILABLE = True
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
@@ -276,22 +276,198 @@ def _write_self_signed_cert(cert_path, key_path, local_ip):
     with open(cert_path, "wb") as f:
         f.write(cert.public_bytes(serialization.Encoding.PEM))
 
+import os
+import ipaddress
+import logging
+from datetime import datetime, timezone, timedelta
+from cryptography import x509
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+
+def _ensure_root_ca(ca_cert_path, ca_key_path):
+    """Generates a long-term Root CA certificate strictly compliant with iOS/Android."""
+    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
+        return
+
+    try:
+        key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
+        now = datetime.now(timezone.utc)
+
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital Event Root CA"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Root CA"),
+        ])
+
+        # X.509 v3 Subject Key Identifier
+        ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
+
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + timedelta(days=3650))  # 10 Years
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .add_extension(ski, critical=False)
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=False,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=True,
+                    crl_sign=True,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
+            .sign(key, hashes.SHA384())
+        )
+
+        with open(ca_key_path, "wb") as f:
+            f.write(key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            ))
+
+        with open(ca_cert_path, "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+            
+    except Exception as e:
+        logging.error(f"Failed to generate Root CA: {e}")
+        raise RuntimeError(f"Root CA generation failed: {e}")
+
+def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip):
+    """Generates a server certificate signed by the persistent Root CA with modern constraints."""
+    try:
+        with open(ca_cert_path, "rb") as f:
+            ca_cert = x509.load_pem_x509_certificate(f.read())
+        with open(ca_key_path, "rb") as f:
+            ca_key = serialization.load_pem_private_key(f.read(), password=None)
+
+        server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        now = datetime.now(timezone.utc)
+
+        subject = x509.Name([
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital"),
+            x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Hub Server"),
+        ])
+
+        san_entries = [
+            x509.DNSName("localhost"),
+            x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+        ]
+        try:
+            san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
+        except ValueError:
+            logging.warning(f"Invalid IP address format provided for SAN: {local_ip}")
+
+        # Strict linking to the Root CA
+        ski = x509.SubjectKeyIdentifier.from_public_key(server_key.public_key())
+        aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key())
+
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(ca_cert.subject)
+            .public_key(server_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now)
+            .not_valid_after(now + timedelta(days=365))  # Valid for 1 Year
+            .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
+            .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+            .add_extension(ski, critical=False)
+            .add_extension(aki, critical=False)
+            .add_extension(
+                x509.KeyUsage(
+                    digital_signature=True,
+                    content_commitment=False,
+                    key_encipherment=True,
+                    data_encipherment=False,
+                    key_agreement=False,
+                    key_cert_sign=False,
+                    crl_sign=False,
+                    encipher_only=False,
+                    decipher_only=False,
+                ),
+                critical=True,
+            )
+            .add_extension(
+                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
+                critical=False,
+            )
+            .sign(ca_key, hashes.SHA256())
+        )
+
+        with open(key_path, "wb") as f:
+            f.write(server_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption()
+            ))
+
+        with open(cert_path, "wb") as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+            
+    except Exception as e:
+        logging.error(f"Failed to generate Server Certificate: {e}")
+        raise RuntimeError(f"Server Certificate generation failed: {e}")
+
 def ensure_ssl_certificate(local_ip):
-    if not CRYPTOGRAPHY_AVAILABLE: raise RuntimeError("Cryptography package required.")
-    os.makedirs(CERT_DIR, exist_ok=True)
+    if not CRYPTOGRAPHY_AVAILABLE: 
+        raise RuntimeError("Cryptography package required.")
+    
+    try:
+        os.makedirs(CERT_DIR, exist_ok=True)
+    except OSError as e:
+        logging.error(f"Failed to create certificate directory: {e}")
+        raise
+
+    ca_cert_path = os.path.join(CERT_DIR, 'rootCA.pem')
+    ca_key_path = os.path.join(CERT_DIR, 'rootCA.key')
     cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
     key_path = os.path.join(CERT_DIR, 'hub_key.pem')
-    ip_marker_path = os.path.join(CERT_DIR, 'hub_cert_ip.txt')
-    
-    reuse_existing = False
-    if os.path.exists(cert_path) and os.path.exists(key_path) and os.path.exists(ip_marker_path):
-        try:
-            with open(ip_marker_path, 'r') as f: reuse_existing = f.read().strip() == local_ip
-        except Exception: pass
 
+    # 1. Ensure persistent Root CA exists
+    _ensure_root_ca(ca_cert_path, ca_key_path)
+
+    # 2. Check if existing server cert is valid AND includes the current IP
+    reuse_existing = False
+    if os.path.exists(cert_path) and os.path.exists(key_path):
+        try:
+            with open(cert_path, "rb") as f:
+                c = x509.load_pem_x509_certificate(f.read())
+            
+            # Check 1: Expiration (Must have at least 30 days left)
+            is_valid_time = c.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(days=30)
+            
+            # Check 2: Does it contain the current network IP?
+            san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
+            san_ips = san_ext.value.get_values_for_type(x509.IPAddress)
+            has_current_ip = ipaddress.ip_address(local_ip) in san_ips
+
+            if is_valid_time and has_current_ip:
+                reuse_existing = True
+            else:
+                logging.info("Existing certificate expired or IP changed. Regenerating...")
+
+        except Exception as e:
+            logging.warning(f"Existing certificate invalid or unreadable, will regenerate. Reason: {e}")
+            reuse_existing = False
+
+    # 3. Issue a new server cert if missing, expired, or IP address changed
     if not reuse_existing:
-        _write_self_signed_cert(cert_path, key_path, local_ip)
-        with open(ip_marker_path, 'w') as f: f.write(local_ip)
+        logging.info(f"Generating new server certificate for IP: {local_ip}")
+        _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
+
     return cert_path, key_path
 
 @app.before_request
