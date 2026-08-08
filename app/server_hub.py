@@ -95,6 +95,7 @@ TELEMETRY_DATA = {
 }
 _telemetry_lock = threading.Lock()
 _global_shutdown_event = threading.Event()
+_db_shutdown_event = threading.Event()
 
 def _telemetry_worker():
     last_time = time.time()
@@ -165,18 +166,16 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001  
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-DB_WRITER_THREADS = 32            
-DB_JOB_QUEUE_MAXSIZE = 5000       
+DB_WRITER_THREADS = 48            
+DB_JOB_QUEUE_MAXSIZE = 20000               
 DB_JOB_TIMEOUT = 10               
 
-# Optimized from 3 seconds to 30 seconds to prevent full table scans from locking the CPU 
-# when handling lakhs of attendees. Live UI stats are updated in-memory instantly instead.
-STATS_REFRESH_INTERVAL_SEC = 30  
+STATS_REFRESH_INTERVAL_SEC = 300  
 SLOW_REQUEST_THRESHOLD_MS = 250  
-MAX_LOG_LINES = 2000             
+MAX_LOG_LINES = 2500             
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
-_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=15_000_000, backupCount=10, encoding='utf-8')
+_file_handler = RotatingFileHandler(LOG_FILE, maxBytes=25_000_000, backupCount=10, encoding='utf-8')
 _file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
 
@@ -242,7 +241,6 @@ def get_cached_sessions():
     return DB_SESSIONS_CACHE
 
 def _ensure_root_ca(ca_cert_path, ca_key_path):
-    """Generates a long-term Root CA certificate strictly compliant with iOS/Android."""
     if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
         return
 
@@ -300,7 +298,6 @@ def _ensure_root_ca(ca_cert_path, ca_key_path):
         raise RuntimeError(f"Root CA generation failed: {e}")
 
 def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip):
-    """Generates a server certificate signed by the persistent Root CA with modern constraints."""
     try:
         with open(ca_cert_path, "rb") as f:
             ca_cert = x509.load_pem_x509_certificate(f.read())
@@ -466,11 +463,28 @@ def log_event_clean(action_type, device_name, details, status_code):
     status_tag = _status_log_tag(status_code)
 
     if action_type == "REGISTER":
-        segments = [(f"[{time_str}] ", "log_dim"), (f"{'✅' if status_code == 200 else '❌'} REGISTER  ", "log_register"), (f"[{device_name}] {details} — ", "log_default"), (f"Status: {status_code}", status_tag)]
+        segments = [
+            (f"[{time_str}] ", "log_timestamp"), 
+            (f"[{device_name}] ", "log_device"),
+            (f"REGISTER ", "log_register"), 
+            (f"{details} ", "log_default"), 
+            (f"[{status_code}]", status_tag)
+        ]
     elif action_type == "CHECKIN":
-        segments = [(f"[{time_str}] ", "log_dim"), (f"{'🎫' if status_code == 200 else '⛔'} CHECKIN  ", "log_checkin"), (f"[{device_name}] {details} — ", "log_default"), (f"Status: {status_code}", status_tag)]
+        segments = [
+            (f"[{time_str}] ", "log_timestamp"), 
+            (f"[{device_name}] ", "log_device"),
+            (f"CHECKIN  ", "log_checkin"), 
+            (f"{details} ", "log_default"), 
+            (f"[{status_code}]", status_tag)
+        ]
     else:
-        segments = [(f"[{time_str}] ", "log_dim"), (f"🌐 [{device_name}] {action_type} — ", "log_default"), (f"Status: {status_code}", status_tag)]
+        segments = [
+            (f"[{time_str}] ", "log_timestamp"), 
+            (f"[{device_name}] ", "log_device"),
+            (f"{action_type} ", "log_default"), 
+            (f"[{status_code}]", status_tag)
+        ]
 
     if gui_log_callback: 
         gui_log_callback(segments)
@@ -506,7 +520,7 @@ def traffic_monitor_loop():
             _current_sec_requests = 0
         TRAFFIC_HISTORY.append(hits)
 
-def _compute_stats_snapshot():
+def _compute_stats_snapshot(deep_scan=False):
     sessions = get_cached_sessions()
     mysql_factory = sessions.get('mysql') if sessions else None
     if not mysql_factory: return None
@@ -515,34 +529,55 @@ def _compute_stats_snapshot():
     try:
         total_attendees = session.query(Attendee).count()
         total_registrations = session.query(OfflineKioskAttendee).count()
-        chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
-        chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
-        chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
         
-        return {
-            "total_attendees": total_attendees, "total_registrations": total_registrations, 
-            "chk_30": chk_30, "chk_31": chk_31, "chk_01": chk_01, "total_scans": chk_30 + chk_31 + chk_01
+        result = {
+            "total_attendees": total_attendees, 
+            "total_registrations": total_registrations,
+            "is_deep_scan": False
         }
+        
+        if deep_scan:
+            chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
+            chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
+            chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
+            result.update({
+                "chk_30": chk_30, "chk_31": chk_31, "chk_01": chk_01, 
+                "total_scans": chk_30 + chk_31 + chk_01,
+                "is_deep_scan": True
+            })
+            
+        return result
     finally: 
         session.close()
 
 def stats_refresher_loop():
+    loop_counter = 0
     while not _global_shutdown_event.is_set():
         try:
-            snapshot = _compute_stats_snapshot()
+            needs_deep_scan = (loop_counter % 60 == 0)
+            snapshot = _compute_stats_snapshot(deep_scan=needs_deep_scan)
+            
             if snapshot is not None:
                 today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                today_scans = {"2026-08-30": snapshot["chk_30"], "2026-08-31": snapshot["chk_31"], "2026-09-01": snapshot["chk_01"]}.get(today_date, 0)
                 
                 with stats_lock:
-                    STATS_CACHE.update(snapshot)
-                    STATS_CACHE["today_scans"] = today_scans
+                    STATS_CACHE["total_attendees"] = snapshot["total_attendees"]
+                    STATS_CACHE["total_registrations"] = snapshot["total_registrations"]
+                    
+                    if snapshot["is_deep_scan"]:
+                        STATS_CACHE["chk_30"] = snapshot["chk_30"]
+                        STATS_CACHE["chk_31"] = snapshot["chk_31"]
+                        STATS_CACHE["chk_01"] = snapshot["chk_01"]
+                        STATS_CACHE["total_scans"] = snapshot["total_scans"]
+                    
+                    STATS_CACHE["today_scans"] = {"2026-08-30": STATS_CACHE["chk_30"], "2026-08-31": STATS_CACHE["chk_31"], "2026-09-01": STATS_CACHE["chk_01"]}.get(today_date, 0)
                     STATS_CACHE["last_refreshed"] = time.time()
                     STATS_CACHE["last_error"] = None
         except Exception as e:
             with stats_lock: STATS_CACHE["last_error"] = str(e)
-        # Slower DB polling. Relying on live memory updates to handle lakhs of data smoothly
-        _global_shutdown_event.wait(STATS_REFRESH_INTERVAL_SEC) 
+            
+        loop_counter += 1
+        _global_shutdown_event.wait(3.0) 
 
 @dataclass
 class DBJob:
@@ -556,20 +591,24 @@ _db_writer_threads = []
 def _submit_db_job(kind, payload):
     job = DBJob(kind=kind, payload=payload)
     try: DB_WRITE_QUEUE.put(job, timeout=1)
-    except queue.Full: return 503, {"status": "error", "message": "Server overloaded. Try again."}
+    except queue.Full: return 503, {"status": "error", "message": "System is very busy. Please wait a moment and try again."}
         
     try: return job.future.result(timeout=DB_JOB_TIMEOUT)
-    except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "Database request timed out."}
-    except Exception as e: return 500, {"status": "error", "message": f"Internal process error: {str(e)}"}
+    except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "The request took too long. Please try again."}
+    except Exception as e: return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
 
 def _handle_checkin_job(payload):
     identifier, search_type = payload["identifier"], payload["search_type"]
     device_name, iso_timestamp = payload["device_name"], payload["iso_timestamp"]
 
-    if not identifier: return 400, {"status": "error", "message": "No ID provided"}
+    if not identifier: 
+        return 400, {"status": "error", "message": "Please scan a valid QR code or enter an ID."}
+        
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return 503, {"status": "error", "message": "Database offline"}
+    
+    if not mysql_factory: 
+        return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
     
     session = mysql_factory()
     try:
@@ -582,7 +621,7 @@ def _handle_checkin_job(payload):
         if not attendee:
             log_event_clean("CHECKIN", device_name, f"Not found: {identifier}", 404)
             broadcast_scan(None, "ERROR", f"Not found: {identifier}", device_name, iso_timestamp)
-            return 404, {"status": "error", "message": f"Not found: {identifier}"}
+            return 404, {"status": "error", "message": f"Record not found. Please direct attendee to the Help Desk."}
 
         history = attendee.checkin_history
         if isinstance(history, str):
@@ -593,7 +632,9 @@ def _handle_checkin_job(payload):
         current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
 
-        if current_date_str not in date_map: return 400, {"status": "error", "message": "Invalid date code."}
+        if current_date_str not in date_map: 
+            return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
+            
         today_key = date_map[current_date_str]
         
         att_days = attendee.attendance_days or []
@@ -604,10 +645,10 @@ def _handle_checkin_job(payload):
         if today_key not in att_days:
             log_event_clean("CHECKIN", device_name, f"Denied (No pass {today_key})", 403)
             broadcast_scan(attendee, "ERROR", f"Denied (No pass {today_key})", device_name, iso_timestamp)
-            return 403, {"status": "error", "message": f"Denied (No pass {today_key})"}
+            return 403, {"status": "error", "message": f"Access Denied: Attendee does not have a valid pass for today ({today_key})."}
 
         if today_key in history:
-            friendly_msg = f"Already checked in for {today_key}: {attendee.full_name}"
+            friendly_msg = f"Already Scanned! {attendee.full_name} checked in earlier today."
             log_event_clean("CHECKIN", device_name, friendly_msg, 400)
             broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
             return 400, {"status": "error", "message": friendly_msg}
@@ -620,7 +661,6 @@ def _handle_checkin_job(payload):
 
         session.commit()
         
-        # Optimize Performance: Live RAM Counter Updates to prevent massive DB overhead 
         with stats_lock:
             if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
             elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
@@ -638,7 +678,7 @@ def _handle_checkin_job(payload):
         except Exception: pass
         log_event_clean("CHECKIN", device_name, f"DB Error", 500)
         logging.error(f"Internal Check-in error: {e}")
-        return 500, {"status": "error", "message": "Internal processing error."}
+        return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
     finally:
         try: session.close()
         except Exception: pass
@@ -650,7 +690,9 @@ def _handle_register_job(payload):
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
     
-    if not mysql_factory: return 503, {"status": "error", "message": "Database offline"}
+    if not mysql_factory: 
+        return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
+        
     session = mysql_factory()
 
     try:
@@ -694,7 +736,6 @@ def _handle_register_job(payload):
             session.add(new_kiosk_reg)
             session.commit()
             
-            # Optimize Performance: Live RAM Counter Updates 
             with stats_lock:
                 STATS_CACHE["total_registrations"] += 1
                 if today_date == "2026-08-30": 
@@ -709,7 +750,7 @@ def _handle_register_job(payload):
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing: 
                 return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
-            return 500, {"status": "error", "message": "Integrity Error: Race condition on registration."}
+            return 500, {"status": "error", "message": "Another registration is processing. Please try clicking submit again."}
 
         log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
         return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
@@ -718,14 +759,14 @@ def _handle_register_job(payload):
         try: session.rollback()
         except Exception: pass
         logging.error(f"Internal Register error: {e}")
-        return 500, {"status": "error", "message": "Internal error processing registration."}
+        return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
     finally:
         try: session.close()
         except Exception: pass
 
 def db_writer_loop(worker_id):
     logging.info(f"DB writer #{worker_id} highly-available ready")
-    while not _global_shutdown_event.is_set():
+    while not _global_shutdown_event.is_set() and not _db_shutdown_event.is_set():
         try:
             job = DB_WRITE_QUEUE.get(timeout=1.0)
             if job is None: 
@@ -745,15 +786,18 @@ def db_writer_loop(worker_id):
                 DB_WRITE_QUEUE.task_done()
         except queue.Empty:
             continue
+        except Exception as fallback_e:
+            logging.error(f"Worker {worker_id} survived a critical thread loop crash: {fallback_e}")
 
 def start_db_writers():
+    _db_shutdown_event.clear()
     for i in range(DB_WRITER_THREADS):
         t = threading.Thread(target=db_writer_loop, args=(i + 1,), daemon=True, name=f"DBWriter-{i+1}")
         t.start()
         _db_writer_threads.append(t)
 
 def stop_db_writers():
-    _global_shutdown_event.set()
+    _db_shutdown_event.set()
     for _ in range(len(_db_writer_threads)): 
         try: DB_WRITE_QUEUE.put(None, timeout=1.0)
         except queue.Full: pass
@@ -872,10 +916,10 @@ def process_registration():
 @app.route('/api/check_mobile', methods=['GET'])
 def check_mobile():
     mobile_number = request.args.get('mobile', '').strip()
-    if not mobile_number: return jsonify({"status": "error", "message": "Mobile required"}), 400
+    if not mobile_number: return jsonify({"status": "error", "message": "Please enter a valid mobile number."}), 400
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return jsonify({"status": "error", "message": "Database offline"}), 503
+    if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
         em = session.query(Attendee).filter_by(mobile=mobile_number).first()
@@ -883,7 +927,7 @@ def check_mobile():
         ek = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
         if ek: return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
         return jsonify({"status": "not_found"}), 200
-    except Exception: return jsonify({"status": "error", "message": "Internal processing error."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Could not check mobile number right now. Try again."}), 500
     finally:
         try: session.close()
         except Exception: pass
@@ -897,7 +941,7 @@ def get_all_attendees():
 
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory: return jsonify({"status": "error", "message": "Database offline"}), 503
+    if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
         main_att = session.query(Attendee).offset(offset).limit(limit).all()
@@ -923,7 +967,7 @@ def get_all_attendees():
         return jsonify(results), 200
     except Exception as e:
         logging.error(f"Failed to fetch attendees API: {e}")
-        return jsonify({"status": "error", "message": "Internal processing error."}), 500
+        return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
     finally:
         try: session.close()
         except Exception: pass
@@ -967,31 +1011,37 @@ def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(
 def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
 class AnimatedMeter:
-    """Class to smoothly interpolate (Lerp) meter animations for a responsive, high-framerate feel."""
+    """Class to smoothly interpolate (Lerp) meter animations with CPU-saving caching."""
     def __init__(self, meter_widget):
         self.meter = meter_widget
         self.current_val = 0.0
         self.target_val = 0.0
+        self._last_int_val = -1
 
     def set_target(self, val):
         self.target_val = float(val)
 
     def tick(self):
-        diff = self.target_val - self.current_val
-        if abs(diff) > 0.5:
-            self.current_val += diff * 0.15 
+        if abs(self.target_val - self.current_val) > 0.1:
+            self.current_val += (self.target_val - self.current_val) * 0.10 
         else:
             self.current_val = self.target_val
-        self.meter.amountusedvar.set(int(round(self.current_val)))
+            
+        new_int_val = int(round(self.current_val))
+        if new_int_val != self._last_int_val:
+            self.meter.amountusedvar.set(new_int_val)
+            self._last_int_val = new_int_val
 
 
 class ServerHub(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.4 (Performance & Async Edge Edition)")
+        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.6 (Enterprise Dual-Sync Edition)")
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        ww, wh = max(950, min(1600, int(sw * 0.92))), max(650, min(950, int(sh * 0.90)))
+        
+        # Responsive minimums that fit standard HD screens perfectly
+        ww, wh = max(1024, min(1600, int(sw * 0.90))), max(600, min(900, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
-        self.minsize(1000, 650)
+        self.minsize(1024, 600)
 
         self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
 
@@ -1072,7 +1122,6 @@ class ServerHub(ttk.Window):
             session.get(f"{cf_url}/api/status", timeout=(3, 7), verify=False)
             return int((time.time() - start) * 1000), "ONLINE"
         except requests.exceptions.RequestException as e:
-            # Handles Cloudflare DNS propagation delay gracefully without spamming the log
             err_msg = str(e)
             if "Max retries exceeded" in err_msg or "NameResolutionError" in err_msg:
                 clean_msg = "DNS resolution pending or tunnel unreachable."
@@ -1170,7 +1219,7 @@ class ServerHub(ttk.Window):
         except Exception as e:
             pass
         finally:
-            self.after(16, self.animation_loop)
+            self.after(16, self.animation_loop) 
 
     def clear_system_logs(self):
         with self.log_lock: self.log_buffer_flask.clear()
@@ -1200,71 +1249,96 @@ class ServerHub(ttk.Window):
         self.attributes("-fullscreen", not is_fullscreen)
 
     def _configure_custom_styles(self):
+        """Custom OneDark / VS Code Palette for a flawless, patch-free GUI."""
         colors = self.style.colors
-        self.CARD_BG = colors.get("dark")
-        self.SOFT_BORDER = _mix_hex(self.CARD_BG, colors.get("fg"), 0.08)
-        BG_BORDER = _mix_hex(colors.get("bg"), colors.get("fg"), 0.10)
         
-        self.style.configure("Card.TFrame", background=self.CARD_BG, bordercolor=self.SOFT_BORDER, lightcolor=self.SOFT_BORDER, darkcolor=self.SOFT_BORDER, borderwidth=1, relief="solid")
-        self.style.configure("CardTitle.TLabel", background=self.CARD_BG, foreground=_mix_hex(self.CARD_BG, colors.get("fg"), 0.55), font="-size 8 -weight bold")
+        self.APP_BG = "#1E1E1E"        
+        self.PANEL_BG = "#252526"      
+        self.BORDER = "#333333"        
+        self.TEXT_FG = "#CCCCCC"       
+        self.ACCENT = "#569CD6"        
+        self.SUCCESS_FG = "#4EC9B0"
+        self.WARN_FG = "#D7BA7D"
+        self.ERR_FG = "#F44747"
+        
+        self.configure(background=self.APP_BG)
+        self.style.configure(".", background=self.APP_BG, foreground=self.TEXT_FG, font=("Segoe UI", 9))
+        self.style.configure("TFrame", background=self.APP_BG)
+        self.style.configure("TLabel", background=self.APP_BG, foreground=self.TEXT_FG)
+
+        self.style.configure("Panel.TFrame", background=self.PANEL_BG)
+        self.style.configure("Panel.TLabel", background=self.PANEL_BG, foreground=self.TEXT_FG)
+        self.style.configure("PanelInfo.TLabel", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 8, "bold"))
+        self.style.configure("Panel.TCheckbutton", background=self.PANEL_BG, foreground=self.TEXT_FG)
+
+        self.style.configure("TLabelframe", background=self.PANEL_BG, bordercolor=self.BORDER)
+        self.style.configure("TLabelframe.Label", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 9, "bold"))
+
+        self.style.configure("Card.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
+        self.style.configure("CardTitle.TLabel", background=self.PANEL_BG, foreground="#858585", font=("Segoe UI", 7, "bold"))
+        
         for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"): 
-            self.style.configure(f"CardValue.{key}.TLabel", background=self.CARD_BG, foreground=colors.get(key), font="-size 18 -weight bold")
-        self.style.configure("CardFlash.TLabel", background=self.CARD_BG, foreground="#FFFFFF", font="-size 18 -weight bold")
-        self.style.configure("Soft.TFrame", background=colors.get("bg"), bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER, borderwidth=1, relief="solid")
-        self.style.configure("TLabelframe", background=colors.get("bg"), bordercolor=BG_BORDER, lightcolor=BG_BORDER, darkcolor=BG_BORDER)
-        self.style.configure("TLabelframe.Label", background=colors.get("bg"))
-        self.style.configure("LogHeader.TLabel", background="#252526", foreground="#CCCCCC", font="-size 8 -weight bold", padding=10)
-        self.style.configure("Treeview.Heading", background=_mix_hex(self.CARD_BG, colors.get("fg"), 0.12), foreground=_mix_hex(self.CARD_BG, colors.get("fg"), 0.82), bordercolor=BG_BORDER, relief="flat", font="-size 9 -weight bold")
-        self.style.map("Treeview.Heading", background=[("active", _mix_hex(self.CARD_BG, colors.get("fg"), 0.20))])
-        self.style.configure("Treeview", bordercolor=BG_BORDER, borderwidth=1)
+            self.style.configure(f"CardValue.{key}.TLabel", background=self.PANEL_BG, foreground=colors.get(key), font=("Segoe UI", 18, "bold"))
+        
+        self.style.configure("CardFlash.TLabel", background=self.PANEL_BG, foreground="#FFFFFF", font=("Segoe UI", 18, "bold"))
+        self.style.configure("Soft.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
+        
+        self.style.configure("Treeview.Heading", background=self.PANEL_BG, foreground=self.ACCENT, bordercolor=self.BORDER, relief="flat", font=("Segoe UI", 9, "bold"))
+        self.style.map("Treeview.Heading", background=[("active", "#2D2D30")])
+        self.style.configure("Treeview", bordercolor=self.BORDER, borderwidth=1, background=self.APP_BG, foreground=self.TEXT_FG, fieldbackground=self.APP_BG, rowheight=24)
+        self.style.map('Treeview', background=[('selected', '#094771')]) 
+        
+        self.style.configure("LogHeader.TLabel", background="#2D2D30", foreground=self.SUCCESS_FG, font=("Segoe UI", 8, "bold"), padding=10)
 
     def _build_status_badge(self, parent, initial_text, bootstyle):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(12, 6))
-        frame.pack(side=LEFT, padx=(0, 10))
-        lbl = ttk.Label(frame, text=initial_text, bootstyle=bootstyle, font="-size 9 -weight bold", background=self.CARD_BG)
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(8, 4))
+        frame.pack(side=LEFT, padx=(0, 6))
+        lbl = ttk.Label(frame, text=initial_text, bootstyle=bootstyle, font=("Segoe UI", 8, "bold"), style="Panel.TLabel")
         lbl.pack(anchor=CENTER)
         return lbl
 
-    def _create_log_box(self, parent, title, clear_cmd, side=LEFT, padx=6):
+    def _create_log_box(self, parent, title, clear_cmd, side=LEFT, padx=4):
         frame = ttk.Frame(parent, style="Soft.TFrame")
-        frame.pack(side=side, fill=BOTH, expand=True, padx=padx, pady=2)
+        frame.pack(side=side, fill=BOTH, expand=True, padx=padx, pady=0)
         
-        hdr = ttk.Frame(frame)
+        hdr = ttk.Frame(frame, style="Panel.TFrame")
         hdr.pack(fill=X)
         
         ttk.Label(hdr, text=title if title else "Live Log Feed", style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
         if clear_cmd: ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
             
         log_box = ScrolledText(frame, font=("Consolas", 8))
-        log_box.pack(fill=BOTH, expand=True, padx=2, pady=2)
+        log_box.pack(fill=BOTH, expand=True, padx=0, pady=0)
         log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
         
         log_box.text.tag_configure("log_default", foreground="#D4D4D4")
-        log_box.text.tag_configure("log_dim", foreground="#6A7178")
-        log_box.text.tag_configure("log_success", foreground="#4CD37E")
-        log_box.text.tag_configure("log_warning", foreground="#FFB454")
-        log_box.text.tag_configure("log_error", foreground="#FF6B6B")
-        log_box.text.tag_configure("log_info", foreground="#5DADE2")
-        log_box.text.tag_configure("log_register", foreground="#6EC6FF", font=("Consolas", 8, "bold"))
-        log_box.text.tag_configure("log_checkin", foreground="#C792EA", font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_timestamp", foreground="#858585", font=("Consolas", 8))
+        log_box.text.tag_configure("log_device", foreground=self.ACCENT, font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_success", foreground=self.SUCCESS_FG, font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_warning", foreground=self.WARN_FG, font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_error", foreground=self.ERR_FG, font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_info", foreground="#9CDCFE")
+        log_box.text.tag_configure("log_register", foreground="#C586C0", font=("Consolas", 8, "bold"))
+        log_box.text.tag_configure("log_checkin", foreground="#CE9178", font=("Consolas", 8, "bold"))
         return log_box
 
     def build_ui(self):
         self._configure_custom_styles()
-        self.root_container = ttk.Frame(self)
+        self.root_container = ttk.Frame(self, style="TFrame")
         self.root_container.pack(fill=BOTH, expand=True)
 
-        sidebar_outer = ttk.Frame(self.root_container, width=280)
+        # Increased sidebar width to 240 to perfectly fit the WhatsApp button text
+        sidebar_outer = ttk.Frame(self.root_container, width=240, style="TFrame")
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
         
-        self.sidebar_canvas = ttk.Canvas(sidebar_outer, highlightthickness=0, background=self.style.colors.bg)
+        self.sidebar_canvas = ttk.Canvas(sidebar_outer, highlightthickness=0, background=self.APP_BG)
         sidebar_vsb = ttk.Scrollbar(sidebar_outer, orient=VERTICAL, command=self.sidebar_canvas.yview)
         self.sidebar_canvas.configure(yscrollcommand=sidebar_vsb.set)
         sidebar_vsb.pack(side=RIGHT, fill=Y)
         self.sidebar_canvas.pack(side=LEFT, fill=BOTH, expand=True)
 
-        sidebar = ttk.Frame(self.sidebar_canvas, padding=15)
+        sidebar = ttk.Frame(self.sidebar_canvas, padding=8, style="TFrame")
         sidebar_window = self.sidebar_canvas.create_window((0, 0), window=sidebar, anchor="nw")
         
         sidebar.bind("<Configure>", lambda e: self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox("all")))
@@ -1272,154 +1346,168 @@ class ServerHub(ttk.Window):
         self.sidebar_canvas.bind("<Enter>", lambda e: self.sidebar_canvas.bind_all("<MouseWheel>", lambda ev: self.sidebar_canvas.yview_scroll(int(-1 * (ev.delta / 120)), "units")))
         self.sidebar_canvas.bind("<Leave>", lambda e: self.sidebar_canvas.unbind_all("<MouseWheel>"))
 
-        ttk.Label(sidebar, text="NETWORK & ROUTING", font="-size 13 -weight bold", bootstyle=INFO).pack(pady=(0, 15), anchor=W)
+        ttk.Label(sidebar, text="NETWORK & ROUTING", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(pady=(0, 10), anchor=W)
         
-        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 High-Speed Engine ", padding=10)
-        flask_frame.pack(fill=X, pady=5)
-        self.btn_start_flask = ttk.Button(flask_frame, text="▶ Start Engine", bootstyle=SUCCESS, command=self.start_flask)
-        self.btn_start_flask.pack(fill=X, pady=3)
-        self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ Stop Engine", bootstyle=DANGER, state=DISABLED, command=self.stop_flask)
-        self.btn_stop_flask.pack(fill=X, pady=3)
-        ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", font="-size 8 -weight bold", foreground="#888").pack(pady=(10, 2))
+        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 High-Speed Engine ", padding=8)
+        flask_frame.pack(fill=X, pady=4)
+        self.btn_start_flask = ttk.Button(flask_frame, text="▶ START ENGINE", bootstyle=SUCCESS, command=self.start_flask)
+        self.btn_start_flask.pack(fill=X, pady=2)
+        self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ STOP ENGINE", bootstyle="danger-outline", state=DISABLED, command=self.stop_flask)
+        self.btn_stop_flask.pack(fill=X, pady=2)
+        ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", style="PanelInfo.TLabel").pack(pady=(6, 2))
         
-        self.lbl_flask_qr = ttk.Label(flask_frame)
+        self.lbl_flask_qr = ttk.Label(flask_frame, style="Panel.TLabel")
         self.lbl_flask_qr.pack()
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
-        self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font="-size 8", foreground="gray", cursor="hand2")
-        self.lbl_flask_link.pack(pady=5)
+        self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font=("Segoe UI", 8), style="Panel.TLabel", cursor="hand2")
+        self.lbl_flask_link.pack(pady=2)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
         
-        flask_btn_row1 = ttk.Frame(flask_frame)
+        flask_btn_row1 = ttk.Frame(flask_frame, style="Panel.TFrame")
         flask_btn_row1.pack(fill=X, pady=(2, 2))
-        ttk.Button(flask_btn_row1, text="HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(flask_btn_row1, text="HTTP", bootstyle="info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
+        ttk.Button(flask_btn_row1, text="Copy HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
+        ttk.Button(flask_btn_row1, text="Copy HTTP", bootstyle="info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-        flask_btn_row2 = ttk.Frame(flask_frame)
-        flask_btn_row2.pack(fill=X, pady=(2, 5))
-        ttk.Button(flask_btn_row2, text="Web (Sec)", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(flask_btn_row2, text="Web (Local)", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
+        flask_btn_row2 = ttk.Frame(flask_frame, style="Panel.TFrame")
+        flask_btn_row2.pack(fill=X, pady=(2, 2))
+        ttk.Button(flask_btn_row2, text="Open Secure", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
+        ttk.Button(flask_btn_row2, text="Open Local", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=10)
-        cf_frame.pack(fill=X, pady=15)
-        self.btn_start_cf = ttk.Button(cf_frame, text="▶ Start Tunnel", bootstyle=PRIMARY, state=DISABLED, command=self.start_cf)
-        self.btn_start_cf.pack(fill=X, pady=3)
-        self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ Stop Tunnel", bootstyle=DANGER, state=DISABLED, command=self.stop_cf)
-        self.btn_stop_cf.pack(fill=X, pady=3)
+        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=8)
+        cf_frame.pack(fill=X, pady=8)
+        self.btn_start_cf = ttk.Button(cf_frame, text="▶ START TUNNEL", bootstyle=PRIMARY, state=DISABLED, command=self.start_cf)
+        self.btn_start_cf.pack(fill=X, pady=2)
+        self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ STOP TUNNEL", bootstyle="danger-outline", state=DISABLED, command=self.stop_cf)
+        self.btn_stop_cf.pack(fill=X, pady=2)
         
-        ttk.Label(cf_frame, text="Public Tunnel QR:", font="-size 8 -weight bold", foreground="#888").pack(pady=(10, 2))
-        self.lbl_cf_qr = ttk.Label(cf_frame)
+        ttk.Label(cf_frame, text="Public Tunnel QR:", style="PanelInfo.TLabel").pack(pady=(6, 2))
+        self.lbl_cf_qr = ttk.Label(cf_frame, style="Panel.TLabel")
         self.lbl_cf_qr.pack()
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         
-        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font="-size 8", foreground="gray", cursor="hand2")
-        self.lbl_cf_link.pack(pady=5)
+        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font=("Segoe UI", 8), style="Panel.TLabel", cursor="hand2")
+        self.lbl_cf_link.pack(pady=2)
         self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url not in ["Offline", "Pending"] else None)
         
-        cf_btn_row = ttk.Frame(cf_frame)
-        cf_btn_row.pack(fill=X, pady=(2, 5))
+        cf_btn_row = ttk.Frame(cf_frame, style="Panel.TFrame")
+        cf_btn_row.pack(fill=X, pady=(2, 2))
         ttk.Button(cf_btn_row, text="Copy URL", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(cf_btn_row, text="Browser", bootstyle="secondary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
+        ttk.Button(cf_btn_row, text="Open URL", bootstyle="outline-primary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=10)
-        test_frame.pack(fill=X, pady=5)
+        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=8)
+        test_frame.pack(fill=X, pady=4)
         self.test_mode = ttk.BooleanVar(value=False)
         self.test_date = ttk.StringVar(value="2026-08-30")
-        self.chk_test = ttk.Checkbutton(test_frame, text="Testing Mode OFF", variable=self.test_mode, bootstyle="warning-round-toggle", command=self.toggle_test_mode)
-        self.chk_test.pack(anchor=W, pady=5)
+        
+        chk_wrap = ttk.Frame(test_frame, style="Panel.TFrame")
+        chk_wrap.pack(anchor=W, pady=2)
+        self.chk_test = ttk.Checkbutton(chk_wrap, text="Testing Mode OFF", variable=self.test_mode, bootstyle="warning-round-toggle", style="Panel.TCheckbutton", command=self.toggle_test_mode)
+        self.chk_test.pack()
+        
         self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
-        self.cb_test_date.pack(fill=X, pady=(5, 0))
+        self.cb_test_date.pack(fill=X, pady=(2, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
-        contact_frame = ttk.Labelframe(sidebar, text=" 📞 Support & Help ", padding=10)
-        contact_frame.pack(fill=X, pady=(15, 5))
-        ttk.Label(contact_frame, text="Developer Contact:", font="-size 8 -weight bold", foreground="#888").pack(pady=(0, 2))
-        ttk.Label(contact_frame, text="+91 8960446756", font="-size 11 -weight bold").pack(pady=(0, 8))
+        contact_frame = ttk.Labelframe(sidebar, text=" 📞 Support & Help ", padding=8)
+        contact_frame.pack(fill=X, pady=(8, 4))
+        ttk.Label(contact_frame, text="Developer Contact:", style="PanelInfo.TLabel").pack(pady=(0, 2))
+        ttk.Label(contact_frame, text="+91 8960446756", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT, style="Panel.TLabel").pack(pady=(0, 4))
         ttk.Button(contact_frame, text="💬 Chat on WhatsApp", bootstyle="success", command=lambda: self.open_browser("https://wa.me/918960446756")).pack(fill=X)
 
-        content = ttk.Frame(self.root_container, padding=20)
+        content = ttk.Frame(self.root_container, padding=12, style="TFrame")
         content.pack(side=LEFT, fill=BOTH, expand=True)
         
-        header_container = ttk.Frame(content)
-        header_container.pack(fill=X, pady=(0, 15))
+        header_container = ttk.Frame(content, style="TFrame")
+        header_container.pack(fill=X, pady=(0, 10))
         
-        left_hdr = ttk.Frame(header_container)
+        left_hdr = ttk.Frame(header_container, style="TFrame")
         left_hdr.pack(side=LEFT, fill=Y)
-        ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font="-size 18 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
+        ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font=("Segoe UI", 16, "bold"), foreground=self.SUCCESS_FG).pack(anchor=W)
         
-        bot_hdr = ttk.Frame(left_hdr)
-        bot_hdr.pack(fill=X, pady=(12, 0))
+        bot_hdr = ttk.Frame(left_hdr, style="TFrame")
+        bot_hdr.pack(fill=X, pady=(6, 0))
         self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
         self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
         self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
 
-        right_hdr = ttk.Frame(header_container)
+        right_hdr = ttk.Frame(header_container, style="TFrame")
         right_hdr.pack(side=RIGHT, fill=Y)
         
-        actions_f = ttk.Frame(right_hdr)
-        actions_f.pack(side=RIGHT, padx=(15, 0))
-        ttk.Button(actions_f, text="⟳ Refresh Data", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 4))
+        actions_f = ttk.Frame(right_hdr, style="TFrame")
+        actions_f.pack(side=RIGHT, padx=(10, 0))
+        ttk.Button(actions_f, text="⟳ Refresh", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 4))
         ttk.Button(actions_f, text="⛶ Fullscreen", bootstyle="outline-info", command=self.toggle_fullscreen).pack(side=TOP, fill=X)
         
-        hw_f = ttk.Frame(right_hdr)
+        hw_f = ttk.Frame(right_hdr, style="TFrame")
         hw_f.pack(side=RIGHT)
         
-        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont="-size 8", textfont="-size 11 -weight bold")
-        self.mini_meter_cpu.pack(side=LEFT, padx=5)
-        self.mini_meter_ram = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont="-size 8", textfont="-size 11 -weight bold")
-        self.mini_meter_ram.pack(side=LEFT, padx=5)
-        self.mini_meter_net = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.1f}")
-        self.mini_meter_net.pack(side=LEFT, padx=5)
+        # Dialed in the perfect sizing to prevent font cut-off while maintaining compact layout
+        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"))
+        self.mini_meter_cpu.pack(side=LEFT, padx=3)
+        self.mini_meter_ram = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"))
+        self.mini_meter_ram.pack(side=LEFT, padx=3)
+        self.mini_meter_net = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"), amountformat="{:.1f}")
+        self.mini_meter_net.pack(side=LEFT, padx=3)
         self.net_tooltip = ToolTip(self.mini_meter_net, text="Checking connection...")
-        self.mini_meter_api = ttk.Meter(hw_f, metersize=95, padding=2, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=7, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont="-size 8", textfont="-size 11 -weight bold", amountformat="{:.0f} ms")
-        self.mini_meter_api.pack(side=LEFT, padx=5)
+        self.mini_meter_api = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"), amountformat="{:.0f}")
+        self.mini_meter_api.pack(side=LEFT, padx=3)
         
-        net_info_card = ttk.Labelframe(right_hdr, text=" Network Health ", padding=(10, 5))
-        net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
-        self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN Ping: WAIT", font="-size 9 -weight bold", bootstyle=SUCCESS)
-        self.lbl_hdr_local_ping.pack(anchor=W, pady=2)
-        self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN Ping: WAIT", font="-size 9 -weight bold", bootstyle=SUCCESS)
-        self.lbl_hdr_cloud_ping.pack(anchor=W, pady=2)
+        net_info_card = ttk.Frame(right_hdr, style="Card.TFrame", padding=(8, 4))
+        net_info_card.pack(side=RIGHT, padx=(0, 10), fill=Y)
+        
+        ttk.Label(net_info_card, text="SYSTEM HEALTH", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 2))
+        
+        self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN: WAIT", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
+        self.lbl_hdr_local_ping.grid(row=1, column=0, sticky=W, padx=(0, 8), pady=1)
+        
+        self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN: WAIT", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
+        self.lbl_hdr_cloud_ping.grid(row=1, column=1, sticky=W, pady=1)
+        
+        self.lbl_hdr_traffic = ttk.Label(net_info_card, text="Traffic: 0 req/s", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground=self.ACCENT)
+        self.lbl_hdr_traffic.grid(row=2, column=0, sticky=W, padx=(0, 8), pady=1)
+        
+        self.lbl_hdr_db_queue = ttk.Label(net_info_card, text="DB Q: 0", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground="#C586C0")
+        self.lbl_hdr_db_queue.grid(row=2, column=1, sticky=W, pady=1)
 
-        devices_header_row = ttk.Frame(content)
-        devices_header_row.pack(fill=X, pady=(5, 5))
-        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES", font="-size 11 -weight bold", bootstyle=INFO)
+        devices_header_row = ttk.Frame(content, style="TFrame")
+        devices_header_row.pack(fill=X, pady=(2, 2))
+        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT)
         self.lbl_devices_header.pack(side=LEFT, anchor=W)
-        self.lbl_stats_health = ttk.Label(devices_header_row, text="", font="-size 9", bootstyle=WARNING)
+        self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 8), bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
 
         devices_frame = ttk.Frame(content, style="Soft.TFrame")
-        devices_frame.pack(fill=X, expand=False, pady=(0, 15)) 
-        self.style.configure("Treeview", rowheight=22)
+        devices_frame.pack(fill=X, expand=False, pady=(0, 8)) 
         
         tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
         tree_scroll.pack(side=RIGHT, fill=Y)
 
-        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "last_seen", "signal"), show="headings", height=5, yscrollcommand=tree_scroll.set)
+        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
         self.tree_devices.heading("last_seen", text="Last Heartbeat")
         self.tree_devices.heading("signal", text="Signal")
         
-        self.tree_devices.column("name", width=300, anchor=W)
-        self.tree_devices.column("ip", width=150, anchor=W)
-        self.tree_devices.column("last_seen", width=120, anchor=CENTER)
-        self.tree_devices.column("signal", width=110, anchor=CENTER)
+        self.tree_devices.column("name", width=250, anchor=W)
+        self.tree_devices.column("ip", width=120, anchor=W)
+        self.tree_devices.column("last_seen", width=100, anchor=CENTER)
+        self.tree_devices.column("signal", width=100, anchor=CENTER)
         self.tree_devices.pack(side=LEFT, fill=BOTH, expand=True, padx=(2, 0), pady=2)
         
         tree_scroll.configure(command=self.tree_devices.yview)
         
-        self.tree_devices.tag_configure("online", foreground="#3fd66f")
-        self.tree_devices.tag_configure("stale", foreground="#ffbb33")
-        self.tree_devices.tag_configure("fading", foreground="#ff8844")
-        self.tree_devices.tag_configure("empty", foreground="#888")
+        self.tree_devices.tag_configure("online", foreground=self.SUCCESS_FG)
+        self.tree_devices.tag_configure("stale", foreground=self.WARN_FG)
+        self.tree_devices.tag_configure("fading", foreground=self.ERR_FG)
+        self.tree_devices.tag_configure("empty", foreground="#858585")
 
-        ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font="-size 11 -weight bold").pack(anchor=W, pady=(0, 5))
-        stats_container = ttk.Frame(content)
-        stats_container.pack(fill=X, pady=(0, 10))
+        ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(0, 2))
+        stats_container = ttk.Frame(content, style="TFrame")
+        stats_container.pack(fill=X, expand=False, pady=(0, 8))
         
-        row1 = ttk.Frame(stats_container)
-        row1.pack(fill=X, pady=(0, 5))
+        row1 = ttk.Frame(stats_container, style="TFrame")
+        row1.pack(fill=X, expand=True, pady=(0, 4))
         self.stat_vars = {}
         
         self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
@@ -1427,8 +1515,8 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
         self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
         
-        row2 = ttk.Frame(stats_container)
-        row2.pack(fill=X, pady=(0, 0))
+        row2 = ttk.Frame(stats_container, style="TFrame")
+        row2.pack(fill=X, expand=True, pady=(0, 0))
         
         self._create_stat_card(row2, "TODAY CHECK-IN", "0", SUCCESS, "chk_today")
         self._create_stat_card(row2, "30th Aug Check-ins", "0", LIGHT, "chk_30")
@@ -1436,33 +1524,37 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-        ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font="-size 11 -weight bold").pack(anchor=W, pady=(5, 5))
+        ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(2, 2))
         
-        logs_frame = ttk.Frame(content)
-        logs_frame.pack(fill=BOTH, expand=True, pady=(0, 5))
+        logs_frame = ttk.Frame(content, style="TFrame")
+        logs_frame.pack(fill=BOTH, expand=True, pady=(0, 0))
         
         self.log_flask = self._create_log_box(logs_frame, "📟 System & API Logs", self.clear_system_logs)
         
-        right_logs_wrapper = ttk.Frame(logs_frame)
-        right_logs_wrapper.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=2)
+        right_logs_wrapper = ttk.Frame(logs_frame, style="TFrame")
+        right_logs_wrapper.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=0)
         
         self.log_tabs = ttk.Notebook(right_logs_wrapper, bootstyle="info")
         self.log_tabs.pack(fill=BOTH, expand=True)
         
-        tab_net = ttk.Frame(self.log_tabs)
+        tab_net = ttk.Frame(self.log_tabs, style="TFrame")
         self.log_tabs.add(tab_net, text="🌐 Device & Routing")
         self.log_network = self._create_log_box(tab_net, "Network Events", self.clear_network_logs, side=TOP, padx=0)
         
-        tab_cf = ttk.Frame(self.log_tabs)
+        tab_cf = ttk.Frame(self.log_tabs, style="TFrame")
         self.log_tabs.add(tab_cf, text="☁️ Cloudflare Tunnel")
         self.log_cf = self._create_log_box(tab_cf, "Tunnel Status", self.clear_cf_logs, side=TOP, padx=0)
         
-        footer = ttk.Frame(content)
+        # Re-inserted Yellow TType Footer
+        footer = ttk.Frame(content, style="TFrame")
         footer.pack(fill=X, pady=(5, 0))
-        ttk.Label(footer, text="Engineered for Event Resilience • Powered by EllowDigital", font="-size 9", foreground="#666").pack(side=RIGHT)
-        
-        self._append_log('network', f"System Boot: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self._append_log('network', f"Local Network IP Address Detected: {self.local_ip}")
+        ttk.Label(
+            footer, 
+            text="Engineered for Event Resilience\nPowered by EllowDigital", 
+            font=("Consolas", 9, "bold"), 
+            foreground="#D7BA7D", 
+            justify=RIGHT
+        ).pack(side=RIGHT)
 
     def on_close(self):
         try:
@@ -1479,8 +1571,8 @@ class ServerHub(ttk.Window):
             self.destroy()
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(8, 4), height=65)
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=2)
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(10, 6), height=60)
+        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=0)
         frame.pack_propagate(False)
         ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor=CENTER)
         val_lbl = ttk.Label(frame, text=initial_value, style=f"CardValue.{style}.TLabel")
@@ -1497,7 +1589,7 @@ class ServerHub(ttk.Window):
         if not label.winfo_exists(): return
         qr = qrcode.QRCode(version=1, box_size=10, border=1)
         qr.add_data(data); qr.make(fit=True)
-        img_tk = ImageTk.PhotoImage(qr.make_image(fill_color="black", back_color="white").resize((110, 110), Image.Resampling.LANCZOS))
+        img_tk = ImageTk.PhotoImage(qr.make_image(fill_color="black", back_color="white").resize((80, 80), Image.Resampling.LANCZOS))
         label.configure(image=img_tk); label.image = img_tk
 
     def toggle_test_mode(self):
@@ -1586,14 +1678,23 @@ class ServerHub(ttk.Window):
             loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
 
             if snap_net["local_status"] == "ONLINE":
-                self.lbl_hdr_local_ping.configure(text=f"LAN Ping: {loc_ms} ms", bootstyle=SUCCESS if loc_ms < 150 else WARNING)
+                self.lbl_hdr_local_ping.configure(text=f"LAN: {loc_ms} ms", foreground=self.SUCCESS_FG)
             else:
-                self.lbl_hdr_local_ping.configure(text="LAN Ping: DOWN", bootstyle=DANGER)
+                self.lbl_hdr_local_ping.configure(text="LAN: DOWN", foreground=self.ERR_FG)
 
             if snap_net["cloud_status"] == "ONLINE":
-                self.lbl_hdr_cloud_ping.configure(text=f"WAN Ping: {c_ms} ms", bootstyle=SUCCESS if c_ms < 300 else WARNING)
+                self.lbl_hdr_cloud_ping.configure(text=f"WAN: {c_ms} ms", foreground=self.SUCCESS_FG)
             else:
-                self.lbl_hdr_cloud_ping.configure(text="WAN Ping: DOWN", bootstyle=SECONDARY)
+                self.lbl_hdr_cloud_ping.configure(text="WAN: DOWN", foreground=self.WARN_FG)
+                
+            req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
+            t_color = self.ACCENT if req_sec < 50 else (self.WARN_FG if req_sec < 200 else self.ERR_FG)
+            self.lbl_hdr_traffic.configure(text=f"Traffic: {req_sec} req/s", foreground=t_color)
+            
+            q_size = DB_WRITE_QUEUE.qsize()
+            q_color = "#C586C0" if q_size < 100 else (self.WARN_FG if q_size < 1000 else self.ERR_FG)
+            self.lbl_hdr_db_queue.configure(text=f"DB Q: {q_size}", foreground=q_color)
+            
         except Exception as e:
             logging.error(f"refresh_hw_meters error: {e}")
         finally:
@@ -1641,7 +1742,7 @@ class ServerHub(ttk.Window):
             if hasattr(self, 'lbl_stats_health'):
                 stale = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
                 if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
-                    self.lbl_stats_health.configure(text=f"⚠ Stats stale ({int(stale)}s): {snap['last_error']}", bootstyle=WARNING)
+                    self.lbl_stats_health.configure(text=f"⚠ DB Sync Delay ({int(stale)}s). Memory UI remains active.", bootstyle=WARNING)
                 else: self.lbl_stats_health.configure(text="")
         except Exception as e:
             logging.error(f"refresh_stats error: {e}")
@@ -1666,7 +1767,7 @@ class ServerHub(ttk.Window):
 
         self.btn_stop_flask.configure(state=NORMAL); self.btn_start_cf.configure(state=NORMAL)
         self.update_qr(self.lbl_flask_qr, self.https_url)
-        self.lbl_flask_link.configure(text=self.https_url, foreground="#4D9CE6")
+        self.lbl_flask_link.configure(text=self.https_url, foreground=self.ACCENT)
         self._append_log('flask', f"[SYSTEM] Waitress HTTP listening: {self.http_url}")
         self._append_log('flask', f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
         
@@ -1678,7 +1779,7 @@ class ServerHub(ttk.Window):
         self.btn_start_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=DISABLED)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
-        self.lbl_flask_link.configure(text="Server Offline", foreground="gray")
+        self.lbl_flask_link.configure(text="Server Offline", foreground="#858585")
         
         stop_db_writers()
         if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
@@ -1725,13 +1826,12 @@ class ServerHub(ttk.Window):
                             url_found = True
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             
-                            # Multi-threading the DNS wait so stdout parsing isn't blocked
                             def finalize_tunnel(t_url):
                                 time.sleep(30)
                                 with self.cf_lock:
                                     self.cloudflare_url = t_url
                                 self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
-                                self.gui_queue.put(lambda u=t_url: self.lbl_cf_link.configure(text=u, foreground="#4D9CE6"))
+                                self.gui_queue.put(lambda u=t_url: self.lbl_cf_link.configure(text=u, foreground=self.ACCENT))
                                 self.gui_queue.put(self._mark_cf_live)
                                 self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
                                 
@@ -1765,7 +1865,7 @@ class ServerHub(ttk.Window):
             except Exception: pass
                 
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
-        self.lbl_cf_link.configure(text="Tunnel Offline", foreground="gray")
+        self.lbl_cf_link.configure(text="Tunnel Offline", foreground="#858585")
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
 
 if __name__ == "__main__":
