@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Developer Telemetry - EventHub</title>
+  <link rel="manifest" href="/manifest.json">
   <style>
     :root {
       --bg-pure-black: #050505;
@@ -438,7 +439,7 @@
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 800px;
+      min-width: 900px;
       text-align: left;
     }
 
@@ -515,12 +516,47 @@
       font-size: 0.8rem;
       font-family: var(--font-dev);
       transition: var(--transition);
+      margin-right: 8px;
     }
 
     .btn-edit:hover {
       background: var(--primary);
       color: var(--bg-pure-black);
       box-shadow: 0 0 15px var(--primary-glow);
+    }
+
+    .btn-msg {
+      background: rgba(255, 187, 51, 0.08);
+      color: var(--warning);
+      border: 1px solid rgba(255, 187, 51, 0.3);
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-weight: 800;
+      font-size: 0.8rem;
+      font-family: var(--font-dev);
+      transition: var(--transition);
+    }
+
+    .btn-msg:hover {
+      background: var(--warning);
+      color: var(--bg-pure-black);
+      box-shadow: 0 0 15px rgba(255, 187, 51, 0.4);
+    }
+
+    .telemetry-cell {
+      font-family: var(--font-dev);
+      font-size: 0.85rem;
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .telemetry-cell span {
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
 
     @media (max-width: 768px) {
@@ -570,7 +606,7 @@
         </svg>
         Return to Hub
       </button>
-      <h2 class="header-title">Admin Console <span class="dev-badge">INTERNAL v2.5</span></h2>
+      <h2 class="header-title">Admin Console <span class="dev-badge">INTERNAL v2.6</span></h2>
       <div class="status-wrapper">
         <span id="hub-status-text" class="status-text" style="color: var(--text-muted);">AWAITING SIGNAL...</span>
         <span id="hub-status-dot" class="status-dot status-offline"></span>
@@ -633,13 +669,14 @@
               <th>Status</th>
               <th>Node Identifier</th>
               <th>IP Address (IPv4)</th>
+              <th>Device Telemetry</th>
               <th>Health / Heartbeat</th>
               <th>Admin Action</th>
             </tr>
           </thead>
           <tbody id="device-table-body">
             <tr>
-              <td colspan="5"
+              <td colspan="6"
                 style="text-align: center; color: var(--text-muted); padding: 50px; font-weight: 600; font-family: var(--font-dev);">
                 > Scanning subnet for active endpoints...
               </td>
@@ -651,6 +688,10 @@
   </main>
 
   <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => { });
+    }
+
     let audioCtx = null;
     let isFetching = false;
 
@@ -718,7 +759,6 @@
         DOM.gauge.style.stroke = "var(--danger)";
         return;
       }
-
       DOM.latencyVal.innerText = ping;
       const quality = Math.max(5, Math.min(100, 100 - (ping / 10)));
       DOM.gauge.style.strokeDashoffset = 125.6 - (125.6 * (quality / 100));
@@ -734,7 +774,7 @@
       const deviceEntries = Object.entries(activeDevices);
 
       if (deviceEntries.length === 0) {
-        DOM.tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:40px; font-family: var(--font-dev);">> 0 active socket connections found.</td></tr>`;
+        DOM.tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:40px; font-family: var(--font-dev);">> 0 active socket connections found.</td></tr>`;
         return;
       }
 
@@ -750,6 +790,8 @@
 
         const safeName = escapeHTML(info.name);
         const jsSafeId = escapeHTML(deviceId);
+        const batt = escapeHTML(info.battery || 'N/A');
+        const temp = escapeHTML(info.temp || 'N/A');
 
         const tr = document.createElement("tr");
         tr.innerHTML = `
@@ -762,11 +804,18 @@
           <td><strong class="node-ident">${safeName}</strong></td>
           <td class="node-ip">${escapeHTML(info.ip)}</td>
           <td>
+            <div class="telemetry-cell">
+              <span style="color: var(--success);">🔋 ${batt}</span>
+              <span style="color: var(--danger);">🌡️ ${temp}</span>
+            </div>
+          </td>
+          <td>
             <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${statusColor};"></div></div>
             <span class="latency-text">${secondsAgo}s ago</span>
           </td>
-          <td>
-            <button class="btn-edit" onclick="renameDevice('${jsSafeId}', '${safeName}')">RENAME_NODE</button>
+          <td style="white-space: nowrap;">
+            <button class="btn-edit" onclick="renameDevice('${jsSafeId}', '${safeName}')">RENAME</button>
+            <button class="btn-msg" onclick="sendMessage('${jsSafeId}', '${safeName}')">MSG</button>
           </td>
         `;
         fragment.appendChild(tr);
@@ -850,6 +899,27 @@
           fetchStats();
         } catch (err) {
           alert("FATAL: Failed to rename device. Ensure local hub is active.");
+        }
+      }
+    }
+
+    async function sendMessage(deviceId, deviceName) {
+      playClick();
+      const msg = prompt(`SEND MESSAGE:\nEnter text to push to operator at [${deviceName}]:`);
+      if (msg && msg.trim() !== "") {
+        try {
+          const response = await fetch("/api/device/message", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: deviceId, message: msg.trim() })
+          });
+          if (response.ok) {
+            alert("SUCCESS: Message queued for immediate delivery.");
+          } else {
+            alert("FATAL: Failed to queue message.");
+          }
+        } catch (err) {
+          alert("FATAL: Network error while sending message.");
         }
       }
     }
