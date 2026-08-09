@@ -59,7 +59,7 @@ except ImportError:
     INDIAPINS_AVAILABLE = False
 
 from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
@@ -73,8 +73,7 @@ def _configure_windows_platform():
         from ctypes import windll, c_void_p
         dpi_awareness_set = False
         try:
-            if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)):
-                dpi_awareness_set = True
+            if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)): dpi_awareness_set = True
         except Exception: pass
         if not dpi_awareness_set:
             try:
@@ -173,12 +172,11 @@ CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
 DB_WRITER_THREADS = 64            
 DB_JOB_QUEUE_MAXSIZE = 50000               
-DB_JOB_TIMEOUT = 10               
+DB_JOB_TIMEOUT = 12               
 
 STATS_REFRESH_INTERVAL_SEC = 300  
-
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
-SLOW_REQUEST_THRESHOLD_MS = 250  
+SLOW_REQUEST_THRESHOLD_MS = 300  
 MAX_LOG_LINES = 1000             
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
@@ -249,8 +247,7 @@ def get_cached_sessions():
     return DB_SESSIONS_CACHE
 
 def _ensure_root_ca(ca_cert_path, ca_key_path):
-    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
-        return
+    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path): return
     try:
         key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
         now = datetime.now(timezone.utc)
@@ -371,6 +368,11 @@ def log_request(response):
     except Exception: pass
     return response
 
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    logging.error(f"Global API Error: {str(e)}", exc_info=True)
+    return jsonify({"status": "error", "message": "An unexpected server fault occurred. Contact admin."}), 500
+
 def _status_log_tag(status_code):
     if status_code >= 500: return "log_error"
     if status_code >= 400: return "log_warning"
@@ -484,93 +486,104 @@ def _handle_checkin_job(payload):
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
     if not mysql_factory: return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
-    session = mysql_factory()
-    try:
-        attendee = None
-        if search_type == 'phone': attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
-        else: attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
-        if not attendee:
-            log_event_clean("CHECKIN", device_name, f"Not found: {identifier}", 404)
-            broadcast_scan(None, "ERROR", f"Not found: {identifier}", device_name, iso_timestamp)
-            return 404, {"status": "error", "message": f"Record not found. Please direct attendee to the Help Desk."}
-        history = attendee.checkin_history
-        if isinstance(history, str):
-            try: history = json.loads(history)
-            except Exception: history = {}
-        if not isinstance(history, dict): history = {}
-        current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        date_map = EVENT_DATE_LABELS
-        if current_date_str not in date_map: return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
-        today_key = date_map[current_date_str]
-        att_days = attendee.attendance_days or []
-        if isinstance(att_days, str):
-            try: att_days = json.loads(att_days)
-            except Exception: att_days = []
-        if today_key not in att_days:
-            log_event_clean("CHECKIN", device_name, f"Denied (No pass {today_key})", 403)
-            broadcast_scan(attendee, "ERROR", f"Denied (No pass {today_key})", device_name, iso_timestamp)
-            return 403, {"status": "error", "message": f"Access Denied: Attendee does not have a valid pass for today ({today_key})."}
-        if today_key in history:
-            friendly_msg = f"Already Scanned! {attendee.full_name} checked in earlier today."
-            log_event_clean("CHECKIN", device_name, friendly_msg, 400)
-            broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
-            return 400, {"status": "error", "message": friendly_msg}
-        history[today_key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_name, "date_code": current_date_str, "display_date": today_key}
-        attendee.checkin_history = history
-        flag_modified(attendee, "checkin_history")
-        attendee.needs_cloud_sync, attendee.needs_sheet_sync, attendee.needs_local_sync, attendee.local_modified = True, True, False, True
-        session.commit()
-        with stats_lock:
-            if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
-            elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
-            elif current_date_str == "2026-09-01": STATS_CACHE["chk_01"] += 1
-            STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
-        success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
-        log_event_clean("CHECKIN", device_name, success_msg, 200)
-        broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
-        return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
-    except Exception as e:
-        try: session.rollback()
-        except Exception: pass
-        log_event_clean("CHECKIN", device_name, f"DB Error", 500)
-        return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
-    finally:
-        try: session.close()
-        except Exception: pass
+    
+    retries = 3
+    while retries > 0:
+        session = mysql_factory()
+        try:
+            attendee = None
+            if search_type == 'phone': attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
+            else: attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
+            if not attendee:
+                log_event_clean("CHECKIN", device_name, f"Not found: {identifier}", 404)
+                broadcast_scan(None, "ERROR", f"Not found: {identifier}", device_name, iso_timestamp)
+                return 404, {"status": "error", "message": f"Record not found. Please direct attendee to the Help Desk."}
+            history = attendee.checkin_history
+            if isinstance(history, str):
+                try: history = json.loads(history)
+                except Exception: history = {}
+            if not isinstance(history, dict): history = {}
+            current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            date_map = EVENT_DATE_LABELS
+            if current_date_str not in date_map: return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
+            today_key = date_map[current_date_str]
+            att_days = attendee.attendance_days or []
+            if isinstance(att_days, str):
+                try: att_days = json.loads(att_days)
+                except Exception: att_days = []
+            if today_key not in att_days:
+                log_event_clean("CHECKIN", device_name, f"Denied (No pass {today_key})", 403)
+                broadcast_scan(attendee, "ERROR", f"Denied (No pass {today_key})", device_name, iso_timestamp)
+                return 403, {"status": "error", "message": f"Access Denied: Attendee does not have a valid pass for today ({today_key})."}
+            if today_key in history:
+                friendly_msg = f"Already Scanned! {attendee.full_name} checked in earlier today."
+                log_event_clean("CHECKIN", device_name, friendly_msg, 400)
+                broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
+                return 400, {"status": "error", "message": friendly_msg}
+            history[today_key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_name, "date_code": current_date_str, "display_date": today_key}
+            attendee.checkin_history = history
+            flag_modified(attendee, "checkin_history")
+            attendee.needs_cloud_sync, attendee.needs_sheet_sync, attendee.needs_local_sync, attendee.local_modified = True, True, False, True
+            session.commit()
+            with stats_lock:
+                if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
+                elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
+                elif current_date_str == "2026-09-01": STATS_CACHE["chk_01"] += 1
+                STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+            success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
+            log_event_clean("CHECKIN", device_name, success_msg, 200)
+            broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
+            return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
+        except OperationalError as e:
+            session.rollback()
+            retries -= 1
+            if retries == 0:
+                log_event_clean("CHECKIN", device_name, "DB Locked (OperationalError)", 503)
+                return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
+            time.sleep(random.uniform(0.1, 0.4))
+        except Exception as e:
+            session.rollback()
+            log_event_clean("CHECKIN", device_name, "DB Error", 500)
+            return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
+        finally:
+            try: session.close()
+            except Exception: pass
 
 def _handle_register_job(payload):
     data, device_label, iso_timestamp, mobile_number = payload["data"], payload["device_label"], payload["iso_timestamp"], payload["mobile_number"]
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
     if not mysql_factory: return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
-    session = mysql_factory()
-    try:
-        existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
-        if existing_main: return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
-        existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-        if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
-        def gen_id(att_type: str) -> str:
-            prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
-            for _ in range(5000):
-                aid = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
-                if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first(): return aid
-            raise RuntimeError("ID generation failed after 5000 attempts")
-        new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
-        today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        checkin_history_dict = {}
-        if today_date in EVENT_DATE_LABELS:
-            key = EVENT_DATE_LABELS[today_date]
-            checkin_history_dict[key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_label, "date_code": today_date, "display_date": key}
-        new_kiosk_reg = OfflineKioskAttendee(
-            id=str(uuid.uuid4()), attendee_id=new_attendee_id, full_name=data.get('full_name'), mobile=mobile_number,
-            email=data.get('email', ''), gender=data.get('gender'), attendee_type=data.get('attendee_type'),
-            business_name=data.get('business_name', ''), business_category=data.get('business_category', ''),
-            other_category=data.get('other_category', ''), address=data.get('address', ''), city=data.get('city', ''),
-            state=data.get('state', ''), pincode=data.get('pincode', ''), attendance_days=data.get('attendance_days', []),
-            photo_url=None, checkin_history=checkin_history_dict, device_name=device_label, needs_cloud_sync=True,
-            needs_sheet_sync=True, needs_local_sync=False, local_modified=True
-        )
+    
+    retries = 3
+    while retries > 0:
+        session = mysql_factory()
         try:
+            existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
+            if existing_main: return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
+            existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
+            if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
+            def gen_id(att_type: str) -> str:
+                prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
+                for _ in range(5000):
+                    aid = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
+                    if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first(): return aid
+                raise RuntimeError("ID generation failed after 5000 attempts")
+            new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
+            today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            checkin_history_dict = {}
+            if today_date in EVENT_DATE_LABELS:
+                key = EVENT_DATE_LABELS[today_date]
+                checkin_history_dict[key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_label, "date_code": today_date, "display_date": key}
+            new_kiosk_reg = OfflineKioskAttendee(
+                id=str(uuid.uuid4()), attendee_id=new_attendee_id, full_name=data.get('full_name'), mobile=mobile_number,
+                email=data.get('email', ''), gender=data.get('gender'), attendee_type=data.get('attendee_type'),
+                business_name=data.get('business_name', ''), business_category=data.get('business_category', ''),
+                other_category=data.get('other_category', ''), address=data.get('address', ''), city=data.get('city', ''),
+                state=data.get('state', ''), pincode=data.get('pincode', ''), attendance_days=data.get('attendance_days', []),
+                photo_url=None, checkin_history=checkin_history_dict, device_name=device_label, needs_cloud_sync=True,
+                needs_sheet_sync=True, needs_local_sync=False, local_modified=True
+            )
             session.add(new_kiosk_reg)
             session.commit()
             with stats_lock:
@@ -578,20 +591,25 @@ def _handle_register_job(payload):
                 if today_date == "2026-08-30": STATS_CACHE["chk_30"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
                 elif today_date == "2026-08-31": STATS_CACHE["chk_31"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
                 elif today_date == "2026-09-01": STATS_CACHE["chk_01"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
+            return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
         except IntegrityError:
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
             return 500, {"status": "error", "message": "Another registration is processing. Please try clicking submit again."}
-        log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
-        return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
-    except Exception as e:
-        try: session.rollback()
-        except Exception: pass
-        return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
-    finally:
-        try: session.close()
-        except Exception: pass
+        except OperationalError as e:
+            session.rollback()
+            retries -= 1
+            if retries == 0:
+                return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
+            time.sleep(random.uniform(0.1, 0.4))
+        except Exception as e:
+            session.rollback()
+            return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
+        finally:
+            try: session.close()
+            except Exception: pass
 
 def db_writer_loop(worker_id):
     while not _global_shutdown_event.is_set() and not _db_shutdown_event.is_set():
@@ -623,6 +641,8 @@ def stop_db_writers():
     for _ in range(len(_db_writer_threads)): 
         try: DB_WRITE_QUEUE.put(None, timeout=1.0)
         except queue.Full: pass
+    for t in _db_writer_threads:
+        t.join(timeout=1.0)
     _db_writer_threads.clear()
 
 @app.route('/manifest.json')
@@ -891,7 +911,7 @@ class ServerHub(ttk.Window):
         self.log_buffer_flask = []
         self.log_buffer_network = []
         self.log_buffer_cf = []
-        self.gui_queue = queue.Queue()
+        self.gui_queue = queue.Queue(maxsize=1000)
         self._meter_cache = {}
         self._context_device_id = None
         global gui_log_callback
@@ -957,9 +977,15 @@ class ServerHub(ttk.Window):
     def _append_log(self, widget_id, message, tag=None):
         segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
         with self.log_lock:
-            if widget_id == 'flask': self.log_buffer_flask.append(segments)
-            elif widget_id == 'network': self.log_buffer_network.append(segments)
-            elif widget_id == 'cf': self.log_buffer_cf.append(segments)
+            if widget_id == 'flask': 
+                self.log_buffer_flask.append(segments)
+                if len(self.log_buffer_flask) > 200: self.log_buffer_flask.pop(0)
+            elif widget_id == 'network': 
+                self.log_buffer_network.append(segments)
+                if len(self.log_buffer_network) > 200: self.log_buffer_network.pop(0)
+            elif widget_id == 'cf': 
+                self.log_buffer_cf.append(segments)
+                if len(self.log_buffer_cf) > 200: self.log_buffer_cf.pop(0)
 
     def log_flask_event(self, message): self._append_log('flask', message)
 
@@ -995,13 +1021,13 @@ class ServerHub(ttk.Window):
         if not self.winfo_exists(): return
         start_time = time.perf_counter()
         try:
-            while time.perf_counter() - start_time < 0.015:
+            while time.perf_counter() - start_time < 0.012:
                 try: task = self.gui_queue.get_nowait()
                 except queue.Empty: break
                 try: task()
-                except Exception: pass
+                except Exception as e: logging.error(f"GUI task execution failed: {e}")
         except Exception: pass
-        finally: self.after(25, self.process_gui_queue)
+        finally: self.after(20, self.process_gui_queue)
 
     def animation_loop(self):
         if not self.winfo_exists(): return
