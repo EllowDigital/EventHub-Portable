@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Live Scanner - TDE UP 2026</title>
+  <link rel="manifest" href="/manifest.json">
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
   <style>
     :root {
@@ -302,6 +303,8 @@
     #reader video {
       object-fit: cover;
       border-radius: var(--radius-lg);
+      transform-origin: center center;
+      transition: transform 0.15s ease-out;
     }
 
     #reader__dashboard_section_csr button,
@@ -815,9 +818,7 @@
         </svg>
         Back
       </a>
-      <h3 class="header-title">
-        Live Check-in <span class="version-tag">v2.5</span>
-      </h3>
+      <h3 class="header-title">Live Check-in <span class="version-tag">v2.6</span></h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
         <span id="net-text">Connecting...</span>
@@ -847,30 +848,24 @@
     </div>
 
     <div class="scanner-wrapper" id="qr-view">
-
       <select id="camera-select" class="camera-selector" style="display: none;" onchange="onCameraChange()">
         <option value="">Detecting Lenses...</option>
       </select>
-
       <div class="scanner-box" id="scanner-box">
         <div id="reader"></div>
-
         <div class="viewfinder-corners" id="viewfinder-corners">
           <div></div>
         </div>
-
         <div class="permission-overlay" id="permission-overlay">
           <div style="font-size: 3rem; margin-bottom: 10px;">📸</div>
           <h4>Lens Access Required</h4>
           <p>Please grant camera permission to scan attendee QR passes instantly.</p>
           <button class="btn-permission" onclick="requestCameraPermissionNatively()">Grant Access</button>
         </div>
-
         <div class="scan-overlay" id="scan-overlay">
           <div class="scan-laser"></div>
         </div>
       </div>
-
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
           <span>Lens Zoom</span>
@@ -885,10 +880,7 @@
           <button class="zoom-btn" onclick="adjustZoom(0.1)">+</button>
         </div>
       </div>
-
-      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
-        ⏸ Pause Scanner
-      </button>
+      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">⏸ Pause Scanner</button>
     </div>
 
     <div class="manual-wrapper" id="manual-view">
@@ -905,7 +897,6 @@
         <button class="btn-submit" onclick="submitManual('phone')">Verify Phone Check-in</button>
       </div>
     </div>
-
   </div>
 
   <div id="result-card"></div>
@@ -921,23 +912,31 @@
     </div>
   </div>
 
+  <!-- OPERATOR MESSAGE MODAL -->
+  <div id="operator-msg-modal" class="permission-overlay" style="z-index: 99999;">
+    <div class="modal-content"
+      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%;">
+      <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
+      <p id="operator-msg-text" style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap;"></p>
+      <button onclick="document.getElementById('operator-msg-modal').style.display='none'"
+        style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">Acknowledge</button>
+    </div>
+  </div>
+
   <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => { });
+    }
+
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
-      return String(str).replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-      }[tag] || tag));
+      return String(str).replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
     }
 
     let audioCtx = null;
-
     function initAudio() {
-      if (!audioCtx) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === "suspended") {
-        audioCtx.resume().catch(() => { });
-      }
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
     }
 
     function playAudioTone(type) {
@@ -945,32 +944,25 @@
         initAudio();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        osc.connect(gain); gain.connect(audioCtx.destination);
         const now = audioCtx.currentTime;
 
         if (type === "SUCCESS" || type === "OFFLINE") {
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(880, now);
-          osc.frequency.setValueAtTime(1200, now + 0.1);
-          gain.gain.setValueAtTime(0.8, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-          osc.start(now);
-          osc.stop(now + 0.3);
+          osc.type = "sine"; osc.frequency.setValueAtTime(880, now); osc.frequency.setValueAtTime(1200, now + 0.1);
+          gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+          osc.start(now); osc.stop(now + 0.3);
         } else if (type === "ERROR") {
-          osc.type = "sawtooth";
-          osc.frequency.setValueAtTime(150, now);
-          gain.gain.setValueAtTime(0.8, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-          osc.start(now);
-          osc.stop(now + 0.4);
+          osc.type = "sawtooth"; osc.frequency.setValueAtTime(150, now);
+          gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+          osc.start(now); osc.stop(now + 0.4);
         } else if (type === "DUPLICATE") {
-          osc.type = "square";
-          osc.frequency.setValueAtTime(400, now);
-          gain.gain.setValueAtTime(0.5, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-          osc.start(now);
-          osc.stop(now + 0.15);
+          osc.type = "square"; osc.frequency.setValueAtTime(400, now);
+          gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+          osc.start(now); osc.stop(now + 0.15);
+        } else if (type === "ALERT") {
+          osc.type = "triangle"; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(800, now + 0.2);
+          gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now); osc.stop(now + 0.5);
         }
       } catch (e) { }
     }
@@ -979,40 +971,23 @@
     let isCameraActive = false;
     let isProcessing = false;
     let isCameraTransitioning = false;
-
     let currentTrack = null;
-    let minZoom = 1;
-    let maxZoom = 3;
-    let zoomTarget = 1.0;
-    let zoomTimeout = null;
-    let autoZoomInterval = null;
-    let isSyncing = false;
-    let isFetching = false;
+    let nativeZoomSupported = false;
+    let minZoom = 1; let maxZoom = 3; let zoomTarget = 1.0;
+    let zoomTimeout = null; let autoZoomInterval = null;
+    let isSyncing = false; let isFetching = false;
     let camerasList = [];
+    let lastScannedId = ""; let lastScanTime = 0; const DEBOUNCE_MS = 4000;
 
-    let lastScannedId = "";
-    let lastScanTime = 0;
-    const DEBOUNCE_MS = 4000;
-
-    const scanConfig = {
-      fps: 30,
-      qrbox: { width: 250, height: 250 },
-      formatsToSupport: [0],
-      aspectRatio: 1.0,
-      useBarCodeDetectorIfSupported: true
-    };
+    const scanConfig = { fps: 30, qrbox: { width: 250, height: 250 }, formatsToSupport: [0], aspectRatio: 1.0, useBarCodeDetectorIfSupported: true };
 
     async function requestCameraPermissionNatively() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         stream.getTracks().forEach(track => track.stop());
-
         document.getElementById("permission-overlay").style.display = "none";
-        await fetchCameras();
-        await startHardware();
-      } catch (err) {
-        showToast("Permission denied by system. Check settings.", "ERROR");
-      }
+        await fetchCameras(); await startHardware();
+      } catch (err) { showToast("Permission denied by system. Check settings.", "ERROR"); }
     }
 
     async function fetchCameras() {
@@ -1024,95 +999,71 @@
           select.innerHTML = "";
           devices.forEach((device, index) => {
             const option = document.createElement("option");
-            option.value = device.id;
-            option.text = device.label || `Lens ${index + 1}`;
+            option.value = device.id; option.text = device.label || `Lens ${index + 1}`;
             select.appendChild(option);
           });
           select.style.display = "block";
         }
-      } catch (err) {
-        document.getElementById("permission-overlay").style.display = "flex";
-      }
+      } catch (err) { document.getElementById("permission-overlay").style.display = "flex"; }
     }
 
     async function onCameraChange() {
       if (isCameraTransitioning) return;
-      if (isCameraActive) {
-        await stopHardware();
-        await startHardware();
-      }
+      if (isCameraActive) { await stopHardware(); await startHardware(); }
     }
 
     async function startHardware() {
       if (isCameraTransitioning) return;
-
       if (!html5QrCode) html5QrCode = new Html5Qrcode("reader");
       if (!isCameraActive) {
         isCameraTransitioning = true;
         const btn = document.getElementById("camera-toggle-btn");
         const select = document.getElementById("camera-select");
         const cameraId = select.value;
-
-        btn.innerHTML = "⏳ Initializing Lens...";
-        btn.classList.remove("paused");
+        btn.innerHTML = "⏳ Initializing Lens..."; btn.classList.remove("paused");
         document.getElementById("permission-overlay").style.display = "none";
-
         let cameraTarget = cameraId ? cameraId : { facingMode: "environment" };
-
         try {
           await html5QrCode.start(cameraTarget, scanConfig, onScanSuccess);
-
           isCameraActive = true;
           btn.innerHTML = "⏸ Pause Scanner";
           document.getElementById("scan-overlay").style.display = "block";
           document.getElementById("viewfinder-corners").style.display = "block";
-
           setTimeout(initAdvancedCameraControls, 1200);
           startAutoZoomSweep();
         } catch (err) {
           document.getElementById("permission-overlay").style.display = "flex";
-          btn.innerHTML = "▶ Resume Scanner";
-          btn.classList.add("paused");
-        } finally {
-          isCameraTransitioning = false;
-        }
+          btn.innerHTML = "▶ Resume Scanner"; btn.classList.add("paused");
+        } finally { isCameraTransitioning = false; }
       }
     }
 
     function initAdvancedCameraControls() {
       try {
+        document.getElementById("zoom-controls").style.display = "flex";
         currentTrack = html5QrCode.getRunningTrack();
+        nativeZoomSupported = false; minZoom = 1; maxZoom = 3;
+
         if (currentTrack) {
           const cap = currentTrack.getCapabilities();
-
           if (cap.zoom) {
+            nativeZoomSupported = true;
             minZoom = cap.zoom.min || 1;
             maxZoom = cap.zoom.max || 3;
-            zoomTarget = minZoom;
-
-            const slider = document.getElementById("zoom-slider");
-            slider.min = minZoom;
-            slider.max = maxZoom;
-            slider.step = (maxZoom - minZoom) / 20;
-            slider.value = minZoom;
-            document.getElementById("zoom-controls").style.display = "flex";
-
-            slider.replaceWith(slider.cloneNode(true));
-            const newSlider = document.getElementById("zoom-slider");
-            newSlider.addEventListener("input", (e) => {
-              adjustZoom(parseFloat(e.target.value) - zoomTarget);
-            });
-
-            applyDebouncedZoom();
-          } else {
-            document.getElementById("zoom-controls").style.display = "none";
           }
         }
+
+        zoomTarget = minZoom;
+        const slider = document.getElementById("zoom-slider");
+        slider.min = minZoom; slider.max = maxZoom; slider.step = (maxZoom - minZoom) / 20; slider.value = minZoom;
+        slider.replaceWith(slider.cloneNode(true));
+        const newSlider = document.getElementById("zoom-slider");
+        newSlider.addEventListener("input", (e) => { adjustZoom(parseFloat(e.target.value) - zoomTarget); });
+        applyDebouncedZoom();
       } catch (e) { }
     }
 
     function adjustZoom(delta) {
-      if (!currentTrack) return;
       zoomTarget = Math.max(minZoom, Math.min(maxZoom, zoomTarget + delta));
       document.getElementById("zoom-slider").value = zoomTarget;
       document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
@@ -1121,39 +1072,35 @@
     }
 
     function applyDebouncedZoom() {
-      if (!currentTrack) return;
       clearTimeout(zoomTimeout);
       zoomTimeout = setTimeout(() => {
-        try {
-          currentTrack.applyConstraints({ advanced: [{ zoom: zoomTarget }] }).catch(() => { });
-        } catch (e) { }
+        if (nativeZoomSupported && currentTrack) {
+          try { currentTrack.applyConstraints({ advanced: [{ zoom: zoomTarget }] }).catch(() => { }); } catch (e) { }
+        } else {
+          const videoEl = document.querySelector("#reader video");
+          if (videoEl) videoEl.style.transform = `scale(${zoomTarget})`;
+        }
       }, 100);
     }
 
     const scannerBox = document.getElementById("scanner-box");
     scannerBox.addEventListener("wheel", (e) => {
-      if (!isCameraActive || !currentTrack) return;
+      if (!isCameraActive) return;
       e.preventDefault();
-      if (e.deltaY < 0) {
-        adjustZoom(0.1);
-      } else {
-        adjustZoom(-0.1);
-      }
+      if (e.deltaY < 0) adjustZoom(0.1); else adjustZoom(-0.1);
     }, { passive: false });
 
     function startAutoZoomSweep() {
       let toggle = false;
       autoZoomInterval = setInterval(() => {
-        if (!isCameraActive || isProcessing || !currentTrack) return;
+        if (!isCameraActive || isProcessing) return;
         const badge = document.getElementById("auto-zoom-badge");
         badge.style.opacity = 1;
-
         let newZoom = toggle ? minZoom : minZoom + (maxZoom - minZoom) * 0.2;
         zoomTarget = Math.max(minZoom, Math.min(maxZoom, newZoom));
         document.getElementById("zoom-slider").value = zoomTarget;
         document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
         applyDebouncedZoom();
-
         toggle = !toggle;
         setTimeout(() => { badge.style.opacity = 0; }, 800);
       }, 5000);
@@ -1166,47 +1113,35 @@
 
     async function stopHardware() {
       if (isCameraTransitioning) return;
-
       if (html5QrCode && isCameraActive) {
         isCameraTransitioning = true;
         try {
           clearInterval(autoZoomInterval);
-          if (html5QrCode.getState() === 2) {
-            await html5QrCode.stop();
-          }
+          if (html5QrCode.getState() === 2) await html5QrCode.stop();
           isCameraActive = false;
           const btn = document.getElementById("camera-toggle-btn");
-          btn.innerHTML = "▶ Resume Scanner";
-          btn.classList.add("paused");
+          btn.innerHTML = "▶ Resume Scanner"; btn.classList.add("paused");
           document.getElementById("scan-overlay").style.display = "none";
           document.getElementById("viewfinder-corners").style.display = "none";
           document.getElementById("zoom-controls").style.display = "none";
-        } catch (e) { } finally {
-          isCameraTransitioning = false;
-        }
+        } catch (e) { } finally { isCameraTransitioning = false; }
       }
     }
 
     async function toggleCamera() {
-      if (isCameraActive) await stopHardware();
-      else await startHardware();
+      if (isCameraActive) await stopHardware(); else await startHardware();
     }
 
     async function switchMode(mode) {
       if (isCameraTransitioning) return;
-
       document.getElementById("result-card").classList.remove("show");
       if (mode === "qr") {
-        document.getElementById("tab-qr").classList.add("active");
-        document.getElementById("tab-manual").classList.remove("active");
-        document.getElementById("qr-view").style.display = "block";
-        document.getElementById("manual-view").style.display = "none";
+        document.getElementById("tab-qr").classList.add("active"); document.getElementById("tab-manual").classList.remove("active");
+        document.getElementById("qr-view").style.display = "block"; document.getElementById("manual-view").style.display = "none";
         await startHardware();
       } else {
-        document.getElementById("tab-manual").classList.add("active");
-        document.getElementById("tab-qr").classList.remove("active");
-        document.getElementById("manual-view").style.display = "block";
-        document.getElementById("qr-view").style.display = "none";
+        document.getElementById("tab-manual").classList.add("active"); document.getElementById("tab-qr").classList.remove("active");
+        document.getElementById("manual-view").style.display = "block"; document.getElementById("qr-view").style.display = "none";
         await stopHardware();
       }
     }
@@ -1223,34 +1158,20 @@
 
     function submitManual(type) {
       if (isProcessing) return;
-
-      let val = type === "id"
-        ? document.getElementById("manual-id").value.trim()
-        : document.getElementById("manual-phone").value.trim();
-
-      if (type === "id" && !/^TDE26-[BGME]-[A-Z0-9]{6}$/i.test(val))
-        return showToast("Invalid Format.", "ERROR");
-      if (type === "phone" && val.length !== 10)
-        return showToast("Phone must be exactly 10 digits", "ERROR");
+      let val = type === "id" ? document.getElementById("manual-id").value.trim() : document.getElementById("manual-phone").value.trim();
+      if (type === "id" && !/^TDE26-[BGME]-[A-Z0-9]{6}$/i.test(val)) return showToast("Invalid Format.", "ERROR");
+      if (type === "phone" && val.length !== 10) return showToast("Phone must be exactly 10 digits", "ERROR");
 
       const now = Date.now();
-      if (val === lastScannedId && (now - lastScanTime < 1500)) {
-        return;
-      }
-      lastScannedId = val;
-      lastScanTime = now;
-
+      if (val === lastScannedId && (now - lastScanTime < 1500)) return;
+      lastScannedId = val; lastScanTime = now;
       processCheckin(val, type);
-      document.getElementById("manual-id").value = "";
-      document.getElementById("manual-phone").value = "";
+      document.getElementById("manual-id").value = ""; document.getElementById("manual-phone").value = "";
     }
 
     function getDeviceId() {
       let id = localStorage.getItem("hub_device_id");
-      if (!id) {
-        id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-        localStorage.setItem("hub_device_id", id);
-      }
+      if (!id) { id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15); localStorage.setItem("hub_device_id", id); }
       return id;
     }
 
@@ -1287,68 +1208,52 @@
     function updateOfflineBadge() {
       const queue = getOfflineQueue();
       const badge = document.getElementById("offline-badge");
-      if (queue.length > 0) {
-        badge.style.display = "block";
-        document.getElementById("offline-count").textContent = queue.length;
-      } else {
-        badge.style.display = "none";
-      }
+      if (queue.length > 0) { badge.style.display = "block"; document.getElementById("offline-count").textContent = queue.length; }
+      else { badge.style.display = "none"; }
     }
 
     async function processOfflineQueue() {
       if (isSyncing || !navigator.onLine) return;
       let queue = getOfflineQueue();
       if (queue.length === 0) return;
-
-      isSyncing = true;
-      let remainingQueue = [];
-
+      isSyncing = true; let remainingQueue = [];
       for (let i = 0; i < queue.length; i++) {
         try {
           queue[i].device_id = getDeviceId();
-          let res = await fetch("/api/checkin", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(queue[i]),
-          });
+          let res = await fetch("/api/checkin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(queue[i]) });
           if (!res.ok && res.status >= 500) remainingQueue.push(queue[i]);
-        } catch (e) {
-          remainingQueue.push(queue[i]);
-        }
+        } catch (e) { remainingQueue.push(queue[i]); }
       }
-
       saveOfflineQueue(remainingQueue);
       isSyncing = false;
-
-      if (remainingQueue.length < queue.length) {
-        showToast(`Synced ${queue.length - remainingQueue.length} offline records!`, "SUCCESS");
-      }
+      if (remainingQueue.length < queue.length) showToast(`Synced ${queue.length - remainingQueue.length} offline records!`, "SUCCESS");
     }
 
     async function syncServerStatus() {
       if (isFetching) return;
-
-      const dot = document.getElementById("net-dot"),
-        text = document.getElementById("net-text"),
-        testBanner = document.getElementById("test-mode-banner"),
-        testDate = document.getElementById("test-mode-date");
+      const dot = document.getElementById("net-dot"), text = document.getElementById("net-text"), testBanner = document.getElementById("test-mode-banner"), testDate = document.getElementById("test-mode-date");
 
       if (!navigator.onLine) {
-        dot.className = "net-dot net-offline";
-        text.textContent = "Offline";
-        testBanner.style.display = "none";
-        return;
+        dot.className = "net-dot net-offline"; text.textContent = "Offline"; testBanner.style.display = "none"; return;
       }
 
       isFetching = true;
       const start = performance.now();
+
+      let battParam = "&batt=N/A&charge=false";
+      if (navigator.getBattery) {
+        try {
+          const b = await navigator.getBattery();
+          battParam = `&batt=${Math.round(b.level * 100)}&charge=${b.charging}`;
+        } catch (e) { }
+      }
 
       try {
         const c = new AbortController();
         const id = setTimeout(() => c.abort(), 5000);
 
         const response = await fetch(
-          `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
+          `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}${battParam}`,
           { cache: "no-store", signal: c.signal }
         );
         clearTimeout(id);
@@ -1362,41 +1267,33 @@
         if (response.ok) {
           try {
             const data = await response.json();
-            if (data.test_mode) {
-              testBanner.style.display = "block";
-              testDate.textContent = escapeHTML(data.test_date) || "Unknown";
-            } else {
-              testBanner.style.display = "none";
+            if (data.test_mode) { testBanner.style.display = "block"; testDate.textContent = escapeHTML(data.test_date) || "Unknown"; }
+            else { testBanner.style.display = "none"; }
+
+            if (data.messages && data.messages.length > 0) {
+              const msgBox = document.getElementById("operator-msg-modal");
+              document.getElementById("operator-msg-text").innerText = data.messages.join("\n\n");
+              msgBox.style.display = "flex";
+              playAudioTone("ALERT");
             }
+
             processOfflineQueue();
           } catch (err) { }
         }
       } catch (e) {
-        dot.className = "net-dot net-poor";
-        text.textContent = "Connecting...";
-      } finally {
-        isFetching = false;
-      }
+        dot.className = "net-dot net-poor"; text.textContent = "Connecting...";
+      } finally { isFetching = false; }
     }
 
     function processCheckin(identifier, type = "id") {
       if (isProcessing) return;
-      isProcessing = true;
-      clearInterval(autoZoomInterval);
+      isProcessing = true; clearInterval(autoZoomInterval);
 
       const payload = {
-        attendee_id: identifier,
-        search_type: type,
-        device_name: getDeviceName(),
-        device_id: getDeviceId(),
-        offline_scan_time: new Date().toISOString(),
+        attendee_id: identifier, search_type: type, device_name: getDeviceName(), device_id: getDeviceId(), offline_scan_time: new Date().toISOString(),
       };
 
-      fetch("/api/checkin", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      })
+      fetch("/api/checkin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
         .then((r) => r.json().then((data) => ({ status: r.status, body: data })))
         .then((res) => {
           let sType = "ERROR";
@@ -1405,9 +1302,7 @@
           showToast(res.body.message, sType);
         })
         .catch(() => {
-          let queue = getOfflineQueue();
-          queue.push(payload);
-          saveOfflineQueue(queue);
+          let queue = getOfflineQueue(); queue.push(payload); saveOfflineQueue(queue);
           showToast(`Saved Offline: ${identifier}`, "OFFLINE");
         });
     }
@@ -1422,51 +1317,31 @@
       else if (type === "OFFLINE") card.className = "res-offline show";
       else card.className = "res-error show";
 
-      playAudioTone(type);
-      clearTimeout(toastTimeout);
+      playAudioTone(type); clearTimeout(toastTimeout);
       toastTimeout = setTimeout(() => {
-        card.classList.remove("show");
-        isProcessing = false;
-        resetAutoZoomTimer();
+        card.classList.remove("show"); isProcessing = false; resetAutoZoomTimer();
       }, 3500);
     }
 
     function onScanSuccess(decoded) {
       if (isProcessing) return;
-
       let id = decoded.trim();
-      try {
-        const p = JSON.parse(id);
-        if (typeof p === "object" && p !== null) id = p.attendeeId || p.id || id;
-      } catch (e) { }
+      try { const p = JSON.parse(id); if (typeof p === "object" && p !== null) id = p.attendeeId || p.id || id; } catch (e) { }
 
       const now = Date.now();
-      if (id === lastScannedId && (now - lastScanTime < DEBOUNCE_MS)) {
-        return;
-      }
-      lastScannedId = id;
-      lastScanTime = now;
-
+      if (id === lastScannedId && (now - lastScanTime < DEBOUNCE_MS)) return;
+      lastScannedId = id; lastScanTime = now;
       processCheckin(id, "id");
     }
 
     document.addEventListener("click", initAudio, { once: true });
 
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") {
-        syncServerStatus();
-      }
-    });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncServerStatus(); });
 
     window.addEventListener("load", async () => {
-      initDeviceName();
-      updateOfflineBadge();
-
-      await fetchCameras();
-      startHardware();
-
-      setInterval(syncServerStatus, 3000);
-      syncServerStatus();
+      initDeviceName(); updateOfflineBadge();
+      await fetchCameras(); startHardware();
+      setInterval(syncServerStatus, 3000); syncServerStatus();
     });
   </script>
 </body>

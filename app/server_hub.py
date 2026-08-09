@@ -207,6 +207,7 @@ except Exception as e:
     logging.error(f"Failed to load custom device names: {e}")
 
 ACTIVE_DEVICES = {}
+DEVICE_MESSAGES = {}
 SCAN_CLIENTS = []
 scan_clients_lock = threading.Lock()
 device_lock = threading.Lock()
@@ -811,6 +812,14 @@ def stop_db_writers():
         except queue.Full: pass
     _db_writer_threads.clear()
 
+@app.route('/manifest.json')
+def serve_manifest():
+    return app.send_static_file('manifest.json')
+
+@app.route('/sw.js')
+def serve_service_worker():
+    return app.send_static_file('sw.js')
+
 @app.route('/')
 def index(): return render_template('index.html')
 @app.route('/scanner')
@@ -820,25 +829,60 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
-@app.route('/api/status', methods=['GET'])
+@app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     ip = request.remote_addr
-    reported_name = request.args.get('device_name', 'Unknown Device')
-    if reported_name == "null": reported_name = "Unknown Device"
     
-    device_id = request.args.get('device_id')
-    if not device_id:
-        device_id = f"{ip}::{reported_name}"
+    if request.method == 'POST':
+        data = request.json or {}
+        reported_name = data.get('device_name', 'Unknown Device')
+        device_id = data.get('device_id')
+        battery = data.get('battery', 'N/A')
+        temp = data.get('temp', 'N/A')
+    else:
+        reported_name = request.args.get('device_name', 'Unknown Device')
+        device_id = request.args.get('device_id')
+        battery = request.args.get('battery', 'N/A')
+        temp = request.args.get('temp', 'N/A')
+
+    if reported_name == "null": reported_name = "Unknown Device"
+    if not device_id: device_id = f"{ip}::{reported_name}"
         
+    pending_msg = None
     with device_lock:
         display_name = CUSTOM_DEVICE_NAMES.get(device_id, reported_name)
+        
+        if device_id in DEVICE_MESSAGES:
+            pending_msg = DEVICE_MESSAGES.pop(device_id)
+
         ACTIVE_DEVICES[device_id] = {
             'last_seen': time.time(), 
             'name': display_name,
             'original_name': reported_name,
-            'ip': ip
+            'ip': ip,
+            'battery': battery,
+            'temp': temp
         }
-    return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE}), 200
+        
+    return jsonify({
+        "test_mode": SERVER_TEST_MODE, 
+        "test_date": SERVER_TEST_DATE,
+        "message": pending_msg
+    }), 200
+
+@app.route('/api/device/message', methods=['POST'])
+def send_device_message():
+    data = request.json or {}
+    device_id = data.get('id')
+    message = data.get('message', '').strip()
+    
+    if not device_id or not message:
+        return jsonify({"status": "error", "message": "Missing device ID or message."}), 400
+        
+    with device_lock:
+        DEVICE_MESSAGES[device_id] = message
+        
+    return jsonify({"status": "success", "message": "Message queued for device."}), 200
 
 @app.route('/api/device/rename', methods=['POST'])
 def rename_device():
