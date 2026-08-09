@@ -177,7 +177,7 @@ DB_JOB_TIMEOUT = 12
 STATS_REFRESH_INTERVAL_SEC = 300  
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
 SLOW_REQUEST_THRESHOLD_MS = 300  
-MAX_LOG_LINES = 5000 # Increased to hold extensive historical depth 
+MAX_LOG_LINES = 5000 
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
 _file_handler = RotatingFileHandler(LOG_FILE, maxBytes=25_000_000, backupCount=10, encoding='utf-8')
@@ -984,7 +984,6 @@ class ServerHub(ttk.Window):
         segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
         with self.log_lock:
             if widget_id == 'flask': 
-                # FIX: Removed the 200 limit entirely so 100,000 logs safely enter the buffer queue without dropping
                 self.log_buffer_flask.append(segments)
             elif widget_id == 'network': 
                 self.log_buffer_network.append(segments)
@@ -997,7 +996,6 @@ class ServerHub(ttk.Window):
         if not self.winfo_exists(): return
         try:
             with self.log_lock:
-                # FIX: "Chunked Yield Rendering" - pull exactly 300 logs per tick to render quickly but avoid freeze
                 flask_logs = self.log_buffer_flask[:300]
                 net_logs = self.log_buffer_network[:300]
                 cf_logs = self.log_buffer_cf[:300]
@@ -1014,7 +1012,6 @@ class ServerHub(ttk.Window):
             
         except Exception: pass
         finally: 
-            # FIX: If we have 100,000 logs pending, loop immediately (15ms). If quiet, rest (250ms).
             delay = 15 if pending > 0 else 250
             self.after(delay, self.flush_log_buffers)
 
@@ -1032,7 +1029,6 @@ class ServerHub(ttk.Window):
         text_widget.see(END)
         
         lc = int(text_widget.index('end-1c').split('.')[0])
-        # FIX: Adjusted line deletion formula to easily support the new 5,000 MAX history limit
         if lc > MAX_LOG_LINES + 500: 
             text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
             
@@ -1185,6 +1181,21 @@ class ServerHub(ttk.Window):
             with device_lock: DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
 
+    def _prompt_broadcast_message(self):
+        with device_lock:
+            active_count = len(ACTIVE_DEVICES)
+        if active_count == 0:
+            Messagebox.show_warning("No active devices connected to broadcast to.", "No Devices", parent=self)
+            return
+            
+        msg = simpledialog.askstring("Broadcast Message", f"Enter message to broadcast to ALL ({active_count}) active devices:", parent=self)
+        
+        if msg and msg.strip():
+            with device_lock:
+                for d_id in ACTIVE_DEVICES.keys():
+                    DEVICE_MESSAGES[d_id] = msg.strip()
+            self._append_log('network', f"[INFO] Broadcast message queued for {active_count} devices: {msg.strip()}")
+
     def build_ui(self):
         self._configure_custom_styles()
         self.root_container = ttk.Frame(self, style="TFrame")
@@ -1333,6 +1344,10 @@ class ServerHub(ttk.Window):
         devices_header_row.pack(fill=X, pady=(2, 4))
         self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES (0) — Right-Click to Manage", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT)
         self.lbl_devices_header.pack(side=LEFT, anchor=W)
+        
+        self.btn_broadcast = ttk.Button(devices_header_row, text="📢 Broadcast to All", bootstyle="warning-outline", command=self._prompt_broadcast_message)
+        self.btn_broadcast.pack(side=RIGHT, padx=(10, 0))
+        
         self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 9), bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
 
@@ -1501,7 +1516,6 @@ class ServerHub(ttk.Window):
                     SERVER_METRICS["avg_process_ms"] = 0.0
                     SERVER_METRICS["req_count"] = 0
                 elif req_sec == 0:
-                    # FIX: Aggressive multiplier drops the needle to 0 almost instantly when idle
                     SERVER_METRICS["avg_process_ms"] *= 0.5
                     if SERVER_METRICS["avg_process_ms"] < 1.0:
                         SERVER_METRICS["avg_process_ms"] = 0.0
