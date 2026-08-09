@@ -17,6 +17,12 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
 try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
+
+try:
     if platform.system() == "Windows":
         import winsound
         HAS_WINSOUND = True
@@ -76,17 +82,22 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, 'register.json')
 BACKUP_FILE = os.path.join(LOG_DIR, 'unsynced_registrations.json')
 
 def load_config():
+    default_id = "kiosk_" + uuid.uuid4().hex[:12]
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                if "device_id" not in data:
+                    data["device_id"] = default_id
+                    save_config(data.get("server_url", "http://127.0.0.1:5000"), data.get("device_name", "Desktop Kiosk"), default_id)
+                return data
         except Exception:
             pass
-    return {"server_url": "http://127.0.0.1:5000", "device_name": "Main Desktop Kiosk"}
+    return {"server_url": "http://127.0.0.1:5000", "device_name": "Desktop Kiosk", "device_id": default_id}
 
-def save_config(url, name):
+def save_config(url, name, device_id):
     with open(CONFIG_FILE, 'w') as f:
-        json.dump({"server_url": url, "device_name": name}, f, indent=4)
+        json.dump({"server_url": url, "device_name": name, "device_id": device_id}, f, indent=4)
 
 class LocalBackupManager:
     def __init__(self):
@@ -166,7 +177,7 @@ class AutocompleteCombobox(ttk.Combobox):
 
 class OfflineKioskApp(ttk.Window):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Desktop Registration Kiosk")
+        super().__init__(themename="darkly", title="TDE UP 2026 — Registration")
         self.geometry("900x800")
         self.minsize(700, 600)
         
@@ -177,6 +188,9 @@ class OfflineKioskApp(ttk.Window):
         self.config = load_config()
         self.server_url = self.config["server_url"].rstrip('/')
         self.device_name = self.config["device_name"]
+        self.device_id = self.config["device_id"]
+        
+        self.title(f"TDE UP 2026 — {self.device_name}")
         self.sound_enabled = True
         
         self.api_session = requests.Session()
@@ -184,11 +198,12 @@ class OfflineKioskApp(ttk.Window):
         self.sync_session = requests.Session()
         
         for session in [self.api_session, self.ping_session, self.sync_session]:
-            session.headers.update({"User-Agent": "EventHub-Kiosk/1.0", "Connection": "close"})
+            session.headers.update({"User-Agent": "EventHub-Kiosk/2.6", "Connection": "close"})
         
         self.gui_queue = queue.Queue()
         self.is_pinging = True
         self.is_submitting = False
+        self._showing_msg = False
         
         self.MOBILE_RE = re.compile(r"^[6-9]\d{9}$")
         self.PIN_RE = re.compile(r"^\d{6}$")
@@ -439,6 +454,40 @@ class OfflineKioskApp(ttk.Window):
                     
         threading.Thread(target=_play, daemon=True).start()
 
+    def show_hub_message(self, msg):
+        if getattr(self, '_showing_msg', False): return
+        self._showing_msg = True
+        self.play_sound("ALERT", "New message from Hub")
+        
+        modal = tk.Toplevel(self)
+        modal.title("Hub Alert")
+        modal.geometry("450x300")
+        modal.resizable(False, False)
+        modal.transient(self)
+        modal.grab_set()
+        
+        x = self.winfo_x() + (self.winfo_width() // 2) - 225
+        y = self.winfo_y() + (self.winfo_height() // 2) - 150
+        modal.geometry(f"+{x}+{y}")
+        
+        frame = ttk.Frame(modal, borderwidth=3, relief="solid", bootstyle="warning")
+        frame.pack(fill=BOTH, expand=True)
+        
+        ttk.Label(frame, text="📨 Hub Message", font="-size 18 -weight bold").pack(pady=(20, 10))
+        
+        msg_lbl = ttk.Label(frame, text=msg, font="-size 12 -weight bold", wraplength=400, justify=CENTER)
+        msg_lbl.pack(expand=True, fill=BOTH, padx=20, pady=10)
+        
+        def close_msg(event=None):
+            self._showing_msg = False
+            modal.destroy()
+            
+        btn = ttk.Button(frame, text="Acknowledge Message", bootstyle="dark", padding=10, command=close_msg)
+        btn.pack(pady=20, fill=X, padx=40)
+        
+        modal.bind('<Return>', close_msg)
+        modal.bind('<Escape>', close_msg)
+
     def setup_reactive_logic(self):
         self.vars['attendee_type'].trace_add('write', self.on_type_change)
         self.vars['business_category'].trace_add('write', self.on_category_change)
@@ -564,7 +613,8 @@ class OfflineKioskApp(ttk.Window):
         def save_and_close(event=None):
             self.server_url = url_var.get().rstrip('/')
             self.device_name = name_var.get()
-            save_config(self.server_url, self.device_name)
+            self.title(f"TDE UP 2026 — {self.device_name}")
+            save_config(self.server_url, self.device_name, self.device_id)
             modal.destroy()
             self.gui_queue.put(lambda: self.net_label.configure(text="Reconnecting..."))
 
@@ -578,9 +628,40 @@ class OfflineKioskApp(ttk.Window):
         while self.is_pinging:
             start_time = time.time()
             try:
-                url = f"{self.server_url}/api/status?device_name={requests.utils.quote(self.device_name)}"
-                res = self.ping_session.get(url, timeout=2, verify=False)
+                battery, temp = "N/A", "N/A"
+                if HAS_PSUTIL:
+                    try:
+                        batt = psutil.sensors_battery()
+                        if batt: battery = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
+                        if hasattr(psutil, 'sensors_temperatures'):
+                            temps = psutil.sensors_temperatures()
+                            if temps:
+                                for k, v in temps.items():
+                                    if v and len(v) > 0:
+                                        temp = f"{int(v[0].current)}°C"
+                                        break
+                    except Exception: pass
+                
+                payload = {
+                    "device_id": self.device_id,
+                    "device_name": self.device_name,
+                    "battery": battery,
+                    "temp": temp
+                }
+                
+                res = self.ping_session.post(f"{self.server_url}/api/status", json=payload, timeout=3, verify=False)
                 res.raise_for_status()
+                data = res.json()
+                
+                canonical = data.get("canonical_name")
+                if canonical and canonical != self.device_name and canonical != "Unknown Device":
+                    self.device_name = canonical
+                    save_config(self.server_url, self.device_name, self.device_id)
+                    self.gui_queue.put(lambda c=canonical: self.title(f"TDE UP 2026 — {c}"))
+                
+                msg = data.get("message")
+                if msg:
+                    self.gui_queue.put(lambda m=msg: self.show_hub_message(m))
                 
                 duration_ms = int((time.time() - start_time) * 1000)
                 if duration_ms < 150:
@@ -731,7 +812,8 @@ class OfflineKioskApp(ttk.Window):
             "state": self.vars['state'].get().strip(),
             "pincode": self.vars['pincode'].get().strip(),
             "attendance_days": selected_days,
-            "device_name": self.device_name
+            "device_name": self.device_name,
+            "device_id": self.device_id
         }
 
         backup_mgr.save(payload)
