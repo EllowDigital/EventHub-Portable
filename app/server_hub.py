@@ -178,9 +178,6 @@ DB_JOB_TIMEOUT = 10
 
 STATS_REFRESH_INTERVAL_SEC = 300  
 
-# Single source of truth for event days -> display label. Was previously copy-pasted
-# in three places (checkin gating, registration gating, stats mapping); a future date
-# change only needs to happen here now instead of risking the copies drifting apart.
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
 SLOW_REQUEST_THRESHOLD_MS = 250  
 MAX_LOG_LINES = 1000             
@@ -918,11 +915,6 @@ def process_registration():
     mobile_number = str(data.get('mobile', '')).strip()
     full_name = str(data.get('full_name', '')).strip()
 
-    # Fail fast on malformed input rather than letting it reach the DB layer:
-    # OfflineKioskAttendee has no length constraint on mobile like Attendee does,
-    # so an empty/short mobile would insert cleanly, then collide (unique constraint)
-    # with the *next* attendee who also has no mobile, wrongly telling them
-    # "already registered" with a stranger's ID.
     if not full_name:
         return jsonify({"status": "error", "message": "Full name is required."}), 400
     if not mobile_number or len(mobile_number) < 10:
@@ -958,11 +950,6 @@ def check_mobile():
 
 @app.route('/api/pincode/<code>', methods=['GET'])
 def lookup_pincode(code):
-    # Local, fully-offline pincode -> district/state lookup. register.py already does this
-    # via the indiapins package (bundled dataset, no network needed); this exposes the same
-    # capability to the browser kiosks, which previously called the external
-    # api.postalpincode.in over the internet -- a dependency this "offline" system
-    # shouldn't have needed in the first place.
     code = (code or '').strip()
     if not code.isdigit() or len(code) != 6:
         return jsonify({"status": "error", "message": "Enter a valid 6-digit pincode."}), 400
@@ -990,9 +977,6 @@ def get_all_attendees():
     if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
-        # Explicit ORDER BY is required for stable pagination: without it, LIMIT/OFFSET
-        # results are not guaranteed consistent between calls once rows are being written
-        # concurrently, which lets pages skip or repeat records.
         main_att = session.query(Attendee).order_by(Attendee.created_at.asc(), Attendee.id.asc()).offset(offset).limit(limit).all()
         kiosk_att = []
         rem_limit = limit - len(main_att)
@@ -1024,7 +1008,6 @@ def get_all_attendees():
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        # INCREASED CAPACITIES for load testing
         self.server = create_server(app, host=host, port=port, threads=500, connection_limit=2000, channel_timeout=30)
         self.ctx = app.app_context(); self.ctx.push()
     def run(self):
@@ -1038,7 +1021,6 @@ class HttpsFlaskThread(threading.Thread):
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context(); self.ctx.push()
-        # INCREASED CAPACITIES for load testing
         self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=2048)
         self.server.keep_alive_timeout = 30
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
@@ -1062,7 +1044,6 @@ def _rgb_to_hex(rgb): return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(
 def _mix_hex(c_a, c_b, w): return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
 
 class AnimatedMeter:
-    """Class to smoothly interpolate (Lerp) meter animations with CPU-saving caching."""
     def __init__(self, meter_widget):
         self.meter = meter_widget
         self.current_val = 0.0
@@ -1089,7 +1070,6 @@ class ServerHub(ttk.Window):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.6 (Enterprise Dual-Sync Edition)")
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         
-        # Responsive minimums that fit standard HD screens perfectly
         ww, wh = max(1024, min(1600, int(sw * 0.90))), max(600, min(900, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
         self.minsize(1024, 600)
@@ -1236,9 +1216,6 @@ class ServerHub(ttk.Window):
         if not text_widget.winfo_exists(): return
         text_widget.configure(state=NORMAL)
         
-        # --- THROWING FIX: Extreme Load Anti-Freeze ---
-        # Dropping to render extremely massive queues limits Tkinter bottlenecking 
-        # (It is still logged perfectly in the text file)
         if len(log_batches) > 100:
             log_batches = log_batches[-100:]
             text_widget.insert(END, f"[{datetime.now().strftime('%H:%M:%S')}] [SYSTEM] Extremely high load detected! UI skipped older logs to maintain performance. Check log file for full history.\n", "log_warning")
@@ -1261,8 +1238,7 @@ class ServerHub(ttk.Window):
         
         start_time = time.perf_counter()
         try:
-            # --- YIELD FIX: Enforce time-boundary so mainloop never freezes ---
-            while time.perf_counter() - start_time < 0.015:  # Maximum 15 milliseconds allowed per tick
+            while time.perf_counter() - start_time < 0.015:
                 try: 
                     task = self.gui_queue.get_nowait()
                 except queue.Empty: 
@@ -1270,7 +1246,6 @@ class ServerHub(ttk.Window):
                 try:
                     task()
                 except Exception as e:
-                    # Isolated per-task: one bad GUI update must not skip the rest of this batch.
                     logging.error(f"gui_queue task execution error: {e}")
         except Exception as e:
             logging.error(f"process_gui_queue outer error: {e}")
@@ -1315,12 +1290,11 @@ class ServerHub(ttk.Window):
         self.attributes("-fullscreen", not is_fullscreen)
 
     def _configure_custom_styles(self):
-        """Custom OneDark / VS Code Palette for a flawless, patch-free GUI."""
         colors = self.style.colors
         
         self.APP_BG = "#1E1E1E"        
         self.PANEL_BG = "#252526"      
-        self.BORDER = "#333333"        
+        self.BORDER = "#3E3E42"        
         self.TEXT_FG = "#CCCCCC"       
         self.ACCENT = "#569CD6"        
         self.SUCCESS_FG = "#4EC9B0"
@@ -1341,24 +1315,24 @@ class ServerHub(ttk.Window):
         self.style.configure("TLabelframe.Label", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 9, "bold"))
 
         self.style.configure("Card.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
-        self.style.configure("CardTitle.TLabel", background=self.PANEL_BG, foreground="#858585", font=("Segoe UI", 7, "bold"))
+        self.style.configure("CardTitle.TLabel", background=self.PANEL_BG, foreground="#9D9D9D", font=("Segoe UI", 8, "bold"))
         
         for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"): 
-            self.style.configure(f"CardValue.{key}.TLabel", background=self.PANEL_BG, foreground=colors.get(key), font=("Segoe UI", 18, "bold"))
+            self.style.configure(f"CardValue.{key}.TLabel", background=self.PANEL_BG, foreground=colors.get(key), font=("Segoe UI", 20, "bold"))
         
-        self.style.configure("CardFlash.TLabel", background=self.PANEL_BG, foreground="#FFFFFF", font=("Segoe UI", 18, "bold"))
+        self.style.configure("CardFlash.TLabel", background=self.PANEL_BG, foreground="#FFD700", font=("Segoe UI", 20, "bold"))
         self.style.configure("Soft.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
         
         self.style.configure("Treeview.Heading", background=self.PANEL_BG, foreground=self.ACCENT, bordercolor=self.BORDER, relief="flat", font=("Segoe UI", 9, "bold"))
         self.style.map("Treeview.Heading", background=[("active", "#2D2D30")])
-        self.style.configure("Treeview", bordercolor=self.BORDER, borderwidth=1, background=self.APP_BG, foreground=self.TEXT_FG, fieldbackground=self.APP_BG, rowheight=24)
+        self.style.configure("Treeview", bordercolor=self.BORDER, borderwidth=1, background=self.APP_BG, foreground=self.TEXT_FG, fieldbackground=self.APP_BG, rowheight=28)
         self.style.map('Treeview', background=[('selected', '#094771')]) 
         
-        self.style.configure("LogHeader.TLabel", background="#2D2D30", foreground=self.SUCCESS_FG, font=("Segoe UI", 8, "bold"), padding=10)
+        self.style.configure("LogHeader.TLabel", background="#2D2D30", foreground=self.SUCCESS_FG, font=("Segoe UI", 9, "bold"), padding=10)
 
     def _build_status_badge(self, parent, initial_text, bootstyle):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(8, 4))
-        frame.pack(side=LEFT, padx=(0, 6))
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(10, 6))
+        frame.pack(side=LEFT, padx=(0, 8))
         lbl = ttk.Label(frame, text=initial_text, bootstyle=bootstyle, font=("Segoe UI", 8, "bold"), style="Panel.TLabel")
         lbl.pack(anchor=CENTER)
         return lbl
@@ -1393,8 +1367,7 @@ class ServerHub(ttk.Window):
         self.root_container = ttk.Frame(self, style="TFrame")
         self.root_container.pack(fill=BOTH, expand=True)
 
-        # Increased sidebar width to 240 to perfectly fit the WhatsApp button text
-        sidebar_outer = ttk.Frame(self.root_container, width=240, style="TFrame")
+        sidebar_outer = ttk.Frame(self.root_container, width=250, style="TFrame")
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
         
@@ -1404,7 +1377,7 @@ class ServerHub(ttk.Window):
         sidebar_vsb.pack(side=RIGHT, fill=Y)
         self.sidebar_canvas.pack(side=LEFT, fill=BOTH, expand=True)
 
-        sidebar = ttk.Frame(self.sidebar_canvas, padding=8, style="TFrame")
+        sidebar = ttk.Frame(self.sidebar_canvas, padding=12, style="TFrame")
         sidebar_window = self.sidebar_canvas.create_window((0, 0), window=sidebar, anchor="nw")
         
         sidebar.bind("<Configure>", lambda e: self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox("all")))
@@ -1412,26 +1385,26 @@ class ServerHub(ttk.Window):
         self.sidebar_canvas.bind("<Enter>", lambda e: self.sidebar_canvas.bind_all("<MouseWheel>", lambda ev: self.sidebar_canvas.yview_scroll(int(-1 * (ev.delta / 120)), "units")))
         self.sidebar_canvas.bind("<Leave>", lambda e: self.sidebar_canvas.unbind_all("<MouseWheel>"))
 
-        ttk.Label(sidebar, text="NETWORK & ROUTING", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(pady=(0, 10), anchor=W)
+        ttk.Label(sidebar, text="NETWORK & ROUTING", font=("Segoe UI", 12, "bold"), foreground=self.ACCENT).pack(pady=(0, 12), anchor=W)
         
-        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 High-Speed Engine ", padding=8)
-        flask_frame.pack(fill=X, pady=4)
+        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 High-Speed Engine ", padding=10)
+        flask_frame.pack(fill=X, pady=6)
         self.btn_start_flask = ttk.Button(flask_frame, text="▶ START ENGINE", bootstyle=SUCCESS, command=self.start_flask)
         self.btn_start_flask.pack(fill=X, pady=2)
         self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ STOP ENGINE", bootstyle="danger-outline", state=DISABLED, command=self.stop_flask)
         self.btn_stop_flask.pack(fill=X, pady=2)
-        ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", style="PanelInfo.TLabel").pack(pady=(6, 2))
+        ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", style="PanelInfo.TLabel").pack(pady=(8, 4))
         
         self.lbl_flask_qr = ttk.Label(flask_frame, style="Panel.TLabel")
         self.lbl_flask_qr.pack()
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
-        self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font=("Segoe UI", 8), style="Panel.TLabel", cursor="hand2")
-        self.lbl_flask_link.pack(pady=2)
+        self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font=("Segoe UI", 9), style="Panel.TLabel", cursor="hand2")
+        self.lbl_flask_link.pack(pady=4)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
         
         flask_btn_row1 = ttk.Frame(flask_frame, style="Panel.TFrame")
-        flask_btn_row1.pack(fill=X, pady=(2, 2))
+        flask_btn_row1.pack(fill=X, pady=(4, 2))
         ttk.Button(flask_btn_row1, text="Copy HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
         ttk.Button(flask_btn_row1, text="Copy HTTP", bootstyle="info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
@@ -1440,59 +1413,59 @@ class ServerHub(ttk.Window):
         ttk.Button(flask_btn_row2, text="Open Secure", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
         ttk.Button(flask_btn_row2, text="Open Local", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=8)
+        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=10)
         cf_frame.pack(fill=X, pady=8)
         self.btn_start_cf = ttk.Button(cf_frame, text="▶ START TUNNEL", bootstyle=PRIMARY, state=DISABLED, command=self.start_cf)
         self.btn_start_cf.pack(fill=X, pady=2)
         self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ STOP TUNNEL", bootstyle="danger-outline", state=DISABLED, command=self.stop_cf)
         self.btn_stop_cf.pack(fill=X, pady=2)
         
-        ttk.Label(cf_frame, text="Public Tunnel QR:", style="PanelInfo.TLabel").pack(pady=(6, 2))
+        ttk.Label(cf_frame, text="Public Tunnel QR:", style="PanelInfo.TLabel").pack(pady=(8, 4))
         self.lbl_cf_qr = ttk.Label(cf_frame, style="Panel.TLabel")
         self.lbl_cf_qr.pack()
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         
-        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font=("Segoe UI", 8), style="Panel.TLabel", cursor="hand2")
-        self.lbl_cf_link.pack(pady=2)
+        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font=("Segoe UI", 9), style="Panel.TLabel", cursor="hand2")
+        self.lbl_cf_link.pack(pady=4)
         self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url not in ["Offline", "Pending"] else None)
         
         cf_btn_row = ttk.Frame(cf_frame, style="Panel.TFrame")
-        cf_btn_row.pack(fill=X, pady=(2, 2))
+        cf_btn_row.pack(fill=X, pady=(4, 2))
         ttk.Button(cf_btn_row, text="Copy URL", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
         ttk.Button(cf_btn_row, text="Open URL", bootstyle="outline-primary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
 
-        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=8)
-        test_frame.pack(fill=X, pady=4)
+        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=10)
+        test_frame.pack(fill=X, pady=6)
         self.test_mode = ttk.BooleanVar(value=False)
         self.test_date = ttk.StringVar(value="2026-08-30")
         
         chk_wrap = ttk.Frame(test_frame, style="Panel.TFrame")
-        chk_wrap.pack(anchor=W, pady=2)
+        chk_wrap.pack(anchor=W, pady=4)
         self.chk_test = ttk.Checkbutton(chk_wrap, text="Testing Mode OFF", variable=self.test_mode, bootstyle="warning-round-toggle", style="Panel.TCheckbutton", command=self.toggle_test_mode)
         self.chk_test.pack()
         
-        self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=list(EVENT_DATE_LABELS.keys()), state=DISABLED)
-        self.cb_test_date.pack(fill=X, pady=(2, 0))
+        self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
+        self.cb_test_date.pack(fill=X, pady=(4, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
-        contact_frame = ttk.Labelframe(sidebar, text=" 📞 Support & Help ", padding=8)
+        contact_frame = ttk.Labelframe(sidebar, text=" 📞 Support & Help ", padding=10)
         contact_frame.pack(fill=X, pady=(8, 4))
-        ttk.Label(contact_frame, text="Developer Contact:", style="PanelInfo.TLabel").pack(pady=(0, 2))
-        ttk.Label(contact_frame, text="+91 8960446756", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT, style="Panel.TLabel").pack(pady=(0, 4))
+        ttk.Label(contact_frame, text="Developer Contact:", style="PanelInfo.TLabel").pack(pady=(0, 4))
+        ttk.Label(contact_frame, text="+91 8960446756", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT, style="Panel.TLabel").pack(pady=(0, 6))
         ttk.Button(contact_frame, text="💬 Chat on WhatsApp", bootstyle="success", command=lambda: self.open_browser("https://wa.me/918960446756")).pack(fill=X)
 
-        content = ttk.Frame(self.root_container, padding=12, style="TFrame")
+        content = ttk.Frame(self.root_container, padding=16, style="TFrame")
         content.pack(side=LEFT, fill=BOTH, expand=True)
         
         header_container = ttk.Frame(content, style="TFrame")
-        header_container.pack(fill=X, pady=(0, 10))
+        header_container.pack(fill=X, pady=(0, 15))
         
         left_hdr = ttk.Frame(header_container, style="TFrame")
         left_hdr.pack(side=LEFT, fill=Y)
-        ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font=("Segoe UI", 16, "bold"), foreground=self.SUCCESS_FG).pack(anchor=W)
+        ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font=("Segoe UI", 18, "bold"), foreground=self.SUCCESS_FG).pack(anchor=W)
         
         bot_hdr = ttk.Frame(left_hdr, style="TFrame")
-        bot_hdr.pack(fill=X, pady=(6, 0))
+        bot_hdr.pack(fill=X, pady=(8, 0))
         self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
         self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
         self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
@@ -1501,50 +1474,73 @@ class ServerHub(ttk.Window):
         right_hdr.pack(side=RIGHT, fill=Y)
         
         actions_f = ttk.Frame(right_hdr, style="TFrame")
-        actions_f.pack(side=RIGHT, padx=(10, 0))
-        ttk.Button(actions_f, text="⟳ Refresh", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 4))
+        actions_f.pack(side=RIGHT, padx=(12, 0))
+        ttk.Button(actions_f, text="⟳ Refresh", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 6))
         ttk.Button(actions_f, text="⛶ Fullscreen", bootstyle="outline-info", command=self.toggle_fullscreen).pack(side=TOP, fill=X)
         
         hw_f = ttk.Frame(right_hdr, style="TFrame")
         hw_f.pack(side=RIGHT)
         
-        # Dialed in the perfect sizing to prevent font cut-off while maintaining compact layout
-        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=INFO, subtext="CPU", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"))
-        self.mini_meter_cpu.pack(side=LEFT, padx=3)
-        self.mini_meter_ram = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=WARNING, subtext="RAM", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"))
-        self.mini_meter_ram.pack(side=LEFT, padx=3)
-        self.mini_meter_net = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"), amountformat="{:.1f}")
-        self.mini_meter_net.pack(side=LEFT, padx=3)
+        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=INFO, subtext="CPU", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"))
+        self.mini_meter_cpu.pack(side=LEFT, padx=4)
+        self.mini_meter_ram = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=WARNING, subtext="RAM", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"))
+        self.mini_meter_ram.pack(side=LEFT, padx=4)
+        self.mini_meter_net = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"), amountformat="{:.1f}")
+        self.mini_meter_net.pack(side=LEFT, padx=4)
         self.net_tooltip = ToolTip(self.mini_meter_net, text="Checking connection...")
-        self.mini_meter_api = ttk.Meter(hw_f, metersize=88, padding=6, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=6, meterthickness=8, bootstyle=SUCCESS, subtext="API ms", subtextfont=("Segoe UI", 7), textfont=("Segoe UI", 9, "bold"), amountformat="{:.0f}")
-        self.mini_meter_api.pack(side=LEFT, padx=3)
+        self.mini_meter_api = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=SUCCESS, subtext="API ms", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"), amountformat="{:.0f}")
+        self.mini_meter_api.pack(side=LEFT, padx=4)
         
-        net_info_card = ttk.Frame(right_hdr, style="Card.TFrame", padding=(8, 4))
-        net_info_card.pack(side=RIGHT, padx=(0, 10), fill=Y)
+        net_info_card = ttk.Frame(right_hdr, style="Card.TFrame", padding=(12, 6))
+        net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
         
-        ttk.Label(net_info_card, text="SYSTEM HEALTH", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 2))
+        ttk.Label(net_info_card, text="SYSTEM HEALTH", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 4))
         
-        self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN: WAIT", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
-        self.lbl_hdr_local_ping.grid(row=1, column=0, sticky=W, padx=(0, 8), pady=1)
+        self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN: WAIT", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
+        self.lbl_hdr_local_ping.grid(row=1, column=0, sticky=W, padx=(0, 12), pady=2)
         
-        self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN: WAIT", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
-        self.lbl_hdr_cloud_ping.grid(row=1, column=1, sticky=W, pady=1)
+        self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN: WAIT", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
+        self.lbl_hdr_cloud_ping.grid(row=1, column=1, sticky=W, pady=2)
         
-        self.lbl_hdr_traffic = ttk.Label(net_info_card, text="Traffic: 0 req/s", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground=self.ACCENT)
-        self.lbl_hdr_traffic.grid(row=2, column=0, sticky=W, padx=(0, 8), pady=1)
+        self.lbl_hdr_traffic = ttk.Label(net_info_card, text="Traffic: 0 req/s", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.ACCENT)
+        self.lbl_hdr_traffic.grid(row=2, column=0, sticky=W, padx=(0, 12), pady=2)
         
-        self.lbl_hdr_db_queue = ttk.Label(net_info_card, text="DB Q: 0", font=("Segoe UI", 8, "bold"), style="Panel.TLabel", foreground="#C586C0")
-        self.lbl_hdr_db_queue.grid(row=2, column=1, sticky=W, pady=1)
+        self.lbl_hdr_db_queue = ttk.Label(net_info_card, text="DB Q: 0", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground="#C586C0")
+        self.lbl_hdr_db_queue.grid(row=2, column=1, sticky=W, pady=2)
+
+
+        ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(0, 4))
+        stats_container = ttk.Frame(content, style="TFrame")
+        stats_container.pack(fill=X, expand=False, pady=(0, 16))
+        
+        row1 = ttk.Frame(stats_container, style="TFrame")
+        row1.pack(fill=X, expand=True, pady=(0, 6))
+        self.stat_vars = {}
+        
+        self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
+        self._create_stat_card(row1, "KIOSK REGISTRATIONS", "0", INFO, "kiosk_reg")
+        self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
+        self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
+        
+        row2 = ttk.Frame(stats_container, style="TFrame")
+        row2.pack(fill=X, expand=True, pady=(0, 0))
+        
+        self._create_stat_card(row2, "TODAY CHECK-IN", "0", SUCCESS, "chk_today")
+        self._create_stat_card(row2, "30th Aug Check-ins", "0", LIGHT, "chk_30")
+        self._create_stat_card(row2, "31st Aug Check-ins", "0", LIGHT, "chk_31")
+        self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
+        self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
+
 
         devices_header_row = ttk.Frame(content, style="TFrame")
-        devices_header_row.pack(fill=X, pady=(2, 2))
-        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT)
+        devices_header_row.pack(fill=X, pady=(2, 4))
+        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT)
         self.lbl_devices_header.pack(side=LEFT, anchor=W)
-        self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 8), bootstyle=WARNING)
+        self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 9), bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
 
         devices_frame = ttk.Frame(content, style="Soft.TFrame")
-        devices_frame.pack(fill=X, expand=False, pady=(0, 8)) 
+        devices_frame.pack(fill=X, expand=False, pady=(0, 16)) 
         
         tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
         tree_scroll.pack(side=RIGHT, fill=Y)
@@ -1568,29 +1564,8 @@ class ServerHub(ttk.Window):
         self.tree_devices.tag_configure("fading", foreground=self.ERR_FG)
         self.tree_devices.tag_configure("empty", foreground="#858585")
 
-        ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(0, 2))
-        stats_container = ttk.Frame(content, style="TFrame")
-        stats_container.pack(fill=X, expand=False, pady=(0, 8))
-        
-        row1 = ttk.Frame(stats_container, style="TFrame")
-        row1.pack(fill=X, expand=True, pady=(0, 4))
-        self.stat_vars = {}
-        
-        self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
-        self._create_stat_card(row1, "KIOSK REGISTRATIONS", "0", INFO, "kiosk_reg")
-        self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
-        self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
-        
-        row2 = ttk.Frame(stats_container, style="TFrame")
-        row2.pack(fill=X, expand=True, pady=(0, 0))
-        
-        self._create_stat_card(row2, "TODAY CHECK-IN", "0", SUCCESS, "chk_today")
-        self._create_stat_card(row2, "30th Aug Check-ins", "0", LIGHT, "chk_30")
-        self._create_stat_card(row2, "31st Aug Check-ins", "0", LIGHT, "chk_31")
-        self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
-        self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-        ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font=("Segoe UI", 10, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(2, 2))
+        ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(2, 4))
         
         logs_frame = ttk.Frame(content, style="TFrame")
         logs_frame.pack(fill=BOTH, expand=True, pady=(0, 0))
@@ -1598,7 +1573,7 @@ class ServerHub(ttk.Window):
         self.log_flask = self._create_log_box(logs_frame, "📟 System & API Logs", self.clear_system_logs)
         
         right_logs_wrapper = ttk.Frame(logs_frame, style="TFrame")
-        right_logs_wrapper.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=0)
+        right_logs_wrapper.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=0)
         
         self.log_tabs = ttk.Notebook(right_logs_wrapper, bootstyle="info")
         self.log_tabs.pack(fill=BOTH, expand=True)
@@ -1612,7 +1587,7 @@ class ServerHub(ttk.Window):
         self.log_cf = self._create_log_box(tab_cf, "Tunnel Status", self.clear_cf_logs, side=TOP, padx=0)
         
         footer = ttk.Frame(content, style="TFrame")
-        footer.pack(fill=X, pady=(5, 0))
+        footer.pack(fill=X, pady=(8, 0))
         ttk.Label(
             footer, 
             text="Engineered for Event Resilience\nPowered by EllowDigital", 
@@ -1636,25 +1611,25 @@ class ServerHub(ttk.Window):
             self.destroy()
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(10, 6), height=60)
+        frame = ttk.Frame(parent, style="Card.TFrame", padding=(12, 8), height=70)
         frame.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=0)
         frame.pack_propagate(False)
         ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor=CENTER)
         val_lbl = ttk.Label(frame, text=initial_value, style=f"CardValue.{style}.TLabel")
-        val_lbl.pack(anchor=CENTER, expand=True, pady=(0, 0))
+        val_lbl.pack(anchor=CENTER, expand=True, pady=(2, 0))
         self.stat_vars[var_name] = {"label": val_lbl, "style": f"CardValue.{style}.TLabel"}
 
     def _set_stat(self, var_name, new_value):
         entry = self.stat_vars.get(var_name)
         if not entry or entry["label"].cget("text") == str(new_value): return
         entry["label"].configure(text=str(new_value), style="CardFlash.TLabel")
-        self.after(350, lambda: entry["label"].configure(style=entry["style"]) if entry["label"].winfo_exists() else None)
+        self.after(400, lambda: entry["label"].configure(style=entry["style"]) if entry["label"].winfo_exists() else None)
 
     def update_qr(self, label, data):
         if not label.winfo_exists(): return
         qr = qrcode.QRCode(version=1, box_size=10, border=1)
         qr.add_data(data); qr.make(fit=True)
-        img_tk = ImageTk.PhotoImage(qr.make_image(fill_color="black", back_color="white").resize((80, 80), Image.Resampling.LANCZOS))
+        img_tk = ImageTk.PhotoImage(qr.make_image(fill_color="black", back_color="white").resize((90, 90), Image.Resampling.LANCZOS))
         label.configure(image=img_tk); label.image = img_tk
 
     def toggle_test_mode(self):

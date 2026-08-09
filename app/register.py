@@ -17,13 +17,6 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
 try:
-    import indiapins
-    HAS_INDIAPINS = True
-except ImportError:
-    HAS_INDIAPINS = False
-
-# Custom tone generator for Windows (bypasses default OS theme sounds)
-try:
     if platform.system() == "Windows":
         import winsound
         HAS_WINSOUND = True
@@ -32,19 +25,14 @@ try:
 except ImportError:
     HAS_WINSOUND = False
 
-# Text-to-Speech engine fallback for Mac/Linux
 try:
     import pyttsx3
     HAS_TTS = True
 except ImportError:
     HAS_TTS = False
 
-# Suppress InsecureRequestWarning for adhoc self-signed HTTPS certificates
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# ==============================================================================
-# 24/7 STABILITY: GLOBAL CRASH HANDLER & LOGGING
-# ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
@@ -61,9 +49,6 @@ def global_exception_handler(*args):
 
 tk.Tk.report_callback_exception = global_exception_handler
 
-# ==============================================================================
-# DATA: STATES & MAJOR CITIES (For Autocomplete)
-# ==============================================================================
 INDIAN_STATES = [
     "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat", 
     "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh", 
@@ -87,9 +72,6 @@ POPULAR_CITIES = [
     "Belgaum", "Ambattur", "Tirunelveli", "Malegaon", "Gaya", "Jalgaon", "Udaipur", "Maheshtala"
 ]
 
-# ==============================================================================
-# CONFIGURATION & BACKUP MANAGER
-# ==============================================================================
 CONFIG_FILE = os.path.join(CONFIG_DIR, 'register.json')
 BACKUP_FILE = os.path.join(LOG_DIR, 'unsynced_registrations.json')
 
@@ -107,7 +89,6 @@ def save_config(url, name):
         json.dump({"server_url": url, "device_name": name}, f, indent=4)
 
 class LocalBackupManager:
-    """Disaster recovery. Ensures zero data loss if power fails during a network outage."""
     def __init__(self):
         self.lock = threading.Lock()
 
@@ -133,9 +114,6 @@ class LocalBackupManager:
 
 backup_mgr = LocalBackupManager()
 
-# ==============================================================================
-# CUSTOM UI WIDGETS
-# ==============================================================================
 class RobustScrollFrame(ttk.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
@@ -186,10 +164,6 @@ class AutocompleteCombobox(ttk.Combobox):
         matching_items = [item for item in self._completion_list if item.lower().startswith(typed_text)]
         self.configure(values=matching_items)
 
-
-# ==============================================================================
-# MAIN KIOSK APPLICATION
-# ==============================================================================
 class OfflineKioskApp(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Desktop Registration Kiosk")
@@ -205,7 +179,6 @@ class OfflineKioskApp(ttk.Window):
         self.device_name = self.config["device_name"]
         self.sound_enabled = True
         
-        # Isolated Network Pools to prevent UI freezing
         self.api_session = requests.Session()
         self.ping_session = requests.Session()
         self.sync_session = requests.Session()
@@ -221,17 +194,15 @@ class OfflineKioskApp(ttk.Window):
         self.PIN_RE = re.compile(r"^\d{6}$")
         self.EMAIL_RE = re.compile(r"^[\w.\-+]+@[\w.\-]+\.\w{2,}$")
         self._mobile_check_timer = None
+        self._pincode_check_timer = None
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         
         self.build_ui()
         self.setup_reactive_logic()
         self.bind_shortcuts()
-        
-        if not HAS_INDIAPINS:
-            messagebox.showwarning("Missing Library", "The 'indiapins' library is not installed. Auto-filling City and State by Pincode will be disabled. Run 'pip install indiapins' to enable it.")
-        
         self.process_gui_queue()
+        
         threading.Thread(target=self.network_ping_loop, daemon=True).start()
         threading.Thread(target=self.background_sync_loop, daemon=True).start()
 
@@ -251,7 +222,6 @@ class OfflineKioskApp(ttk.Window):
         except Exception: pass
         self.destroy()
 
-    # --- UI BUILDING ---
     def build_ui(self):
         header_frame = ttk.Frame(self, padding=(15, 15, 15, 5))
         header_frame.pack(fill=X)
@@ -288,7 +258,6 @@ class OfflineKioskApp(ttk.Window):
         self.inputs = {}
         self.errors = {}
 
-        # --- SECTION: IDENTITY ---
         id_card = ttk.Labelframe(container, text=" 👤 Identity Details ", padding=15)
         id_card.pack(fill=X, pady=(10, 10), padx=5)
         
@@ -301,7 +270,6 @@ class OfflineKioskApp(ttk.Window):
         
         self.create_input(id_card, "email", "Email Address (Optional)")
 
-        # --- SECTION: PROFESSIONAL ---
         prof_card = ttk.Labelframe(container, text=" 💼 Professional Details ", padding=15)
         prof_card.pack(fill=X, pady=(10, 10), padx=5)
         
@@ -320,7 +288,6 @@ class OfflineKioskApp(ttk.Window):
         self.create_dropdown(row3, "business_category", "Category", cat_opts, is_half=True)
         self.create_input(row3, "other_category", "Specify Other", is_half=True, state=DISABLED)
 
-        # --- SECTION: LOCATION ---
         loc_card = ttk.Labelframe(container, text=" 📍 Location Details ", padding=15)
         loc_card.pack(fill=X, pady=(10, 10), padx=5)
         
@@ -332,7 +299,6 @@ class OfflineKioskApp(ttk.Window):
         self.create_autocomplete(row4, "city", "City *", POPULAR_CITIES, width_ratio=0.33)
         self.create_autocomplete(row4, "state", "State *", INDIAN_STATES, width_ratio=0.33)
 
-        # --- SECTION: ATTENDANCE DAYS ---
         day_card = ttk.Labelframe(container, text=" 📅 Attendance Days * ", padding=15)
         day_card.pack(fill=X, pady=(10, 15), padx=5)
         
@@ -350,7 +316,6 @@ class OfflineKioskApp(ttk.Window):
         self.errors['days'] = ttk.Label(day_card, text="", foreground="#ff4444", font="-size 8")
         self.errors['days'].pack(anchor=W, pady=(5, 0))
 
-        # --- ACTION ROW (CLEAR & TOGGLE) ---
         action_frame = ttk.Frame(container)
         action_frame.pack(fill=X, pady=(10, 5), padx=5)
 
@@ -361,13 +326,11 @@ class OfflineKioskApp(ttk.Window):
         btn_clear = ttk.Button(action_frame, text="🗑️ Clear Form (Alt+C)", bootstyle="outline-secondary", command=self.reset_form)
         btn_clear.pack(side=RIGHT)
 
-        # --- SUBMIT BUTTON ---
         self.btn_submit = ttk.Button(container, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS, padding=12, command=self.submit_form)
         self.btn_submit.pack(fill=X, pady=(5, 20), padx=5)
         
         self.inputs['full_name'].focus_set()
 
-    # --- UI COMPONENT BUILDERS ---
     def create_input(self, parent, name, label_text, is_half=False, width_ratio=1.0, state=NORMAL):
         frame = ttk.Frame(parent)
         if is_half: frame.pack(side=LEFT, fill=X, expand=True, padx=5)
@@ -416,7 +379,6 @@ class OfflineKioskApp(ttk.Window):
         err_lbl.pack(anchor=W)
         self.errors[name] = err_lbl
 
-    # --- ADVANCED HARDWARE SOUNDS & TTS ---
     def toggle_sound(self):
         self.sound_enabled = not self.sound_enabled
         if self.sound_enabled:
@@ -430,7 +392,6 @@ class OfflineKioskApp(ttk.Window):
             return
             
         def _play():
-            # 1. Play Tone Chimes
             if HAS_WINSOUND:
                 try:
                     if status == "SUCCESS":
@@ -449,7 +410,6 @@ class OfflineKioskApp(ttk.Window):
                     time.sleep(0.2)
                     self.bell()
                     
-            # 2. Text-to-Speech Voice Engine (Female)
             if speak_text:
                 try:
                     if platform.system() == "Windows":
@@ -479,7 +439,6 @@ class OfflineKioskApp(ttk.Window):
                     
         threading.Thread(target=_play, daemon=True).start()
 
-    # --- LIVE VALIDATION & REACTIVE LOGIC ---
     def setup_reactive_logic(self):
         self.vars['attendee_type'].trace_add('write', self.on_type_change)
         self.vars['business_category'].trace_add('write', self.on_category_change)
@@ -560,17 +519,31 @@ class OfflineKioskApp(ttk.Window):
         if val != clean_val:
             self.vars['pincode'].set(clean_val)
             
-        if HAS_INDIAPINS and len(clean_val) == 6:
-            try:
-                details = indiapins.matching(clean_val)
-                if details:
-                    first_match = details[0]
-                    if state := first_match.get('State'): self.vars['state'].set(state.title())
-                    if district := first_match.get('District'): self.vars['city'].set(district.title())
-                    self.clear_single_error('pincode')
-            except Exception: pass 
+        if self._pincode_check_timer:
+            self.after_cancel(self._pincode_check_timer)
+            
+        if len(clean_val) == 6:
+            self._pincode_check_timer = self.after(400, lambda: threading.Thread(target=self._check_pincode, args=(clean_val,), daemon=True).start())
+        else:
+            self.clear_single_error('pincode')
 
-    # --- SETTINGS MODAL ---
+    def _check_pincode(self, pincode):
+        try:
+            res = self.api_session.get(f"{self.server_url}/api/pincode/{pincode}", timeout=3, verify=False)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get('status') == 'success':
+                    state = data.get('state', '')
+                    district = data.get('district', '')
+                    self.gui_queue.put(lambda s=state, d=district: self._apply_pincode_data(s, d))
+        except Exception as e:
+            logging.error(f"Pincode API lookup failed: {e}")
+
+    def _apply_pincode_data(self, state, district):
+        if state: self.vars['state'].set(state.title())
+        if district: self.vars['city'].set(district.title())
+        self.clear_single_error('pincode')
+
     def open_settings(self):
         modal = tk.Toplevel(self)
         modal.title("Kiosk Configuration")
@@ -601,7 +574,6 @@ class OfflineKioskApp(ttk.Window):
         modal.bind('<Return>', save_and_close)
         modal.bind('<Escape>', lambda e: modal.destroy())
 
-    # --- BACKGROUND NETWORK PING & SYNC ---
     def network_ping_loop(self):
         while self.is_pinging:
             start_time = time.time()
@@ -644,22 +616,24 @@ class OfflineKioskApp(ttk.Window):
 
     def process_gui_queue(self):
         if not self.winfo_exists(): return
-        for _ in range(50):
+        start_time = time.perf_counter()
+        while time.perf_counter() - start_time < 0.015:
             try:
                 task = self.gui_queue.get_nowait()
-                task()
             except queue.Empty:
                 break
-        self.after(50, self.process_gui_queue)
+            try:
+                task()
+            except Exception as e:
+                logging.error(f"gui_queue task execution error: {e}")
+        self.after(25, self.process_gui_queue)
 
-    # --- ANIMATED SUBMIT LOADER ---
     def animate_submit_button(self, count=0):
         if self.is_submitting and self.winfo_exists():
             dots = "." * ((count % 3) + 1)
             self.btn_submit.configure(text=f"⏳ Registering{dots}")
             self.after(400, lambda: self.animate_submit_button(count + 1))
 
-    # --- FORM VALIDATION ---
     def set_error(self, field, msg):
         self.inputs[field].configure(bootstyle=DANGER)
         self.errors[field].configure(text=f"⚠ {msg}", foreground="#ff4444")
@@ -727,7 +701,6 @@ class OfflineKioskApp(ttk.Window):
 
         return ok
 
-    # --- OFFLINE-RESILIENT SUBMISSION LOGIC ---
     def submit_form(self, event=None):
         if self.is_submitting: return
         if not self.validate_form():
@@ -796,7 +769,6 @@ class OfflineKioskApp(ttk.Window):
         messagebox.showerror("Registration Failed", message)
         self.btn_submit.configure(state=NORMAL, text="Register Attendee (Ctrl+S)", bootstyle=SUCCESS)
 
-    # --- SUCCESS MODAL ---
     def show_success_modal(self, aid, is_duplicate=False):
         if is_duplicate:
             self.play_sound("DUPLICATE", "Warning. Attendee already registered.")
