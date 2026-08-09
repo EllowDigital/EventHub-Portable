@@ -684,22 +684,22 @@
 
     #result-card {
       position: fixed;
-      bottom: -100px;
+      bottom: -150px;
       left: 50%;
       transform: translateX(-50%);
       width: 90%;
-      max-width: 450px;
-      padding: 22px;
+      max-width: 500px;
+      padding: 30px 20px;
       border-radius: var(--radius-md);
       text-align: center;
-      font-weight: 800;
-      font-size: 1.15rem;
+      font-weight: 900;
+      font-size: 1.35rem;
       z-index: 1000;
-      transition: bottom 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8);
+      transition: bottom 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
       box-sizing: border-box;
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       letter-spacing: 0.5px;
     }
 
@@ -710,25 +710,25 @@
     .res-success {
       background-color: rgba(0, 230, 118, 0.95);
       color: #000;
-      border: 2px solid #00c853;
+      border: 3px solid #00c853;
     }
 
     .res-duplicate {
       background-color: rgba(255, 187, 51, 0.95);
       color: #000;
-      border: 2px solid #ff9100;
+      border: 3px solid #ff9100;
     }
 
     .res-error {
       background-color: rgba(255, 68, 68, 0.95);
       color: #fff;
-      border: 2px solid #d50000;
+      border: 3px solid #d50000;
     }
 
     .res-offline {
       background-color: rgba(255, 145, 0, 0.95);
       color: #000;
-      border: 2px solid #e65100;
+      border: 3px solid #e65100;
     }
 
     #device-modal {
@@ -859,7 +859,6 @@
           <div></div>
         </div>
 
-        <!-- Permission Fallback Overlay -->
         <div class="permission-overlay" id="permission-overlay">
           <div style="font-size: 3rem; margin-bottom: 10px;">📸</div>
           <h4>Lens Access Required</h4>
@@ -923,7 +922,6 @@
   </div>
 
   <script>
-    // --- XSS PROTECTION ---
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
       return String(str).replace(/[&<>'"]/g, tag => ({
@@ -931,11 +929,20 @@
       }[tag] || tag));
     }
 
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let audioCtx = null;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume().catch(() => { });
+      }
+    }
 
     function playAudioTone(type) {
       try {
-        if (audioCtx.state === "suspended") audioCtx.resume();
+        initAudio();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain);
@@ -965,7 +972,7 @@
           osc.start(now);
           osc.stop(now + 0.15);
         }
-      } catch (e) { console.error("Audio block", e); }
+      } catch (e) { }
     }
 
     let html5QrCode = null;
@@ -978,12 +985,12 @@
     let maxZoom = 3;
     let autoZoomInterval = null;
     let isSyncing = false;
+    let isFetching = false;
     let camerasList = [];
 
-    // --- HARDWARE DEBOUNCE TRACKERS ---
     let lastScannedId = "";
     let lastScanTime = 0;
-    const DEBOUNCE_MS = 4000; // 4 second lockout for the exact same QR code
+    const DEBOUNCE_MS = 4000;
 
     const scanConfig = {
       fps: 30,
@@ -1203,7 +1210,6 @@
       if (type === "phone" && val.length !== 10)
         return showToast("Phone must be exactly 10 digits", "ERROR");
 
-      // Prevent double tap
       const now = Date.now();
       if (val === lastScannedId && (now - lastScanTime < 1500)) {
         return;
@@ -1216,7 +1222,6 @@
       document.getElementById("manual-phone").value = "";
     }
 
-    // --- SECURE DEVICE REGISTRY (Fixes Overwrite Bug) ---
     function getDeviceId() {
       let id = localStorage.getItem("hub_device_id");
       if (!id) {
@@ -1240,7 +1245,7 @@
         localStorage.setItem("hub_device_name", val);
         document.getElementById("display-device-name").textContent = val;
         document.getElementById("device-modal").style.display = "none";
-        syncServerStatus(); // Ping server instantly to register new name
+        syncServerStatus();
       }
     }
 
@@ -1297,8 +1302,9 @@
       }
     }
 
-    // --- UPGRADED NETWORK PING (Fixes Overwrite Bug) ---
     async function syncServerStatus() {
+      if (isFetching) return;
+
       const dot = document.getElementById("net-dot"),
         text = document.getElementById("net-text"),
         testBanner = document.getElementById("test-mode-banner"),
@@ -1311,12 +1317,13 @@
         return;
       }
 
+      isFetching = true;
       const start = performance.now();
+
       try {
         const c = new AbortController();
         const id = setTimeout(() => c.abort(), 5000);
 
-        // Pass both ID and Name to ensure Hub tracks this specific device perfectly
         const response = await fetch(
           `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
           { cache: "no-store", signal: c.signal }
@@ -1344,6 +1351,8 @@
       } catch (e) {
         dot.className = "net-dot net-poor";
         text.textContent = "Connecting...";
+      } finally {
+        isFetching = false;
       }
     }
 
@@ -1356,7 +1365,7 @@
         attendee_id: identifier,
         search_type: type,
         device_name: getDeviceName(),
-        device_id: getDeviceId(), // Added Device ID
+        device_id: getDeviceId(),
         offline_scan_time: new Date().toISOString(),
       };
 
@@ -1369,7 +1378,7 @@
         .then((res) => {
           let sType = "ERROR";
           if (res.status === 200) sType = "SUCCESS";
-          else if (res.body.message && res.body.message.includes("Already checked in")) sType = "DUPLICATE";
+          else if (res.body.message && res.body.message.includes("Already")) sType = "DUPLICATE";
           showToast(res.body.message, sType);
         })
         .catch(() => {
@@ -1396,7 +1405,7 @@
         card.classList.remove("show");
         isProcessing = false;
         resetAutoZoomTimer();
-      }, 2500);
+      }, 3500);
     }
 
     function onScanSuccess(decoded) {
@@ -1408,7 +1417,6 @@
         if (typeof p === "object" && p !== null) id = p.attendeeId || p.id || id;
       } catch (e) { }
 
-      // HARDWARE DEBOUNCE: Prevent rapid-fire duplicate requests to the server
       const now = Date.now();
       if (id === lastScannedId && (now - lastScanTime < DEBOUNCE_MS)) {
         return;
@@ -1418,6 +1426,8 @@
 
       processCheckin(id, "id");
     }
+
+    document.addEventListener("click", initAudio, { once: true });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") {
