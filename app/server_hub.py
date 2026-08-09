@@ -883,6 +883,7 @@ class ServerHub(ttk.Window):
         self.log_buffer_cf = []
         self.gui_queue = queue.Queue()
         self._meter_cache = {}
+        self._context_device_id = None
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         self.build_ui()
@@ -1087,18 +1088,21 @@ class ServerHub(ttk.Window):
 
     def _show_device_menu(self, event):
         iid = self.tree_devices.identify_row(event.y)
-        if iid:
+        if iid and iid != "empty_msg":
             self.tree_devices.selection_set(iid)
+            self._context_device_id = iid
             self.device_menu.post(event.x_root, event.y_root)
 
     def _prompt_rename_device(self):
-        selected = self.tree_devices.selection()
-        if not selected: return
-        d_id = selected[0]
+        d_id = getattr(self, '_context_device_id', None)
+        if not d_id or d_id == "empty_msg": return
+        
         with device_lock:
             if d_id not in ACTIVE_DEVICES: return
             old_name = ACTIVE_DEVICES[d_id]['name']
+            
         new_name = simpledialog.askstring("Rename Device", f"Enter new name for '{old_name}':", initialvalue=old_name, parent=self)
+        
         if new_name and new_name.strip() and new_name.strip() != old_name:
             with device_lock:
                 CUSTOM_DEVICE_NAMES[d_id] = new_name.strip()
@@ -1106,17 +1110,18 @@ class ServerHub(ttk.Window):
             try:
                 with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
             except Exception: pass
-            self.refresh_stats()
             self._append_log('network', f"[INFO] Device '{old_name}' renamed to '{new_name.strip()}'.")
 
     def _prompt_send_message(self):
-        selected = self.tree_devices.selection()
-        if not selected: return
-        d_id = selected[0]
+        d_id = getattr(self, '_context_device_id', None)
+        if not d_id or d_id == "empty_msg": return
+        
         with device_lock:
             if d_id not in ACTIVE_DEVICES: return
             d_name = ACTIVE_DEVICES[d_id]['name']
+            
         msg = simpledialog.askstring("Send Message", f"Enter message to push to '{d_name}':", parent=self)
+        
         if msg and msg.strip():
             with device_lock: DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
@@ -1467,9 +1472,14 @@ class ServerHub(ttk.Window):
 
             self._set_stat("online_scanners", len(active_ids))
             if hasattr(self, 'lbl_devices_header'): self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
-            for row in self.tree_devices.get_children(): self.tree_devices.delete(row)
+            
+            existing_iids = set(self.tree_devices.get_children())
                 
             if active_ids:
+                if "empty_msg" in existing_iids:
+                    self.tree_devices.delete("empty_msg")
+                    existing_iids.remove("empty_msg")
+                
                 for d_id in sorted(active_ids, key=lambda i: device_info[i]['name'].lower()):
                     info = device_info[d_id]
                     sec_ago = max(0, int(current_time - info['last_seen']))
@@ -1477,9 +1487,21 @@ class ServerHub(ttk.Window):
                     batt = info.get('battery', 'N/A')
                     temp = info.get('temp', 'N/A')
                     telemetry_str = f"🔋 {batt} | 🌡️ {temp}"
-                    self.tree_devices.insert("", END, iid=d_id, values=(info['name'], info['ip'], telemetry_str, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
+                    
+                    values = (info['name'], info['ip'], telemetry_str, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig)
+                    if d_id in existing_iids:
+                        self.tree_devices.item(d_id, values=values, tags=(tag,))
+                        existing_iids.remove(d_id)
+                    else:
+                        self.tree_devices.insert("", END, iid=d_id, values=values, tags=(tag,))
             else: 
-                self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", "", ""), tags=("empty",))
+                if not existing_iids or "empty_msg" not in existing_iids:
+                    for row in existing_iids: self.tree_devices.delete(row)
+                    self.tree_devices.insert("", END, iid="empty_msg", values=("No devices connected yet — awaiting heartbeat...", "", "", "", ""), tags=("empty",))
+                existing_iids.discard("empty_msg")
+                
+            for stale_id in existing_iids:
+                self.tree_devices.delete(stale_id)
 
             if not self._db_checked:
                 self.lbl_stat_mysql.configure(text="● MYSQL: CHECKING", bootstyle=INFO); self.lbl_stat_sqlite.configure(text="● SQLITE: CHECKING", bootstyle=INFO)
