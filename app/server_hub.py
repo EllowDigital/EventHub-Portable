@@ -51,6 +51,12 @@ try:
 except ImportError:
     CRYPTOGRAPHY_AVAILABLE = False
 
+try:
+    import indiapins
+    INDIAPINS_AVAILABLE = True
+except ImportError:
+    INDIAPINS_AVAILABLE = False
+
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 
@@ -171,6 +177,11 @@ DB_JOB_QUEUE_MAXSIZE = 50000
 DB_JOB_TIMEOUT = 10               
 
 STATS_REFRESH_INTERVAL_SEC = 300  
+
+# Single source of truth for event days -> display label. Was previously copy-pasted
+# in three places (checkin gating, registration gating, stats mapping); a future date
+# change only needs to happen here now instead of risking the copies drifting apart.
+EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
 SLOW_REQUEST_THRESHOLD_MS = 250  
 MAX_LOG_LINES = 1000             
 
@@ -630,7 +641,7 @@ def _handle_checkin_job(payload):
         if not isinstance(history, dict): history = {}
 
         current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        date_map = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
+        date_map = EVENT_DATE_LABELS
 
         if current_date_str not in date_map: 
             return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
@@ -718,8 +729,8 @@ def _handle_register_job(payload):
         today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         
         checkin_history_dict = {}
-        if today_date in ["2026-08-30", "2026-08-31", "2026-09-01"]:
-            key = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}[today_date]
+        if today_date in EVENT_DATE_LABELS:
+            key = EVENT_DATE_LABELS[today_date]
             checkin_history_dict[key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_label, "date_code": today_date, "display_date": key}
 
         new_kiosk_reg = OfflineKioskAttendee(
@@ -904,9 +915,22 @@ def process_checkin():
 @app.route('/api/register', methods=['POST'])
 def process_registration():
     data = request.json or {}
+    mobile_number = str(data.get('mobile', '')).strip()
+    full_name = str(data.get('full_name', '')).strip()
+
+    # Fail fast on malformed input rather than letting it reach the DB layer:
+    # OfflineKioskAttendee has no length constraint on mobile like Attendee does,
+    # so an empty/short mobile would insert cleanly, then collide (unique constraint)
+    # with the *next* attendee who also has no mobile, wrongly telling them
+    # "already registered" with a stranger's ID.
+    if not full_name:
+        return jsonify({"status": "error", "message": "Full name is required."}), 400
+    if not mobile_number or len(mobile_number) < 10:
+        return jsonify({"status": "error", "message": "A valid 10-digit mobile number is required."}), 400
+
     payload = {
         "data": data, 
-        "mobile_number": data.get('mobile', '').strip(), 
+        "mobile_number": mobile_number, 
         "device_label": data.get('device_name', f"Kiosk ({request.user_agent.platform or 'Unknown'} - {request.remote_addr})"), 
         "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
     }
@@ -932,6 +956,28 @@ def check_mobile():
         try: session.close()
         except Exception: pass
 
+@app.route('/api/pincode/<code>', methods=['GET'])
+def lookup_pincode(code):
+    # Local, fully-offline pincode -> district/state lookup. register.py already does this
+    # via the indiapins package (bundled dataset, no network needed); this exposes the same
+    # capability to the browser kiosks, which previously called the external
+    # api.postalpincode.in over the internet -- a dependency this "offline" system
+    # shouldn't have needed in the first place.
+    code = (code or '').strip()
+    if not code.isdigit() or len(code) != 6:
+        return jsonify({"status": "error", "message": "Enter a valid 6-digit pincode."}), 400
+    if not INDIAPINS_AVAILABLE:
+        return jsonify({"status": "unavailable", "message": "Pincode lookup not installed on this hub."}), 503
+    try:
+        matches = indiapins.matching(code)
+        if not matches:
+            return jsonify({"status": "not_found"}), 200
+        first = matches[0]
+        return jsonify({"status": "success", "district": first.get("District", ""), "state": first.get("State", "")}), 200
+    except Exception as e:
+        logging.error(f"Pincode lookup error for {code}: {e}")
+        return jsonify({"status": "error", "message": "Lookup failed."}), 500
+
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
     limit = request.args.get('limit', 500, type=int)
@@ -944,11 +990,14 @@ def get_all_attendees():
     if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
-        main_att = session.query(Attendee).offset(offset).limit(limit).all()
+        # Explicit ORDER BY is required for stable pagination: without it, LIMIT/OFFSET
+        # results are not guaranteed consistent between calls once rows are being written
+        # concurrently, which lets pages skip or repeat records.
+        main_att = session.query(Attendee).order_by(Attendee.created_at.asc(), Attendee.id.asc()).offset(offset).limit(limit).all()
         kiosk_att = []
         rem_limit = limit - len(main_att)
         if rem_limit > 0:
-            kiosk_att = session.query(OfflineKioskAttendee).offset(offset).limit(rem_limit).all()
+            kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(offset).limit(rem_limit).all()
             
         results = []
         for att in (main_att + kiosk_att):
@@ -1216,9 +1265,13 @@ class ServerHub(ttk.Window):
             while time.perf_counter() - start_time < 0.015:  # Maximum 15 milliseconds allowed per tick
                 try: 
                     task = self.gui_queue.get_nowait()
-                    task()
                 except queue.Empty: 
                     break
+                try:
+                    task()
+                except Exception as e:
+                    # Isolated per-task: one bad GUI update must not skip the rest of this batch.
+                    logging.error(f"gui_queue task execution error: {e}")
         except Exception as e:
             logging.error(f"process_gui_queue outer error: {e}")
         finally:
@@ -1418,7 +1471,7 @@ class ServerHub(ttk.Window):
         self.chk_test = ttk.Checkbutton(chk_wrap, text="Testing Mode OFF", variable=self.test_mode, bootstyle="warning-round-toggle", style="Panel.TCheckbutton", command=self.toggle_test_mode)
         self.chk_test.pack()
         
-        self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
+        self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=list(EVENT_DATE_LABELS.keys()), state=DISABLED)
         self.cb_test_date.pack(fill=X, pady=(2, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
 
