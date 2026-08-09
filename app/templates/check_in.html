@@ -851,21 +851,26 @@
       <select id="camera-select" class="camera-selector" style="display: none;" onchange="onCameraChange()">
         <option value="">Detecting Lenses...</option>
       </select>
+
       <div class="scanner-box" id="scanner-box">
         <div id="reader"></div>
+
         <div class="viewfinder-corners" id="viewfinder-corners">
           <div></div>
         </div>
+
         <div class="permission-overlay" id="permission-overlay">
           <div style="font-size: 3rem; margin-bottom: 10px;">📸</div>
           <h4>Lens Access Required</h4>
           <p>Please grant camera permission to scan attendee QR passes instantly.</p>
           <button class="btn-permission" onclick="requestCameraPermissionNatively()">Grant Access</button>
         </div>
+
         <div class="scan-overlay" id="scan-overlay">
           <div class="scan-laser"></div>
         </div>
       </div>
+
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
           <span>Lens Zoom</span>
@@ -880,7 +885,10 @@
           <button class="zoom-btn" onclick="adjustZoom(0.1)">+</button>
         </div>
       </div>
-      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">⏸ Pause Scanner</button>
+
+      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
+        ⏸ Pause Scanner
+      </button>
     </div>
 
     <div class="manual-wrapper" id="manual-view">
@@ -912,7 +920,6 @@
     </div>
   </div>
 
-  <!-- OPERATOR MESSAGE MODAL -->
   <div id="operator-msg-modal" class="permission-overlay" style="z-index: 99999;">
     <div class="modal-content"
       style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%;">
@@ -934,6 +941,7 @@
     }
 
     let audioCtx = null;
+
     function initAudio() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
@@ -971,12 +979,15 @@
     let isCameraActive = false;
     let isProcessing = false;
     let isCameraTransitioning = false;
+
     let currentTrack = null;
     let nativeZoomSupported = false;
     let minZoom = 1; let maxZoom = 3; let zoomTarget = 1.0;
     let zoomTimeout = null; let autoZoomInterval = null;
+
     let isSyncing = false; let isFetching = false;
     let camerasList = [];
+
     let lastScannedId = ""; let lastScanTime = 0; const DEBOUNCE_MS = 4000;
 
     const scanConfig = { fps: 30, qrbox: { width: 250, height: 250 }, formatsToSupport: [0], aspectRatio: 1.0, useBarCodeDetectorIfSupported: true };
@@ -1022,7 +1033,9 @@
         const cameraId = select.value;
         btn.innerHTML = "⏳ Initializing Lens..."; btn.classList.remove("paused");
         document.getElementById("permission-overlay").style.display = "none";
+
         let cameraTarget = cameraId ? cameraId : { facingMode: "environment" };
+
         try {
           await html5QrCode.start(cameraTarget, scanConfig, onScanSuccess);
           isCameraActive = true;
@@ -1056,6 +1069,7 @@
         zoomTarget = minZoom;
         const slider = document.getElementById("zoom-slider");
         slider.min = minZoom; slider.max = maxZoom; slider.step = (maxZoom - minZoom) / 20; slider.value = minZoom;
+
         slider.replaceWith(slider.cloneNode(true));
         const newSlider = document.getElementById("zoom-slider");
         newSlider.addEventListener("input", (e) => { adjustZoom(parseFloat(e.target.value) - zoomTarget); });
@@ -1231,7 +1245,11 @@
 
     async function syncServerStatus() {
       if (isFetching) return;
-      const dot = document.getElementById("net-dot"), text = document.getElementById("net-text"), testBanner = document.getElementById("test-mode-banner"), testDate = document.getElementById("test-mode-date");
+
+      const dot = document.getElementById("net-dot"),
+        text = document.getElementById("net-text"),
+        testBanner = document.getElementById("test-mode-banner"),
+        testDate = document.getElementById("test-mode-date");
 
       if (!navigator.onLine) {
         dot.className = "net-dot net-offline"; text.textContent = "Offline"; testBanner.style.display = "none"; return;
@@ -1240,11 +1258,11 @@
       isFetching = true;
       const start = performance.now();
 
-      let battParam = "&batt=N/A&charge=false";
+      let battParam = "&battery=N/A&temp=N/A";
       if (navigator.getBattery) {
         try {
           const b = await navigator.getBattery();
-          battParam = `&batt=${Math.round(b.level * 100)}&charge=${b.charging}`;
+          battParam = `&battery=${encodeURIComponent(Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : ''))}&temp=N/A`;
         } catch (e) { }
       }
 
@@ -1270,9 +1288,9 @@
             if (data.test_mode) { testBanner.style.display = "block"; testDate.textContent = escapeHTML(data.test_date) || "Unknown"; }
             else { testBanner.style.display = "none"; }
 
-            if (data.messages && data.messages.length > 0) {
+            if (data.message) {
               const msgBox = document.getElementById("operator-msg-modal");
-              document.getElementById("operator-msg-text").innerText = data.messages.join("\n\n");
+              document.getElementById("operator-msg-text").innerText = data.message;
               msgBox.style.display = "flex";
               playAudioTone("ALERT");
             }
@@ -1318,9 +1336,7 @@
       else card.className = "res-error show";
 
       playAudioTone(type); clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => {
-        card.classList.remove("show"); isProcessing = false; resetAutoZoomTimer();
-      }, 3500);
+      toastTimeout = setTimeout(() => { card.classList.remove("show"); isProcessing = false; resetAutoZoomTimer(); }, 3500);
     }
 
     function onScanSuccess(decoded) {
