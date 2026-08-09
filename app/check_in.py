@@ -9,6 +9,7 @@ import subprocess
 import time
 import queue
 import collections
+import uuid
 import requests
 import urllib3
 from datetime import datetime
@@ -23,6 +24,12 @@ from PIL import Image, ImageTk, ImageOps
 # ENVIRONMENT SETUP & FALLBACKS
 # ------------------------------------------------------------------------------
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 HAS_WINSOUND = False
 if platform.system() == "Windows":
@@ -80,15 +87,23 @@ class ConfigManager:
         self.load()
 
     def load(self):
+        default_id = "display_" + uuid.uuid4().hex[:12]
         if os.path.exists(CONFIG_PATH):
             try:
                 with open(CONFIG_PATH, 'r') as f:
                     content = f.read().strip()
                     if content:
-                        self.config.update(json.loads(content))
+                        data = json.loads(content)
+                        if "device_id" not in data:
+                            data["device_id"] = default_id
+                        self.config.update(data)
+                        self.save()
+                        return
             except Exception as e:
                 logging.error(f"Config load error: {e}")
-                self.save()
+        
+        self.config["device_id"] = default_id
+        self.save()
 
     def save(self):
         os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
@@ -134,6 +149,9 @@ class NotificationEngine(threading.Thread):
                         winsound.Beep(1000, 100) 
                         time.sleep(0.05)
                         winsound.Beep(1000, 100)
+                    elif status == "ALERT":
+                        winsound.Beep(600, 200)
+                        winsound.Beep(800, 500)
                     else:
                         winsound.Beep(400, 150)
                         winsound.Beep(300, 300)
@@ -141,12 +159,12 @@ class NotificationEngine(threading.Thread):
                     print('\a') 
             else:
                 print('\a')
-                if status != "SUCCESS":
+                if status not in ["SUCCESS", "ALERT"]:
                     time.sleep(0.2)
                     print('\a')
 
             # 2. Speak
-            speak_text = "Access Denied." if status not in ["SUCCESS", "DUPLICATE"] else ""
+            speak_text = "Access Denied." if status not in ["SUCCESS", "DUPLICATE", "ALERT"] else ""
             if speak_text:
                 if platform.system() == "Windows":
                     safe_text = speak_text.replace("'", "")
@@ -257,6 +275,7 @@ class GateDisplay(ttk.Window):
         self.gui_queue = queue.Queue()
         self.scan_queue = queue.Queue()  
         self.is_polling = False
+        self._showing_msg = False
         
         self.notifier = NotificationEngine()
         self.notifier.start()
@@ -658,6 +677,79 @@ class GateDisplay(ttk.Window):
             old = self.recent_scans.pop()
             old.destroy()
 
+    def show_hub_message(self, msg):
+        if getattr(self, '_showing_msg', False): return
+        self._showing_msg = True
+        self.notifier.queue.put({"status": "ALERT", "message": ""})
+        
+        modal = tk.Toplevel(self)
+        modal.title("Hub Alert")
+        modal.geometry("450x300")
+        modal.resizable(False, False)
+        modal.transient(self)
+        modal.grab_set()
+        
+        x = self.winfo_x() + (self.winfo_width() // 2) - 225
+        y = self.winfo_y() + (self.winfo_height() // 2) - 150
+        modal.geometry(f"+{x}+{y}")
+        
+        frame = ttk.Frame(modal, borderwidth=3, relief="solid", bootstyle="warning")
+        frame.pack(fill=BOTH, expand=True)
+        
+        ttk.Label(frame, text="📨 Hub Message", font="-size 18 -weight bold").pack(pady=(20, 10))
+        
+        msg_lbl = ttk.Label(frame, text=msg, font="-size 12 -weight bold", wraplength=400, justify=CENTER)
+        msg_lbl.pack(expand=True, fill=BOTH, padx=20, pady=10)
+        
+        def close_msg(event=None):
+            self._showing_msg = False
+            modal.destroy()
+            
+        btn = ttk.Button(frame, text="Acknowledge Message", bootstyle="dark", padding=10, command=close_msg)
+        btn.pack(pady=20, fill=X, padx=40)
+        
+        modal.bind('<Return>', close_msg)
+        modal.bind('<Escape>', close_msg)
+
+    def get_system_telemetry(self):
+        battery_str = "N/A"
+        temp_str = "N/A"
+
+        if HAS_PSUTIL:
+            try:
+                batt = psutil.sensors_battery()
+                if batt is not None:
+                    battery_str = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
+                else:
+                    battery_str = "AC Power (Desktop)"
+            except Exception:
+                pass
+
+            try:
+                if hasattr(psutil, 'sensors_temperatures'):
+                    temps = psutil.sensors_temperatures()
+                    if temps:
+                        for k, v in temps.items():
+                            if v and len(v) > 0:
+                                temp_str = f"{int(v[0].current)}°C"
+                                break
+            except Exception:
+                pass
+
+            if temp_str == "N/A" and platform.system() == "Windows":
+                try:
+                    cmd = "powershell -Command \"(Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature).CurrentTemperature\""
+                    output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, timeout=2).decode().strip()
+                    if output and output.isdigit():
+                        kelvin_x10 = float(output)
+                        celsius = int((kelvin_x10 / 10.0) - 273.15)
+                        if 0 <= celsius <= 120:
+                            temp_str = f"{celsius}°C"
+                except Exception:
+                    pass
+
+        return battery_str, temp_str
+
     def start_threads(self):
         self.is_polling = False
         try:
@@ -666,10 +758,10 @@ class GateDisplay(ttk.Window):
         except Exception: pass
         
         self.stream_session = requests.Session()
-        self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/2.0", "Connection": "keep-alive"})
+        self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/2.6", "Connection": "keep-alive"})
         
         self.api_session = requests.Session()
-        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/2.0", "Connection": "close"})
+        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/2.6", "Connection": "close"})
 
         self.is_polling = True
         
@@ -678,23 +770,38 @@ class GateDisplay(ttk.Window):
 
     def poll_server_status(self):
         while self.is_polling:
-            hub_url = self.config_manager.config.get('hub_url', '').rstrip('/')
-            device_name = self.config_manager.config.get('device_name', '')
-            url = f"{hub_url}/api/status?device_name={requests.utils.quote(device_name)}"
-            
             start_t = time.time()
             try:
-                resp = self.api_session.get(url, timeout=3, verify=False)
-                latency = int((time.time() - start_t) * 1000)
+                hub_url = self.config_manager.config.get('hub_url', '').rstrip('/')
+                battery_str, temp_str = self.get_system_telemetry()
                 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    self.gui_queue.put(lambda l=latency, tm=data.get("test_mode", False), td=data.get("test_date", "Unknown"): (
-                        self.update_net_pill(f"● Connected • {l}ms", "success" if l < 200 else "warning"),
-                        self.update_test_banner(tm, td)
-                    ))
-                else:
-                    self.gui_queue.put(lambda l=latency: (self.update_net_pill(f"● Error {resp.status_code}", "danger"), self.update_test_banner(False, "")))
+                payload = {
+                    "device_id": self.config_manager.config.get("device_id"),
+                    "device_name": self.config_manager.config.get("device_name"),
+                    "page": "Gate Display",
+                    "battery": battery_str,
+                    "temp": temp_str
+                }
+                
+                resp = self.api_session.post(f"{hub_url}/api/status", json=payload, timeout=3, verify=False)
+                resp.raise_for_status()
+                data = resp.json()
+                
+                canonical = data.get("canonical_name")
+                if canonical and canonical != self.config_manager.config.get("device_name") and canonical != "Unknown Device":
+                    self.config_manager.config["device_name"] = canonical
+                    self.config_manager.save()
+                    self.gui_queue.put(lambda c=canonical: self.lbl_subtitle.configure(text=f"{c} • TDE UP 2026"))
+                
+                msg = data.get("message")
+                if msg:
+                    self.gui_queue.put(lambda m=msg: self.show_hub_message(m))
+
+                latency = int((time.time() - start_t) * 1000)
+                self.gui_queue.put(lambda l=latency, tm=data.get("test_mode", False), td=data.get("test_date", "Unknown"): (
+                    self.update_net_pill(f"● Connected • {l}ms", "success" if l < 200 else "warning"),
+                    self.update_test_banner(tm, td)
+                ))
             except Exception:
                 self.gui_queue.put(lambda: (self.update_net_pill("● Offline / Timeout", "danger"), self.update_test_banner(False, "")))
             
@@ -747,7 +854,8 @@ class GateDisplay(ttk.Window):
         payload = {
             "attendee_id": val.strip(),
             "search_type": lookup_type,
-            "device_name": self.config_manager.config["device_name"]
+            "device_name": self.config_manager.config["device_name"],
+            "device_id": self.config_manager.config.get("device_id")
         }
         
         def _post_action():
