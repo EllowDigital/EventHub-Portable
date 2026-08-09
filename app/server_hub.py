@@ -19,6 +19,7 @@ import requests
 import urllib3
 from datetime import datetime, timezone, timedelta
 import tkinter as tk
+from tkinter import simpledialog
 
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
@@ -1108,7 +1109,6 @@ class AnimatedMeter:
             self.meter.amountusedvar.set(new_int_val)
             self._last_int_val = new_int_val
 
-
 class ServerHub(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.6 (Enterprise Dual-Sync Edition)")
@@ -1406,6 +1406,47 @@ class ServerHub(ttk.Window):
         log_box.text.tag_configure("log_checkin", foreground="#CE9178", font=("Consolas", 8, "bold"))
         return log_box
 
+    def _show_device_menu(self, event):
+        iid = self.tree_devices.identify_row(event.y)
+        if iid:
+            self.tree_devices.selection_set(iid)
+            self.device_menu.post(event.x_root, event.y_root)
+
+    def _prompt_rename_device(self):
+        selected = self.tree_devices.selection()
+        if not selected: return
+        d_id = selected[0]
+        with device_lock:
+            if d_id not in ACTIVE_DEVICES: return
+            old_name = ACTIVE_DEVICES[d_id]['name']
+            
+        new_name = simpledialog.askstring("Rename Device", f"Enter new name for '{old_name}':", initialvalue=old_name, parent=self)
+        if new_name and new_name.strip() and new_name.strip() != old_name:
+            with device_lock:
+                CUSTOM_DEVICE_NAMES[d_id] = new_name.strip()
+                if d_id in ACTIVE_DEVICES:
+                    ACTIVE_DEVICES[d_id]['name'] = new_name.strip()
+            try:
+                with open(DEVICE_NAMES_FILE, 'w') as f:
+                    json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
+            except Exception as e: pass
+            self.refresh_stats()
+            self._append_log('network', f"[INFO] Device '{old_name}' renamed to '{new_name.strip()}'.")
+
+    def _prompt_send_message(self):
+        selected = self.tree_devices.selection()
+        if not selected: return
+        d_id = selected[0]
+        with device_lock:
+            if d_id not in ACTIVE_DEVICES: return
+            d_name = ACTIVE_DEVICES[d_id]['name']
+
+        msg = simpledialog.askstring("Send Message", f"Enter message to push to '{d_name}':", parent=self)
+        if msg and msg.strip():
+            with device_lock:
+                DEVICE_MESSAGES[d_id] = msg.strip()
+            self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
+
     def build_ui(self):
         self._configure_custom_styles()
         self.root_container = ttk.Frame(self, style="TFrame")
@@ -1552,7 +1593,6 @@ class ServerHub(ttk.Window):
         self.lbl_hdr_db_queue = ttk.Label(net_info_card, text="DB Q: 0", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground="#C586C0")
         self.lbl_hdr_db_queue.grid(row=2, column=1, sticky=W, pady=2)
 
-
         ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(0, 4))
         stats_container = ttk.Frame(content, style="TFrame")
         stats_container.pack(fill=X, expand=False, pady=(0, 16))
@@ -1575,10 +1615,9 @@ class ServerHub(ttk.Window):
         self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
         self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
 
-
         devices_header_row = ttk.Frame(content, style="TFrame")
         devices_header_row.pack(fill=X, pady=(2, 4))
-        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT)
+        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES (0) — Right-Click to Manage", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT)
         self.lbl_devices_header.pack(side=LEFT, anchor=W)
         self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 9), bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
@@ -1589,16 +1628,18 @@ class ServerHub(ttk.Window):
         tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
         tree_scroll.pack(side=RIGHT, fill=Y)
 
-        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
+        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "telemetry", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
+        self.tree_devices.heading("telemetry", text="Telemetry")
         self.tree_devices.heading("last_seen", text="Last Heartbeat")
         self.tree_devices.heading("signal", text="Signal")
         
-        self.tree_devices.column("name", width=250, anchor=W)
-        self.tree_devices.column("ip", width=120, anchor=W)
+        self.tree_devices.column("name", width=200, anchor=W)
+        self.tree_devices.column("ip", width=110, anchor=W)
+        self.tree_devices.column("telemetry", width=120, anchor=CENTER)
         self.tree_devices.column("last_seen", width=100, anchor=CENTER)
-        self.tree_devices.column("signal", width=100, anchor=CENTER)
+        self.tree_devices.column("signal", width=80, anchor=CENTER)
         self.tree_devices.pack(side=LEFT, fill=BOTH, expand=True, padx=(2, 0), pady=2)
         
         tree_scroll.configure(command=self.tree_devices.yview)
@@ -1608,6 +1649,13 @@ class ServerHub(ttk.Window):
         self.tree_devices.tag_configure("fading", foreground=self.ERR_FG)
         self.tree_devices.tag_configure("empty", foreground="#858585")
 
+        self.device_menu = tk.Menu(self.tree_devices, tearoff=0, bg="#252526", fg="#CCCCCC")
+        self.device_menu.add_command(label="✏️ Rename Device", command=self._prompt_rename_device)
+        self.device_menu.add_command(label="📨 Send Message", command=self._prompt_send_message)
+        
+        self.tree_devices.bind("<Button-3>", self._show_device_menu)
+        if platform.system() == "Darwin":
+            self.tree_devices.bind("<Button-2>", self._show_device_menu)
 
         ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(2, 4))
         
@@ -1798,7 +1846,7 @@ class ServerHub(ttk.Window):
 
             self._set_stat("online_scanners", len(active_ids))
             if hasattr(self, 'lbl_devices_header'): 
-                self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)})")
+                self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
 
             for row in self.tree_devices.get_children(): self.tree_devices.delete(row)
                 
@@ -1807,9 +1855,12 @@ class ServerHub(ttk.Window):
                     info = device_info[d_id]
                     sec_ago = max(0, int(current_time - info['last_seen']))
                     sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
-                    self.tree_devices.insert("", END, values=(info['name'], info['ip'], "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
+                    batt = info.get('battery', 'N/A')
+                    temp = info.get('temp', 'N/A')
+                    telemetry_str = f"🔋 {batt} | 🌡️ {temp}"
+                    self.tree_devices.insert("", END, iid=d_id, values=(info['name'], info['ip'], telemetry_str, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig), tags=(tag,))
             else: 
-                self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", ""), tags=("empty",))
+                self.tree_devices.insert("", END, values=("No devices connected yet — awaiting heartbeat...", "", "", "", ""), tags=("empty",))
 
             if not self._db_checked:
                 self.lbl_stat_mysql.configure(text="● MYSQL: CHECKING", bootstyle=INFO); self.lbl_stat_sqlite.configure(text="● SQLITE: CHECKING", bootstyle=INFO)
