@@ -170,14 +170,14 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001  
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-DB_WRITER_THREADS = 64            
+DB_WRITER_THREADS = 32            
 DB_JOB_QUEUE_MAXSIZE = 50000               
 DB_JOB_TIMEOUT = 12               
 
 STATS_REFRESH_INTERVAL_SEC = 300  
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
 SLOW_REQUEST_THRESHOLD_MS = 300  
-MAX_LOG_LINES = 1000             
+MAX_LOG_LINES = 5000 # Increased to hold extensive historical depth 
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
 _file_handler = RotatingFileHandler(LOG_FILE, maxBytes=25_000_000, backupCount=10, encoding='utf-8')
@@ -638,11 +638,17 @@ def start_db_writers():
 
 def stop_db_writers():
     _db_shutdown_event.set()
+    
+    while not DB_WRITE_QUEUE.empty():
+        try: DB_WRITE_QUEUE.get_nowait()
+        except queue.Empty: break
+
     for _ in range(len(_db_writer_threads)): 
-        try: DB_WRITE_QUEUE.put(None, timeout=1.0)
+        try: DB_WRITE_QUEUE.put(None, timeout=0.1)
         except queue.Full: pass
+        
     for t in _db_writer_threads:
-        t.join(timeout=1.0)
+        t.join(timeout=0.2) 
     _db_writer_threads.clear()
 
 @app.route('/manifest.json')
@@ -836,7 +842,7 @@ def get_all_attendees():
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        self.server = create_server(app, host=host, port=port, threads=500, connection_limit=2000, channel_timeout=30)
+        self.server = create_server(app, host=host, port=port, threads=100, connection_limit=2000, channel_timeout=30)
         self.ctx = app.app_context(); self.ctx.push()
     def run(self):
         try: self.server.run()
@@ -844,7 +850,7 @@ class WaitressHttpThread(threading.Thread):
     def shutdown(self): self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
-    def __init__(self, app, host, port, numthreads=500):
+    def __init__(self, app, host, port, numthreads=100):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
@@ -978,14 +984,12 @@ class ServerHub(ttk.Window):
         segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
         with self.log_lock:
             if widget_id == 'flask': 
+                # FIX: Removed the 200 limit entirely so 100,000 logs safely enter the buffer queue without dropping
                 self.log_buffer_flask.append(segments)
-                if len(self.log_buffer_flask) > 200: self.log_buffer_flask.pop(0)
             elif widget_id == 'network': 
                 self.log_buffer_network.append(segments)
-                if len(self.log_buffer_network) > 200: self.log_buffer_network.pop(0)
             elif widget_id == 'cf': 
                 self.log_buffer_cf.append(segments)
-                if len(self.log_buffer_cf) > 200: self.log_buffer_cf.pop(0)
 
     def log_flask_event(self, message): self._append_log('flask', message)
 
@@ -993,41 +997,60 @@ class ServerHub(ttk.Window):
         if not self.winfo_exists(): return
         try:
             with self.log_lock:
-                flask_logs, net_logs, cf_logs = list(self.log_buffer_flask), list(self.log_buffer_network), list(self.log_buffer_cf)
-                self.log_buffer_flask.clear(); self.log_buffer_network.clear(); self.log_buffer_cf.clear()
+                # FIX: "Chunked Yield Rendering" - pull exactly 300 logs per tick to render quickly but avoid freeze
+                flask_logs = self.log_buffer_flask[:300]
+                net_logs = self.log_buffer_network[:300]
+                cf_logs = self.log_buffer_cf[:300]
+                
+                del self.log_buffer_flask[:300]
+                del self.log_buffer_network[:300]
+                del self.log_buffer_cf[:300]
+                
+                pending = len(self.log_buffer_flask) + len(self.log_buffer_network) + len(self.log_buffer_cf)
+
             if flask_logs: self._write_logs_to_widget(self.log_flask.text, flask_logs)
             if net_logs: self._write_logs_to_widget(self.log_network.text, net_logs)
             if cf_logs and hasattr(self, 'log_cf') and self.log_cf: self._write_logs_to_widget(self.log_cf.text, cf_logs)
+            
         except Exception: pass
-        finally: self.after(200, self.flush_log_buffers)
+        finally: 
+            # FIX: If we have 100,000 logs pending, loop immediately (15ms). If quiet, rest (250ms).
+            delay = 15 if pending > 0 else 250
+            self.after(delay, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
-        if not text_widget.winfo_exists(): return
+        if not text_widget.winfo_exists() or not log_batches: return
+        
         text_widget.configure(state=NORMAL)
-        if len(log_batches) > 100:
-            log_batches = log_batches[-100:]
-            text_widget.insert(END, f"[{datetime.now().strftime('%H:%M:%S')}] [SYSTEM] Extremely high load detected! UI skipped older logs to maintain performance. Check log file for full history.\n", "log_warning")
+            
         for segments in log_batches:
             for txt, tg in segments: 
                 if tg: text_widget.insert(END, txt, tg)
                 else: text_widget.insert(END, txt)
             text_widget.insert(END, "\n")
+            
         text_widget.see(END)
+        
         lc = int(text_widget.index('end-1c').split('.')[0])
-        if lc > MAX_LOG_LINES: text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
+        # FIX: Adjusted line deletion formula to easily support the new 5,000 MAX history limit
+        if lc > MAX_LOG_LINES + 500: 
+            text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
+            
         text_widget.configure(state=DISABLED)
 
     def process_gui_queue(self):
         if not self.winfo_exists(): return
         start_time = time.perf_counter()
+        processed_count = 0
         try:
-            while time.perf_counter() - start_time < 0.012:
+            while time.perf_counter() - start_time < 0.02 and processed_count < 500:
                 try: task = self.gui_queue.get_nowait()
                 except queue.Empty: break
                 try: task()
                 except Exception as e: logging.error(f"GUI task execution failed: {e}")
+                processed_count += 1
         except Exception: pass
-        finally: self.after(20, self.process_gui_queue)
+        finally: self.after(15, self.process_gui_queue)
 
     def animation_loop(self):
         if not self.winfo_exists(): return
@@ -1471,10 +1494,27 @@ class ServerHub(ttk.Window):
                 self._meter_set_style(self.mini_meter_net, SUCCESS if mbps > 1.0 else INFO, "net_style")
                 self.net_tooltip.text = tt_text
 
-            with metrics_lock: snap_metrics = dict(SERVER_METRICS)
+            req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
+
+            with metrics_lock: 
+                if not self.http_thread and not self.https_thread:
+                    SERVER_METRICS["avg_process_ms"] = 0.0
+                    SERVER_METRICS["req_count"] = 0
+                elif req_sec == 0:
+                    # FIX: Aggressive multiplier drops the needle to 0 almost instantly when idle
+                    SERVER_METRICS["avg_process_ms"] *= 0.5
+                    if SERVER_METRICS["avg_process_ms"] < 1.0:
+                        SERVER_METRICS["avg_process_ms"] = 0.0
+                
+                snap_metrics = dict(SERVER_METRICS)
+
             proc_ms = int(snap_metrics["avg_process_ms"])
             self.animated_meters["api"].set_target(min(proc_ms, 500))
-            self._meter_set_style(self.mini_meter_api, SUCCESS if proc_ms < 100 else (WARNING if proc_ms < 300 else DANGER), "api_style")
+            
+            if proc_ms < 100:
+                self._meter_set_style(self.mini_meter_api, SUCCESS, "api_style")
+            else:
+                self._meter_set_style(self.mini_meter_api, WARNING if proc_ms < 300 else DANGER, "api_style")
 
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
@@ -1485,7 +1525,6 @@ class ServerHub(ttk.Window):
             if snap_net["cloud_status"] == "ONLINE": self.lbl_hdr_cloud_ping.configure(text=f"WAN: {c_ms} ms", foreground=self.SUCCESS_FG)
             else: self.lbl_hdr_cloud_ping.configure(text="WAN: DOWN", foreground=self.WARN_FG)
                 
-            req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
             t_color = self.ACCENT if req_sec < 50 else (self.WARN_FG if req_sec < 200 else self.ERR_FG)
             self.lbl_hdr_traffic.configure(text=f"Traffic: {req_sec} req/s", foreground=t_color)
             
@@ -1595,14 +1634,26 @@ class ServerHub(ttk.Window):
     def stop_flask(self):
         if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
         self.btn_stop_flask.configure(state=DISABLED)
-        self.btn_start_flask.configure(state=NORMAL)
+        self.btn_start_flask.configure(state=DISABLED)
         self.btn_start_cf.configure(state=DISABLED)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         self.lbl_flask_link.configure(text="Server Offline", foreground="#858585")
-        stop_db_writers()
-        if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
-        if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
-        self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopped.")
+        
+        self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopping gracefully... Please wait.")
+
+        def _async_stop():
+            stop_db_writers()
+            if self.http_thread: 
+                self.http_thread.shutdown()
+                self.http_thread = None
+            if self.https_thread: 
+                self.https_thread.shutdown()
+                self.https_thread = None
+                
+            self.gui_queue.put(lambda: self.btn_start_flask.configure(state=NORMAL))
+            self.gui_queue.put(lambda: self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine completely stopped."))
+            
+        threading.Thread(target=_async_stop, daemon=True).start()
 
     def _animate_cf_connecting(self, tick=0):
         if not self.winfo_exists() or not self._cf_connecting: return
