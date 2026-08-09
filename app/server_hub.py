@@ -996,13 +996,15 @@ class ServerHub(ttk.Window):
         if not self.winfo_exists(): return
         try:
             with self.log_lock:
-                flask_logs = self.log_buffer_flask[:300]
-                net_logs = self.log_buffer_network[:300]
-                cf_logs = self.log_buffer_cf[:300]
+                # Dynamic chunk size to pull max 1000 logs at a time to prevent UI freezing
+                CHUNK_SIZE = 1000
+                flask_logs = self.log_buffer_flask[:CHUNK_SIZE]
+                net_logs = self.log_buffer_network[:CHUNK_SIZE]
+                cf_logs = self.log_buffer_cf[:CHUNK_SIZE]
                 
-                del self.log_buffer_flask[:300]
-                del self.log_buffer_network[:300]
-                del self.log_buffer_cf[:300]
+                del self.log_buffer_flask[:CHUNK_SIZE]
+                del self.log_buffer_network[:CHUNK_SIZE]
+                del self.log_buffer_cf[:CHUNK_SIZE]
                 
                 pending = len(self.log_buffer_flask) + len(self.log_buffer_network) + len(self.log_buffer_cf)
 
@@ -1012,20 +1014,25 @@ class ServerHub(ttk.Window):
             
         except Exception: pass
         finally: 
-            delay = 15 if pending > 0 else 250
+            # Process remaining logs immediately if there is a massive backlog, otherwise rest for 250ms
+            delay = 10 if pending > 0 else 250
             self.after(delay, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
         if not text_widget.winfo_exists() or not log_batches: return
         
         text_widget.configure(state=NORMAL)
-            
+        
+        # Single bulk Tcl-insertion to prevent frame freezing (Tkinter optimization)
+        insert_args = []
         for segments in log_batches:
             for txt, tg in segments: 
-                if tg: text_widget.insert(END, txt, tg)
-                else: text_widget.insert(END, txt)
-            text_widget.insert(END, "\n")
+                insert_args.append(txt)
+                insert_args.append(tg if tg else "")
+            insert_args.append("\n")
+            insert_args.append("")
             
+        text_widget.insert(END, *insert_args)
         text_widget.see(END)
         
         lc = int(text_widget.index('end-1c').split('.')[0])
