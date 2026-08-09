@@ -277,6 +277,9 @@ class GateDisplay(ttk.Window):
         self.is_polling = False
         self._showing_msg = False
         
+        self._cached_battery = "N/A"
+        self._cached_temp = "N/A"
+        
         self.notifier = NotificationEngine()
         self.notifier.start()
         
@@ -750,6 +753,16 @@ class GateDisplay(ttk.Window):
 
         return battery_str, temp_str
 
+    def telemetry_loop(self):
+        while self.is_polling:
+            try:
+                b, t = self.get_system_telemetry()
+                self._cached_battery = b
+                self._cached_temp = t
+            except Exception:
+                pass
+            time.sleep(15)
+
     def start_threads(self):
         self.is_polling = False
         try:
@@ -761,30 +774,32 @@ class GateDisplay(ttk.Window):
         self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/2.6", "Connection": "keep-alive"})
         
         self.api_session = requests.Session()
-        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/2.6", "Connection": "close"})
+        self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/2.6", "Connection": "keep-alive"})
 
         self.is_polling = True
         
+        threading.Thread(target=self.telemetry_loop, daemon=True).start()
         threading.Thread(target=self.listen_to_server_stream, daemon=True).start()
         threading.Thread(target=self.poll_server_status, daemon=True).start()
 
     def poll_server_status(self):
         while self.is_polling:
-            start_t = time.time()
             try:
                 hub_url = self.config_manager.config.get('hub_url', '').rstrip('/')
-                battery_str, temp_str = self.get_system_telemetry()
                 
                 payload = {
                     "device_id": self.config_manager.config.get("device_id"),
                     "device_name": self.config_manager.config.get("device_name"),
                     "page": "Gate Display",
-                    "battery": battery_str,
-                    "temp": temp_str
+                    "battery": getattr(self, '_cached_battery', 'N/A'),
+                    "temp": getattr(self, '_cached_temp', 'N/A')
                 }
                 
+                start_t = time.time()
                 resp = self.api_session.post(f"{hub_url}/api/status", json=payload, timeout=3, verify=False)
                 resp.raise_for_status()
+                latency = int((time.time() - start_t) * 1000)
+                
                 data = resp.json()
                 
                 canonical = data.get("canonical_name")
@@ -797,7 +812,6 @@ class GateDisplay(ttk.Window):
                 if msg:
                     self.gui_queue.put(lambda m=msg: self.show_hub_message(m))
 
-                latency = int((time.time() - start_t) * 1000)
                 self.gui_queue.put(lambda l=latency, tm=data.get("test_mode", False), td=data.get("test_date", "Unknown"): (
                     self.update_net_pill(f"● Connected • {l}ms", "success" if l < 200 else "warning"),
                     self.update_test_banner(tm, td)

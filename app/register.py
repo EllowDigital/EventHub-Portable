@@ -197,13 +197,18 @@ class OfflineKioskApp(ttk.Window):
         self.ping_session = requests.Session()
         self.sync_session = requests.Session()
         
+        # FIX: Changed "Connection": "close" to "Connection": "keep-alive"
         for session in [self.api_session, self.ping_session, self.sync_session]:
-            session.headers.update({"User-Agent": "EventHub-Kiosk/2.6", "Connection": "close"})
+            session.headers.update({"User-Agent": "EventHub-Kiosk/2.6", "Connection": "keep-alive"})
         
         self.gui_queue = queue.Queue()
         self.is_pinging = True
         self.is_submitting = False
         self._showing_msg = False
+        
+        # Telemetry Cache
+        self._cached_battery = "N/A"
+        self._cached_temp = "N/A"
         
         self.MOBILE_RE = re.compile(r"^[6-9]\d{9}$")
         self.PIN_RE = re.compile(r"^\d{6}$")
@@ -218,6 +223,7 @@ class OfflineKioskApp(ttk.Window):
         self.bind_shortcuts()
         self.process_gui_queue()
         
+        threading.Thread(target=self.telemetry_loop, daemon=True).start()
         threading.Thread(target=self.network_ping_loop, daemon=True).start()
         threading.Thread(target=self.background_sync_loop, daemon=True).start()
 
@@ -541,7 +547,8 @@ class OfflineKioskApp(ttk.Window):
             
         if len(clean_val) == 10:
             self.errors['mobile'].configure(text="⏳ Checking number...", foreground="#00d2ff")
-            self._mobile_check_timer = self.after(400, lambda: threading.Thread(target=self._check_mobile_status, args=(clean_val,), daemon=True).start())
+            # FIX: Reduced debounce timer from 400ms to 50ms
+            self._mobile_check_timer = self.after(50, lambda: threading.Thread(target=self._check_mobile_status, args=(clean_val,), daemon=True).start())
         else:
             self.clear_single_error('mobile')
 
@@ -572,7 +579,8 @@ class OfflineKioskApp(ttk.Window):
             self.after_cancel(self._pincode_check_timer)
             
         if len(clean_val) == 6:
-            self._pincode_check_timer = self.after(400, lambda: threading.Thread(target=self._check_pincode, args=(clean_val,), daemon=True).start())
+            # FIX: Reduced debounce timer from 400ms to 50ms
+            self._pincode_check_timer = self.after(50, lambda: threading.Thread(target=self._check_pincode, args=(clean_val,), daemon=True).start())
         else:
             self.clear_single_error('pincode')
 
@@ -667,22 +675,34 @@ class OfflineKioskApp(ttk.Window):
 
         return battery_str, temp_str
 
+    def telemetry_loop(self):
+        # FIX: Moved slow synchronous telemetry checks to background thread
+        while self.is_pinging:
+            try:
+                b, t = self.get_system_telemetry()
+                self._cached_battery = b
+                self._cached_temp = t
+            except Exception:
+                pass
+            time.sleep(15)
+
     def network_ping_loop(self):
         while self.is_pinging:
-            start_time = time.time()
             try:
-                battery_str, temp_str = self.get_system_telemetry()
-                
                 payload = {
                     "device_id": self.device_id,
                     "device_name": self.device_name,
                     "page": "Desktop App",
-                    "battery": battery_str,
-                    "temp": temp_str
+                    "battery": getattr(self, '_cached_battery', 'N/A'),
+                    "temp": getattr(self, '_cached_temp', 'N/A')
                 }
                 
+                # FIX: Start timer precisely before network call, excluding payload build time
+                start_time = time.time()
                 res = self.ping_session.post(f"{self.server_url}/api/status", json=payload, timeout=3, verify=False)
                 res.raise_for_status()
+                duration_ms = int((time.time() - start_time) * 1000)
+                
                 data = res.json()
                 
                 canonical = data.get("canonical_name")
@@ -695,7 +715,6 @@ class OfflineKioskApp(ttk.Window):
                 if msg:
                     self.gui_queue.put(lambda m=msg: self.show_hub_message(m))
                 
-                duration_ms = int((time.time() - start_time) * 1000)
                 if duration_ms < 150:
                     self.gui_queue.put(lambda ms=duration_ms: self.update_net_pill(f"Excellent • {ms}ms", "#00e676"))
                 elif duration_ms < 500:
