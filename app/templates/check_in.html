@@ -1266,11 +1266,18 @@
       isFetching = true;
       const start = performance.now();
 
-      let battParam = "&battery=N/A&temp=N/A";
+      let payload = {
+        device_id: getDeviceId(),
+        device_name: getDeviceName(),
+        page: window.location.pathname, // <-- This grabs the active URL path
+        battery: "N/A",
+        temp: "N/A"
+      };
+
       if (navigator.getBattery) {
         try {
           const b = await navigator.getBattery();
-          battParam = `&battery=${encodeURIComponent(Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : ''))}&temp=N/A`;
+          payload.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : '');
         } catch (e) { }
       }
 
@@ -1278,10 +1285,13 @@
         const c = new AbortController();
         const id = setTimeout(() => c.abort(), 5000);
 
-        const response = await fetch(
-          `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}${battParam}`,
-          { cache: "no-store", signal: c.signal }
-        );
+        const response = await fetch("/api/status", {
+          method: "POST", // <-- Switched to POST
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload), // <-- Safely sends the path and telemetry
+          signal: c.signal
+        });
         clearTimeout(id);
 
         const dur = performance.now() - start;

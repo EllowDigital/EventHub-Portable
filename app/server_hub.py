@@ -647,11 +647,13 @@ def get_server_status():
         device_id = data.get('device_id')
         battery = data.get('battery', 'N/A')
         temp = data.get('temp', 'N/A')
+        active_page = data.get('page', '/')
     else:
         reported_name = request.args.get('device_name', 'Unknown Device')
         device_id = request.args.get('device_id')
         battery = request.args.get('battery', 'N/A')
         temp = request.args.get('temp', 'N/A')
+        active_page = request.args.get('page', '/')
 
     if reported_name == "null": reported_name = "Unknown Device"
     if not device_id: device_id = f"{ip}::{reported_name}"
@@ -675,7 +677,15 @@ def get_server_status():
     with device_lock:
         display_name = CUSTOM_DEVICE_NAMES.get(device_id, reported_name)
         if device_id in DEVICE_MESSAGES: pending_msg = DEVICE_MESSAGES.pop(device_id)
-        ACTIVE_DEVICES[device_id] = {'last_seen': time.time(), 'name': display_name, 'original_name': reported_name, 'ip': ip, 'battery': battery, 'temp': temp}
+        ACTIVE_DEVICES[device_id] = {
+            'last_seen': time.time(),
+            'name': display_name,
+            'original_name': reported_name,
+            'ip': ip,
+            'battery': battery,
+            'temp': temp,
+            'page': active_page
+        }
         
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE, "message": pending_msg, "canonical_name": display_name}), 200
 
@@ -1282,15 +1292,17 @@ class ServerHub(ttk.Window):
         tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
         tree_scroll.pack(side=RIGHT, fill=Y)
 
-        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "telemetry", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
+        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "page", "telemetry", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
+        self.tree_devices.heading("page", text="Active Page")
         self.tree_devices.heading("telemetry", text="Telemetry")
         self.tree_devices.heading("last_seen", text="Last Heartbeat")
         self.tree_devices.heading("signal", text="Signal")
         
-        self.tree_devices.column("name", width=200, anchor=W)
+        self.tree_devices.column("name", width=180, anchor=W)
         self.tree_devices.column("ip", width=110, anchor=W)
+        self.tree_devices.column("page", width=110, anchor=CENTER)
         self.tree_devices.column("telemetry", width=120, anchor=CENTER)
         self.tree_devices.column("last_seen", width=100, anchor=CENTER)
         self.tree_devices.column("signal", width=80, anchor=CENTER)
@@ -1486,9 +1498,18 @@ class ServerHub(ttk.Window):
                     sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
                     batt = info.get('battery', 'N/A')
                     temp = info.get('temp', 'N/A')
+                    page_path = info.get('page', '/')
+                    
+                    page_label = {
+                        "/": "Home Portal",
+                        "/scanner": "Scanner",
+                        "/register": "Registration",
+                        "/stats": "Network Stats"
+                    }.get(page_path, page_path)
+
                     telemetry_str = f"🔋 {batt} | 🌡️ {temp}"
                     
-                    values = (info['name'], info['ip'], telemetry_str, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig)
+                    values = (info['name'], info['ip'], page_label, telemetry_str, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig)
                     if d_id in existing_iids:
                         self.tree_devices.item(d_id, values=values, tags=(tag,))
                         existing_iids.remove(d_id)
@@ -1497,7 +1518,7 @@ class ServerHub(ttk.Window):
             else: 
                 if not existing_iids or "empty_msg" not in existing_iids:
                     for row in existing_iids: self.tree_devices.delete(row)
-                    self.tree_devices.insert("", END, iid="empty_msg", values=("No devices connected yet — awaiting heartbeat...", "", "", "", ""), tags=("empty",))
+                    self.tree_devices.insert("", END, iid="empty_msg", values=("No devices connected yet — awaiting heartbeat...", "", "", "", "", ""), tags=("empty",))
                 existing_iids.discard("empty_msg")
                 
             for stale_id in existing_iids:

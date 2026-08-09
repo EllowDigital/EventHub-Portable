@@ -624,29 +624,61 @@ class OfflineKioskApp(ttk.Window):
         modal.bind('<Return>', save_and_close)
         modal.bind('<Escape>', lambda e: modal.destroy())
 
+    def get_system_telemetry(self):
+        battery_str = "N/A"
+        temp_str = "N/A"
+
+        if HAS_PSUTIL:
+            # 1. Fetch Battery Data
+            try:
+                batt = psutil.sensors_battery()
+                if batt is not None:
+                    battery_str = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
+                else:
+                    battery_str = "AC Power (Desktop)"
+            except Exception:
+                pass
+
+            # 2. Fetch Temperature Data
+            try:
+                # Linux / Unix Standard
+                if hasattr(psutil, 'sensors_temperatures'):
+                    temps = psutil.sensors_temperatures()
+                    if temps:
+                        for k, v in temps.items():
+                            if v and len(v) > 0:
+                                temp_str = f"{int(v[0].current)}°C"
+                                break
+            except Exception:
+                pass
+
+            # 3. Windows Thermal Reading Fallback via PowerShell / WMI
+            if temp_str == "N/A" and platform.system() == "Windows":
+                try:
+                    cmd = "powershell -Command \"(Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature).CurrentTemperature\""
+                    output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL, timeout=2).decode().strip()
+                    if output and output.isdigit():
+                        kelvin_x10 = float(output)
+                        celsius = int((kelvin_x10 / 10.0) - 273.15)
+                        if 0 <= celsius <= 120:
+                            temp_str = f"{celsius}°C"
+                except Exception:
+                    pass
+
+        return battery_str, temp_str
+
     def network_ping_loop(self):
         while self.is_pinging:
             start_time = time.time()
             try:
-                battery, temp = "N/A", "N/A"
-                if HAS_PSUTIL:
-                    try:
-                        batt = psutil.sensors_battery()
-                        if batt: battery = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
-                        if hasattr(psutil, 'sensors_temperatures'):
-                            temps = psutil.sensors_temperatures()
-                            if temps:
-                                for k, v in temps.items():
-                                    if v and len(v) > 0:
-                                        temp = f"{int(v[0].current)}°C"
-                                        break
-                    except Exception: pass
+                battery_str, temp_str = self.get_system_telemetry()
                 
                 payload = {
                     "device_id": self.device_id,
                     "device_name": self.device_name,
-                    "battery": battery,
-                    "temp": temp
+                    "page": "Desktop App",
+                    "battery": battery_str,
+                    "temp": temp_str
                 }
                 
                 res = self.ping_session.post(f"{self.server_url}/api/status", json=payload, timeout=3, verify=False)
