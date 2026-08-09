@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Kiosk Registration - TDE UP 2026</title>
+  <link rel="manifest" href="/manifest.json">
   <style>
     :root {
       --bg-dark: #07080c;
@@ -438,7 +439,8 @@
     }
 
     #success-modal,
-    #device-modal {
+    #device-modal,
+    #operator-msg-modal {
       display: none;
       position: fixed;
       inset: 0;
@@ -453,7 +455,8 @@
     }
 
     #success-modal.show,
-    #device-modal.show {
+    #device-modal.show,
+    #operator-msg-modal.show {
       opacity: 1;
     }
 
@@ -471,7 +474,8 @@
     }
 
     #success-modal.show .modal-content,
-    #device-modal.show .dev-modal-content {
+    #device-modal.show .dev-modal-content,
+    #operator-msg-modal.show .modal-content {
       transform: scale(1);
     }
 
@@ -527,7 +531,7 @@
     .dev-modal-content input:focus {
       border-color: var(--primary);
       outline: none;
-      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2);
+      box-shadow: 0 0 0 3px rgba(0, 210, 255, 0.2), inset 0 2px 10px rgba(0, 0, 0, 0.5);
     }
 
     .dev-modal-content button {
@@ -561,9 +565,7 @@
         </svg>
         Hub
       </a>
-      <h3 class="header-title">
-        Kiosk Reg <span class="version-tag">v2.1</span>
-      </h3>
+      <h3 class="header-title">Kiosk Reg <span class="version-tag">v2.6</span></h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
         <span id="net-text">Connecting...</span>
@@ -571,7 +573,7 @@
     </div>
 
     <div id="test-mode-banner" class="banner test-mode-banner">
-      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+      ⚠️ TEST MODE ACTIVE (DATE: <span id="test-mode-date">...</span>)
     </div>
 
     <div id="offline-badge" class="banner offline-badge">
@@ -692,9 +694,7 @@
       </div>
       <div class="err-msg" id="e-days"></div>
 
-      <button class="btn-submit" id="submit-btn" onclick="submitForm()">
-        Register Attendee
-      </button>
+      <button class="btn-submit" id="submit-btn" onclick="submitForm()">Register Attendee</button>
     </div>
   </div>
 
@@ -729,58 +729,64 @@
     </div>
   </div>
 
+  <div id="operator-msg-modal" style="z-index: 99999;">
+    <div class="modal-content"
+      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%;">
+      <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
+      <p id="operator-msg-text" style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap;"></p>
+      <button onclick="closeOperatorMsg()"
+        style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">Acknowledge</button>
+    </div>
+  </div>
+
   <script>
-    function escapeHTML(str) {
-      if (!str) return "Unknown Device";
-      return String(str).replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-      }[tag] || tag));
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => { });
     }
 
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function escapeHTML(str) {
+      if (!str) return "Unknown Device";
+      return String(str).replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+    }
+
+    let audioCtx = null;
+    function initAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
+    }
+
     function playAudioTone(type) {
       try {
-        if (audioCtx.state === "suspended") audioCtx.resume();
+        initAudio();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
+        osc.connect(gain); gain.connect(audioCtx.destination);
         const now = audioCtx.currentTime;
 
         if (type === "SUCCESS" || type === "OFFLINE") {
-          osc.type = "sine";
-          osc.frequency.setValueAtTime(880, now);
-          osc.frequency.setValueAtTime(1200, now + 0.1);
-          gain.gain.setValueAtTime(0.8, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-          osc.start(now);
-          osc.stop(now + 0.3);
+          osc.type = "sine"; osc.frequency.setValueAtTime(880, now); osc.frequency.setValueAtTime(1200, now + 0.1);
+          gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+          osc.start(now); osc.stop(now + 0.3);
         } else if (type === "ERROR") {
-          osc.type = "sawtooth";
-          osc.frequency.setValueAtTime(150, now);
-          gain.gain.setValueAtTime(0.8, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-          osc.start(now);
-          osc.stop(now + 0.4);
-        } else if (type === "WARNING") {
-          osc.type = "square";
-          osc.frequency.setValueAtTime(400, now);
-          gain.gain.setValueAtTime(0.5, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-          osc.start(now);
-          osc.stop(now + 0.15);
+          osc.type = "sawtooth"; osc.frequency.setValueAtTime(150, now);
+          gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+          osc.start(now); osc.stop(now + 0.4);
+        } else if (type === "WARNING" || type === "DUPLICATE") {
+          osc.type = "square"; osc.frequency.setValueAtTime(400, now);
+          gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+          osc.start(now); osc.stop(now + 0.15);
           setTimeout(() => {
             const osc2 = audioCtx.createOscillator();
             const gain2 = audioCtx.createGain();
-            osc2.connect(gain2);
-            gain2.connect(audioCtx.destination);
-            osc2.type = "square";
-            osc2.frequency.setValueAtTime(400, audioCtx.currentTime);
-            gain2.gain.setValueAtTime(0.5, audioCtx.currentTime);
-            gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
-            osc2.start();
-            osc2.stop(audioCtx.currentTime + 0.15);
+            osc2.connect(gain2); gain2.connect(audioCtx.destination);
+            osc2.type = "square"; osc2.frequency.setValueAtTime(400, audioCtx.currentTime);
+            gain2.gain.setValueAtTime(0.5, audioCtx.currentTime); gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+            osc2.start(); osc2.stop(audioCtx.currentTime + 0.15);
           }, 200);
+        } else if (type === "ALERT") {
+          osc.type = "triangle"; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(800, now + 0.2);
+          gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now); osc.stop(now + 0.5);
         }
       } catch (e) { }
     }
@@ -820,7 +826,6 @@
       if (val) {
         localStorage.setItem("hub_device_name", val);
         document.getElementById("display-device-name").textContent = val;
-
         const modal = document.getElementById("device-modal");
         modal.classList.remove("show");
         setTimeout(() => modal.style.display = "none", 300);
@@ -837,7 +842,14 @@
       setTimeout(() => modal.classList.add("show"), 10);
     }
 
+    function closeOperatorMsg() {
+      const modal = document.getElementById("operator-msg-modal");
+      modal.classList.remove("show");
+      setTimeout(() => modal.style.display = "none", 300);
+    }
+
     let isSyncing = false;
+    let isFetching = false;
     function getOfflineQueue() { return JSON.parse(localStorage.getItem("offline_regs") || "[]"); }
     function saveOfflineQueue(queue) {
       localStorage.setItem("offline_regs", JSON.stringify(queue));
@@ -887,6 +899,7 @@
     }
 
     async function syncServerStatus() {
+      if (isFetching) return;
       const dot = document.getElementById("net-dot"),
         text = document.getElementById("net-text"),
         testBanner = document.getElementById("test-mode-banner"),
@@ -898,15 +911,34 @@
         testBanner.style.display = "none";
         return;
       }
+      isFetching = true;
       const start = performance.now();
+
+      let payload = {
+        device_id: getDeviceId(),
+        device_name: getDeviceName(),
+        battery: "N/A",
+        temp: "N/A"
+      };
+
+      if (navigator.getBattery) {
+        try {
+          const b = await navigator.getBattery();
+          payload.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : '');
+        } catch (e) { }
+      }
+
       try {
         const c = new AbortController();
         const id = setTimeout(() => c.abort(), 5000);
 
-        const response = await fetch(
-          `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
-          { cache: "no-store", signal: c.signal }
-        );
+        const response = await fetch("/api/status", {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: c.signal
+        });
         clearTimeout(id);
 
         const dur = performance.now() - start;
@@ -924,12 +956,23 @@
             } else {
               testBanner.style.display = "none";
             }
+
+            if (data.message) {
+              const msgBox = document.getElementById("operator-msg-modal");
+              document.getElementById("operator-msg-text").innerText = data.message;
+              msgBox.style.display = "flex";
+              setTimeout(() => msgBox.classList.add("show"), 10);
+              playAudioTone("ALERT");
+            }
+
             processOfflineQueue();
           } catch (err) { }
         }
       } catch (e) {
         dot.className = "net-dot net-poor";
         text.textContent = "Connecting...";
+      } finally {
+        isFetching = false;
       }
     }
 
@@ -1230,6 +1273,8 @@
           showModal(payload.mobile, "OFFLINE");
         });
     }
+
+    document.addEventListener("click", initAudio, { once: true });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") syncServerStatus();
