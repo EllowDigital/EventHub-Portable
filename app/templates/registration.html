@@ -552,7 +552,6 @@
 
 <body>
   <div class="app-container">
-
     <div class="header">
       <a href="/" class="btn-back">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -571,12 +570,10 @@
       </div>
     </div>
 
-    <!-- TEST MODE BANNER -->
     <div id="test-mode-banner" class="banner test-mode-banner">
       ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
     </div>
 
-    <!-- OFFLINE QUEUE BADGE -->
     <div id="offline-badge" class="banner offline-badge">
       ⏳ <span id="offline-count">0</span> Registrations Pending Sync
     </div>
@@ -703,7 +700,6 @@
 
   <div id="toast">Error Message</div>
 
-  <!-- Success / Duplicate Modal -->
   <div id="success-modal">
     <div class="modal-content" id="modal-box">
       <h2 id="modal-title" style="margin-top: 0; font-weight: 800; font-size: 2rem;">Registration Saved!</h2>
@@ -722,7 +718,6 @@
     </div>
   </div>
 
-  <!-- Device Naming Modal -->
   <div id="device-modal">
     <div class="dev-modal-content">
       <h3>Identify Kiosk</h3>
@@ -735,7 +730,6 @@
   </div>
 
   <script>
-    // --- XSS PROTECTION ---
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
       return String(str).replace(/[&<>'"]/g, tag => ({
@@ -743,7 +737,6 @@
       }[tag] || tag));
     }
 
-    // --- AUDIO ENGINE ---
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     function playAudioTone(type) {
       try {
@@ -801,7 +794,6 @@
       toastTimeout = setTimeout(() => t.classList.remove("show"), 3000);
     }
 
-    // --- SECURE DEVICE REGISTRY (Fixes Overwrite Bug) ---
     function getDeviceId() {
       let id = localStorage.getItem("hub_device_id");
       if (!id) {
@@ -832,7 +824,7 @@
         const modal = document.getElementById("device-modal");
         modal.classList.remove("show");
         setTimeout(() => modal.style.display = "none", 300);
-        syncServerStatus(); // Ping server instantly to register new name
+        syncServerStatus();
       } else {
         showToast("Please enter a valid Kiosk name.");
       }
@@ -845,7 +837,6 @@
       setTimeout(() => modal.classList.add("show"), 10);
     }
 
-    // --- OFFLINE QUEUE LOGIC ---
     let isSyncing = false;
     function getOfflineQueue() { return JSON.parse(localStorage.getItem("offline_regs") || "[]"); }
     function saveOfflineQueue(queue) {
@@ -874,7 +865,6 @@
 
       for (let i = 0; i < queue.length; i++) {
         try {
-          // Attach permanent ID to background syncs as well
           queue[i].device_id = getDeviceId();
           let res = await fetch("/api/register", {
             method: "POST",
@@ -896,7 +886,6 @@
       }
     }
 
-    // --- UPGRADED NETWORK PING (Fixes Overwrite Bug) ---
     async function syncServerStatus() {
       const dot = document.getElementById("net-dot"),
         text = document.getElementById("net-text"),
@@ -914,7 +903,6 @@
         const c = new AbortController();
         const id = setTimeout(() => c.abort(), 5000);
 
-        // Pass both ID and Name to ensure Hub tracks this specific device perfectly
         const response = await fetch(
           `/api/status?device_id=${encodeURIComponent(getDeviceId())}&device_name=${encodeURIComponent(getDeviceName())}`,
           { cache: "no-store", signal: c.signal }
@@ -945,7 +933,6 @@
       }
     }
 
-    // --- CATEGORIES ---
     const CAT_OPTS = [
       ["— Select Category —", ""], ["Tent", "TENT"], ["Caterers", "CATERING"],
       ["Decorator", "DECORATOR"], ["Flower Decoration", "FLOWER"], ["DJ", "DJ"],
@@ -957,7 +944,6 @@
     const catSel = document.getElementById("f-cat");
     CAT_OPTS.forEach(([label, val]) => catSel.appendChild(new Option(label, val)));
 
-    // --- REACTIVITY & LIVE CHECKS ---
     document.getElementById("f-type").addEventListener("change", (e) => {
       const otherInput = document.getElementById("f-othercat");
       if (e.target.value === "MEDIA") {
@@ -985,27 +971,32 @@
       clearFieldErr("othercat");
     });
 
+    let mobileCheckTimer;
     const fMobile = document.getElementById("f-mobile");
-    fMobile.addEventListener("input", async (e) => {
+    fMobile.addEventListener("input", (e) => {
       e.target.value = e.target.value.replace(/\D/g, "");
       const val = e.target.value;
       const errDiv = document.getElementById("e-mobile");
+      clearTimeout(mobileCheckTimer);
+
       if (val.length === 10) {
         errDiv.textContent = "⏳ Checking network...";
         errDiv.className = "err-msg msg-info";
-        try {
-          const res = await fetch(`/api/check_mobile?mobile=${val}`);
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === "already_registered" || data.status === "exists") {
-              errDiv.textContent = `⚠ Already Registered! ID: ${data.attendee_id || "Found"}`;
-              errDiv.className = "err-msg msg-warning";
-            } else {
-              errDiv.textContent = "✓ Ready for Registration";
-              errDiv.className = "err-msg msg-success";
-            }
-          } else { errDiv.textContent = ""; }
-        } catch (err) { errDiv.textContent = ""; }
+        mobileCheckTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/check_mobile?mobile=${val}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data.status === "already_registered" || data.status === "exists") {
+                errDiv.textContent = `⚠ Already Registered! ID: ${data.attendee_id || "Found"}`;
+                errDiv.className = "err-msg msg-warning";
+              } else {
+                errDiv.textContent = "✓ Ready for Registration";
+                errDiv.className = "err-msg msg-success";
+              }
+            } else { errDiv.textContent = ""; }
+          } catch (err) { errDiv.textContent = ""; }
+        }, 400);
       } else {
         errDiv.textContent = "";
         errDiv.className = "err-msg";
@@ -1013,31 +1004,40 @@
       }
     });
 
+    let pincodeCheckTimer;
     const fPincode = document.getElementById("f-pincode");
-    fPincode.addEventListener("input", async (e) => {
+    fPincode.addEventListener("input", (e) => {
       e.target.value = e.target.value.replace(/\D/g, "");
       const val = e.target.value;
       const errDiv = document.getElementById("e-pincode");
+      clearTimeout(pincodeCheckTimer);
+
       if (val.length === 6) {
         errDiv.textContent = "⏳ Finding location...";
         errDiv.className = "err-msg msg-info";
-        try {
-          const res = await fetch(`https://api.postalpincode.in/pincode/${val}`);
-          const data = await res.json();
-          if (data && data[0].Status === "Success") {
-            const po = data[0].PostOffice[0];
-            document.getElementById("f-state").value = po.State;
-            document.getElementById("f-city").value = po.District;
+        pincodeCheckTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/pincode/${val}`);
+            if (res.ok) {
+              const data = await res.json();
+              if (data && data.status === "success") {
+                document.getElementById("f-state").value = data.state;
+                document.getElementById("f-city").value = data.district;
+                errDiv.textContent = "";
+                errDiv.className = "err-msg";
+              } else {
+                errDiv.textContent = "⚠ Pincode not found. Enter manually.";
+                errDiv.className = "err-msg msg-warning";
+              }
+            } else {
+              errDiv.textContent = "⚠ Location lookup unavailable.";
+              errDiv.className = "err-msg msg-warning";
+            }
+          } catch (err) {
             errDiv.textContent = "";
             errDiv.className = "err-msg";
-          } else {
-            errDiv.textContent = "⚠ Pincode not found. Enter manually.";
-            errDiv.className = "err-msg msg-warning";
           }
-        } catch (err) {
-          errDiv.textContent = "";
-          errDiv.className = "err-msg";
-        }
+        }, 400);
       } else {
         errDiv.textContent = "";
         errDiv.className = "err-msg";
@@ -1204,7 +1204,7 @@
         pincode: document.getElementById("f-pincode").value.trim(),
         attendance_days: selectedDays,
         device_name: getDeviceName(),
-        device_id: getDeviceId() // Added Device ID
+        device_id: getDeviceId()
       };
 
       fetch("/api/register", {
