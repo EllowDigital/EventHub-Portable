@@ -6,7 +6,8 @@
   "display": "standalone",
   "background_color": "#07080c",
   "theme_color": "#00d2ff",
-  "orientation": "portrait-primary",
+  "orientation": "any",
+  "categories": ["productivity", "utilities"],
   "icons": [
     {
       "src": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/QR_icon.svg/512px-QR_icon.svg.png",
