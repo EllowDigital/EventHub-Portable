@@ -61,12 +61,10 @@ except ImportError:
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 
-
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
 tk.Tk.report_callback_exception = global_exception_handler
-
 
 def _configure_windows_platform():
     if platform.system() != "Windows": 
@@ -253,19 +251,15 @@ def get_cached_sessions():
 def _ensure_root_ca(ca_cert_path, ca_key_path):
     if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
         return
-
     try:
         key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
         now = datetime.now(timezone.utc)
-
         subject = issuer = x509.Name([
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital Event Root CA"),
             x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
             x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Root CA"),
         ])
-
         ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
-
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -278,63 +272,38 @@ def _ensure_root_ca(ca_cert_path, ca_key_path):
             .add_extension(ski, critical=False)
             .add_extension(
                 x509.KeyUsage(
-                    digital_signature=True,
-                    content_commitment=False,
-                    key_encipherment=False,
-                    data_encipherment=False,
-                    key_agreement=False,
-                    key_cert_sign=True,
-                    crl_sign=True,
-                    encipher_only=False,
-                    decipher_only=False,
+                    digital_signature=True, content_commitment=False, key_encipherment=False,
+                    data_encipherment=False, key_agreement=False, key_cert_sign=True,
+                    crl_sign=True, encipher_only=False, decipher_only=False,
                 ),
                 critical=True,
             )
             .sign(key, hashes.SHA384())
         )
-
         with open(ca_key_path, "wb") as f:
-            f.write(key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.NoEncryption()
-            ))
-
+            f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
         with open(ca_cert_path, "wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
-            
     except Exception as e:
         logging.error(f"Failed to generate Root CA: {e}")
         raise RuntimeError(f"Root CA generation failed: {e}")
 
 def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip):
     try:
-        with open(ca_cert_path, "rb") as f:
-            ca_cert = x509.load_pem_x509_certificate(f.read())
-        with open(ca_key_path, "rb") as f:
-            ca_key = serialization.load_pem_private_key(f.read(), password=None)
-
+        with open(ca_cert_path, "rb") as f: ca_cert = x509.load_pem_x509_certificate(f.read())
+        with open(ca_key_path, "rb") as f: ca_key = serialization.load_pem_private_key(f.read(), password=None)
         server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         now = datetime.now(timezone.utc)
-
         subject = x509.Name([
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "EllowDigital"),
             x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, "EllowLabs"),
             x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Hub Server"),
         ])
-
-        san_entries = [
-            x509.DNSName("localhost"),
-            x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
-        ]
-        try:
-            san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
-        except ValueError:
-            logging.warning(f"Invalid IP address format provided for SAN: {local_ip}")
-
+        san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+        try: san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
+        except ValueError: pass
         ski = x509.SubjectKeyIdentifier.from_public_key(server_key.public_key())
         aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key())
-
         cert = (
             x509.CertificateBuilder()
             .subject_name(subject)
@@ -347,83 +316,38 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
             .add_extension(ski, critical=False)
             .add_extension(aki, critical=False)
-            .add_extension(
-                x509.KeyUsage(
-                    digital_signature=True,
-                    content_commitment=False,
-                    key_encipherment=True,
-                    data_encipherment=False,
-                    key_agreement=False,
-                    key_cert_sign=False,
-                    crl_sign=False,
-                    encipher_only=False,
-                    decipher_only=False,
-                ),
-                critical=True,
-            )
-            .add_extension(
-                x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]),
-                critical=False,
-            )
+            .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=True, data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False, encipher_only=False, decipher_only=False), critical=True)
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
             .sign(ca_key, hashes.SHA256())
         )
-
         with open(key_path, "wb") as f:
-            f.write(server_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.TraditionalOpenSSL,
-                encryption_algorithm=serialization.NoEncryption()
-            ))
-
+            f.write(server_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
         with open(cert_path, "wb") as f:
             f.write(cert.public_bytes(serialization.Encoding.PEM))
-            
     except Exception as e:
         logging.error(f"Failed to generate Server Certificate: {e}")
         raise RuntimeError(f"Server Certificate generation failed: {e}")
 
 def ensure_ssl_certificate(local_ip):
-    if not CRYPTOGRAPHY_AVAILABLE: 
-        raise RuntimeError("Cryptography package required.")
-    
-    try:
-        os.makedirs(CERT_DIR, exist_ok=True)
-    except OSError as e:
-        logging.error(f"Failed to create certificate directory: {e}")
-        raise
-
+    if not CRYPTOGRAPHY_AVAILABLE: raise RuntimeError("Cryptography package required.")
+    try: os.makedirs(CERT_DIR, exist_ok=True)
+    except OSError: raise
     ca_cert_path = os.path.join(CERT_DIR, 'rootCA.pem')
     ca_key_path = os.path.join(CERT_DIR, 'rootCA.key')
     cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
     key_path = os.path.join(CERT_DIR, 'hub_key.pem')
-
     _ensure_root_ca(ca_cert_path, ca_key_path)
-
     reuse_existing = False
     if os.path.exists(cert_path) and os.path.exists(key_path):
         try:
-            with open(cert_path, "rb") as f:
-                c = x509.load_pem_x509_certificate(f.read())
-            
+            with open(cert_path, "rb") as f: c = x509.load_pem_x509_certificate(f.read())
             is_valid_time = c.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(days=30)
-            
             san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             san_ips = san_ext.value.get_values_for_type(x509.IPAddress)
             has_current_ip = ipaddress.ip_address(local_ip) in san_ips
-
-            if is_valid_time and has_current_ip:
-                reuse_existing = True
-            else:
-                logging.info("Existing certificate expired or IP changed. Regenerating...")
-
-        except Exception as e:
-            logging.warning(f"Existing certificate invalid or unreadable, will regenerate. Reason: {e}")
-            reuse_existing = False
-
-    if not reuse_existing:
-        logging.info(f"Generating new server certificate for IP: {local_ip}")
-        _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
-
+            if is_valid_time and has_current_ip: reuse_existing = True
+        except Exception: reuse_existing = False
+    if not reuse_existing: _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
     return cert_path, key_path
 
 @app.before_request
@@ -432,28 +356,19 @@ def _start_request_timer():
 
 @app.after_request
 def log_request(response):
-    if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': 
-        return response
+    if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': return response
     try:
         global _current_sec_requests
-        with traffic_lock:
-            _current_sec_requests += 1
-
+        with traffic_lock: _current_sec_requests += 1
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
             try:
                 SERVER_METRICS["req_count"] += 1
-                if SERVER_METRICS["avg_process_ms"] == 0:
-                    SERVER_METRICS["avg_process_ms"] = duration_ms
-                else:
-                    SERVER_METRICS["avg_process_ms"] = (SERVER_METRICS["avg_process_ms"] * 0.9) + (duration_ms * 0.1)
-            finally:
-                metrics_lock.release()
-                
-        if duration_ms > SLOW_REQUEST_THRESHOLD_MS: 
-            logging.warning(f"Slow req: {request.method} {request.path} took {duration_ms:.0f}ms")
-    except Exception as e: 
-        logging.debug(f"Request logging error: {e}")
+                if SERVER_METRICS["avg_process_ms"] == 0: SERVER_METRICS["avg_process_ms"] = duration_ms
+                else: SERVER_METRICS["avg_process_ms"] = (SERVER_METRICS["avg_process_ms"] * 0.9) + (duration_ms * 0.1)
+            finally: metrics_lock.release()
+        if duration_ms > SLOW_REQUEST_THRESHOLD_MS: logging.warning(f"Slow req: {request.method} {request.path} took {duration_ms:.0f}ms")
+    except Exception: pass
     return response
 
 def _status_log_tag(status_code):
@@ -471,34 +386,10 @@ def _guess_log_tag(message):
 def log_event_clean(action_type, device_name, details, status_code):
     time_str = datetime.now().strftime('%H:%M:%S')
     status_tag = _status_log_tag(status_code)
-
-    if action_type == "REGISTER":
-        segments = [
-            (f"[{time_str}] ", "log_timestamp"), 
-            (f"[{device_name}] ", "log_device"),
-            (f"REGISTER ", "log_register"), 
-            (f"{details} ", "log_default"), 
-            (f"[{status_code}]", status_tag)
-        ]
-    elif action_type == "CHECKIN":
-        segments = [
-            (f"[{time_str}] ", "log_timestamp"), 
-            (f"[{device_name}] ", "log_device"),
-            (f"CHECKIN  ", "log_checkin"), 
-            (f"{details} ", "log_default"), 
-            (f"[{status_code}]", status_tag)
-        ]
-    else:
-        segments = [
-            (f"[{time_str}] ", "log_timestamp"), 
-            (f"[{device_name}] ", "log_device"),
-            (f"{action_type} ", "log_default"), 
-            (f"[{status_code}]", status_tag)
-        ]
-
-    if gui_log_callback: 
-        gui_log_callback(segments)
-    
+    if action_type == "REGISTER": segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"REGISTER ", "log_register"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
+    elif action_type == "CHECKIN": segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"CHECKIN  ", "log_checkin"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
+    else: segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"{action_type} ", "log_default"), (f"[{status_code}]", status_tag)]
+    if gui_log_callback: gui_log_callback(segments)
     plain_msg = f"[{device_name}] {action_type}: {details} (status {status_code})"
     if status_code >= 500: logging.error(plain_msg)
     elif status_code >= 400: logging.warning(plain_msg)
@@ -513,7 +404,6 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             "attendee_type": getattr(attendee.attendee_type, 'value', str(attendee.attendee_type)), "gender": getattr(attendee.gender, 'value', str(attendee.gender))
         }
     event = {"status": status, "message": message, "device": device_name, "timestamp": scan_time, "attendee": att_dict}
-    
     with scan_clients_lock: clients_snapshot = list(SCAN_CLIENTS)
     for q in clients_snapshot:
         try: q.put_nowait(event)
@@ -534,31 +424,18 @@ def _compute_stats_snapshot(deep_scan=False):
     sessions = get_cached_sessions()
     mysql_factory = sessions.get('mysql') if sessions else None
     if not mysql_factory: return None
-        
     session = mysql_factory()
     try:
         total_attendees = session.query(Attendee).count()
         total_registrations = session.query(OfflineKioskAttendee).count()
-        
-        result = {
-            "total_attendees": total_attendees, 
-            "total_registrations": total_registrations,
-            "is_deep_scan": False
-        }
-        
+        result = {"total_attendees": total_attendees, "total_registrations": total_registrations, "is_deep_scan": False}
         if deep_scan:
             chk_30 = session.query(Attendee).filter(Attendee.checkin_history.like('%"30 August"%')).count()
             chk_31 = session.query(Attendee).filter(Attendee.checkin_history.like('%"31 August"%')).count()
             chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
-            result.update({
-                "chk_30": chk_30, "chk_31": chk_31, "chk_01": chk_01, 
-                "total_scans": chk_30 + chk_31 + chk_01,
-                "is_deep_scan": True
-            })
-            
+            result.update({"chk_30": chk_30, "chk_31": chk_31, "chk_01": chk_01, "total_scans": chk_30 + chk_31 + chk_01, "is_deep_scan": True})
         return result
-    finally: 
-        session.close()
+    finally: session.close()
 
 def stats_refresher_loop():
     loop_counter = 0
@@ -566,26 +443,21 @@ def stats_refresher_loop():
         try:
             needs_deep_scan = (loop_counter % 60 == 0)
             snapshot = _compute_stats_snapshot(deep_scan=needs_deep_scan)
-            
             if snapshot is not None:
                 today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-                
                 with stats_lock:
                     STATS_CACHE["total_attendees"] = snapshot["total_attendees"]
                     STATS_CACHE["total_registrations"] = snapshot["total_registrations"]
-                    
                     if snapshot["is_deep_scan"]:
                         STATS_CACHE["chk_30"] = snapshot["chk_30"]
                         STATS_CACHE["chk_31"] = snapshot["chk_31"]
                         STATS_CACHE["chk_01"] = snapshot["chk_01"]
                         STATS_CACHE["total_scans"] = snapshot["total_scans"]
-                    
                     STATS_CACHE["today_scans"] = {"2026-08-30": STATS_CACHE["chk_30"], "2026-08-31": STATS_CACHE["chk_31"], "2026-09-01": STATS_CACHE["chk_01"]}.get(today_date, 0)
                     STATS_CACHE["last_refreshed"] = time.time()
                     STATS_CACHE["last_error"] = None
         except Exception as e:
             with stats_lock: STATS_CACHE["last_error"] = str(e)
-            
         loop_counter += 1
         _global_shutdown_event.wait(3.0) 
 
@@ -602,136 +474,93 @@ def _submit_db_job(kind, payload):
     job = DBJob(kind=kind, payload=payload)
     try: DB_WRITE_QUEUE.put(job, timeout=1)
     except queue.Full: return 503, {"status": "error", "message": "System is very busy. Please wait a moment and try again."}
-        
     try: return job.future.result(timeout=DB_JOB_TIMEOUT)
     except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "The request took too long. Please try again."}
     except Exception as e: return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
 
 def _handle_checkin_job(payload):
-    identifier, search_type = payload["identifier"], payload["search_type"]
-    device_name, iso_timestamp = payload["device_name"], payload["iso_timestamp"]
-
-    if not identifier: 
-        return 400, {"status": "error", "message": "Please scan a valid QR code or enter an ID."}
-        
+    identifier, search_type, device_name, iso_timestamp = payload["identifier"], payload["search_type"], payload["device_name"], payload["iso_timestamp"]
+    if not identifier: return 400, {"status": "error", "message": "Please scan a valid QR code or enter an ID."}
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    
-    if not mysql_factory: 
-        return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
-    
+    if not mysql_factory: return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
     session = mysql_factory()
     try:
         attendee = None
-        if search_type == 'phone': 
-            attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
-        else: 
-            attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
-
+        if search_type == 'phone': attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
+        else: attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
         if not attendee:
             log_event_clean("CHECKIN", device_name, f"Not found: {identifier}", 404)
             broadcast_scan(None, "ERROR", f"Not found: {identifier}", device_name, iso_timestamp)
             return 404, {"status": "error", "message": f"Record not found. Please direct attendee to the Help Desk."}
-
         history = attendee.checkin_history
         if isinstance(history, str):
             try: history = json.loads(history)
             except Exception: history = {}
         if not isinstance(history, dict): history = {}
-
         current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
         date_map = EVENT_DATE_LABELS
-
-        if current_date_str not in date_map: 
-            return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
-            
+        if current_date_str not in date_map: return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
         today_key = date_map[current_date_str]
-        
         att_days = attendee.attendance_days or []
         if isinstance(att_days, str):
             try: att_days = json.loads(att_days)
             except Exception: att_days = []
-
         if today_key not in att_days:
             log_event_clean("CHECKIN", device_name, f"Denied (No pass {today_key})", 403)
             broadcast_scan(attendee, "ERROR", f"Denied (No pass {today_key})", device_name, iso_timestamp)
             return 403, {"status": "error", "message": f"Access Denied: Attendee does not have a valid pass for today ({today_key})."}
-
         if today_key in history:
             friendly_msg = f"Already Scanned! {attendee.full_name} checked in earlier today."
             log_event_clean("CHECKIN", device_name, friendly_msg, 400)
             broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
             return 400, {"status": "error", "message": friendly_msg}
-
         history[today_key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_name, "date_code": current_date_str, "display_date": today_key}
-        
         attendee.checkin_history = history
         flag_modified(attendee, "checkin_history")
         attendee.needs_cloud_sync, attendee.needs_sheet_sync, attendee.needs_local_sync, attendee.local_modified = True, True, False, True
-
         session.commit()
-        
         with stats_lock:
             if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
             elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
             elif current_date_str == "2026-09-01": STATS_CACHE["chk_01"] += 1
-            STATS_CACHE["total_scans"] += 1
-            STATS_CACHE["today_scans"] += 1
-            
+            STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
         success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
         log_event_clean("CHECKIN", device_name, success_msg, 200)
         broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
         return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
-        
     except Exception as e:
         try: session.rollback()
         except Exception: pass
         log_event_clean("CHECKIN", device_name, f"DB Error", 500)
-        logging.error(f"Internal Check-in error: {e}")
         return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
     finally:
         try: session.close()
         except Exception: pass
 
 def _handle_register_job(payload):
-    data, device_label = payload["data"], payload["device_label"]
-    iso_timestamp, mobile_number = payload["iso_timestamp"], payload["mobile_number"]
-
+    data, device_label, iso_timestamp, mobile_number = payload["data"], payload["device_label"], payload["iso_timestamp"], payload["mobile_number"]
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    
-    if not mysql_factory: 
-        return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
-        
+    if not mysql_factory: return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
     session = mysql_factory()
-
     try:
         existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
-        if existing_main:
-            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
-            return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
-
+        if existing_main: return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
         existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-        if existing_kiosk:
-            log_event_clean("REGISTER", device_label, f"{data.get('full_name')} (Already Exists)", 200)
-            return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
-
+        if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
         def gen_id(att_type: str) -> str:
             prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
             for _ in range(5000):
                 aid = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
-                if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first(): 
-                    return aid
+                if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first(): return aid
             raise RuntimeError("ID generation failed after 5000 attempts")
-
         new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
         today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
-        
         checkin_history_dict = {}
         if today_date in EVENT_DATE_LABELS:
             key = EVENT_DATE_LABELS[today_date]
             checkin_history_dict[key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_label, "date_code": today_date, "display_date": key}
-
         new_kiosk_reg = OfflineKioskAttendee(
             id=str(uuid.uuid4()), attendee_id=new_attendee_id, full_name=data.get('full_name'), mobile=mobile_number,
             email=data.get('email', ''), gender=data.get('gender'), attendee_type=data.get('attendee_type'),
@@ -741,63 +570,46 @@ def _handle_register_job(payload):
             photo_url=None, checkin_history=checkin_history_dict, device_name=device_label, needs_cloud_sync=True,
             needs_sheet_sync=True, needs_local_sync=False, local_modified=True
         )
-        
         try:
             session.add(new_kiosk_reg)
             session.commit()
-            
             with stats_lock:
                 STATS_CACHE["total_registrations"] += 1
-                if today_date == "2026-08-30": 
-                    STATS_CACHE["chk_30"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
-                elif today_date == "2026-08-31": 
-                    STATS_CACHE["chk_31"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
-                elif today_date == "2026-09-01": 
-                    STATS_CACHE["chk_01"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
-                
+                if today_date == "2026-08-30": STATS_CACHE["chk_30"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                elif today_date == "2026-08-31": STATS_CACHE["chk_31"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                elif today_date == "2026-09-01": STATS_CACHE["chk_01"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
         except IntegrityError:
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-            if existing: 
-                return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
+            if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
             return 500, {"status": "error", "message": "Another registration is processing. Please try clicking submit again."}
-
         log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
         return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
-        
     except Exception as e:
         try: session.rollback()
         except Exception: pass
-        logging.error(f"Internal Register error: {e}")
         return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
     finally:
         try: session.close()
         except Exception: pass
 
 def db_writer_loop(worker_id):
-    logging.info(f"DB writer #{worker_id} highly-available ready")
     while not _global_shutdown_event.is_set() and not _db_shutdown_event.is_set():
         try:
             job = DB_WRITE_QUEUE.get(timeout=1.0)
             if job is None: 
                 DB_WRITE_QUEUE.task_done()
                 break
-                
             try:
                 if job.kind == "checkin": result = _handle_checkin_job(job.payload)
                 elif job.kind == "register": result = _handle_register_job(job.payload)
                 else: result = (500, {"status": "error", "message": "Unknown job payload type."})
-                    
                 if not job.future.done(): job.future.set_result(result)
             except Exception as e:
-                logging.error(f"Job Processing Exception worker {worker_id}: {e}")
                 if not job.future.done(): job.future.set_exception(e)
-            finally: 
-                DB_WRITE_QUEUE.task_done()
-        except queue.Empty:
-            continue
-        except Exception as fallback_e:
-            logging.error(f"Worker {worker_id} survived a critical thread loop crash: {fallback_e}")
+            finally: DB_WRITE_QUEUE.task_done()
+        except queue.Empty: continue
+        except Exception: pass
 
 def start_db_writers():
     _db_shutdown_event.clear()
@@ -814,13 +626,9 @@ def stop_db_writers():
     _db_writer_threads.clear()
 
 @app.route('/manifest.json')
-def serve_manifest():
-    return app.send_static_file('manifest.json')
-
+def serve_manifest(): return app.send_static_file('manifest.json')
 @app.route('/sw.js')
-def serve_service_worker():
-    return app.send_static_file('sw.js')
-
+def serve_service_worker(): return app.send_static_file('sw.js')
 @app.route('/')
 def index(): return render_template('index.html')
 @app.route('/scanner')
@@ -833,7 +641,6 @@ def stats(): return render_template('network_stats.html')
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     ip = request.remote_addr
-    
     if request.method == 'POST':
         data = request.json or {}
         reported_name = data.get('device_name', 'Unknown Device')
@@ -849,82 +656,60 @@ def get_server_status():
     if reported_name == "null": reported_name = "Unknown Device"
     if not device_id: device_id = f"{ip}::{reported_name}"
         
+    if ip == '127.0.0.1':
+        try:
+            batt = psutil.sensors_battery()
+            if batt: battery = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
+        except Exception: pass
+        try:
+            if hasattr(psutil, 'sensors_temperatures'):
+                temps = psutil.sensors_temperatures()
+                if temps:
+                    for k, v in temps.items():
+                        if v and len(v) > 0:
+                            temp = f"{int(v[0].current)}°C"
+                            break
+        except Exception: pass
+
     pending_msg = None
     with device_lock:
         display_name = CUSTOM_DEVICE_NAMES.get(device_id, reported_name)
+        if device_id in DEVICE_MESSAGES: pending_msg = DEVICE_MESSAGES.pop(device_id)
+        ACTIVE_DEVICES[device_id] = {'last_seen': time.time(), 'name': display_name, 'original_name': reported_name, 'ip': ip, 'battery': battery, 'temp': temp}
         
-        if device_id in DEVICE_MESSAGES:
-            pending_msg = DEVICE_MESSAGES.pop(device_id)
-
-        ACTIVE_DEVICES[device_id] = {
-            'last_seen': time.time(), 
-            'name': display_name,
-            'original_name': reported_name,
-            'ip': ip,
-            'battery': battery,
-            'temp': temp
-        }
-        
-    return jsonify({
-        "test_mode": SERVER_TEST_MODE, 
-        "test_date": SERVER_TEST_DATE,
-        "message": pending_msg
-    }), 200
+    return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE, "message": pending_msg, "canonical_name": display_name}), 200
 
 @app.route('/api/device/message', methods=['POST'])
 def send_device_message():
     data = request.json or {}
-    device_id = data.get('id')
-    message = data.get('message', '').strip()
-    
-    if not device_id or not message:
-        return jsonify({"status": "error", "message": "Missing device ID or message."}), 400
-        
-    with device_lock:
-        DEVICE_MESSAGES[device_id] = message
-        
+    device_id, message = data.get('id'), data.get('message', '').strip()
+    if not device_id or not message: return jsonify({"status": "error", "message": "Missing device ID or message."}), 400
+    with device_lock: DEVICE_MESSAGES[device_id] = message
     return jsonify({"status": "success", "message": "Message queued for device."}), 200
 
 @app.route('/api/device/rename', methods=['POST'])
 def rename_device():
     data = request.json or {}
-    device_id = data.get('id') or data.get('ip')
-    new_name = data.get('new_name', '').strip()
-    
-    if not device_id or not new_name:
-        return jsonify({"status": "error", "message": "Missing device ID or new name."}), 400
-        
+    device_id, new_name = data.get('id') or data.get('ip'), data.get('new_name', '').strip()
+    if not device_id or not new_name: return jsonify({"status": "error", "message": "Missing device ID or new name."}), 400
     with device_lock:
         CUSTOM_DEVICE_NAMES[device_id] = new_name
-        if device_id in ACTIVE_DEVICES:
-            ACTIVE_DEVICES[device_id]['name'] = new_name
-            
+        if device_id in ACTIVE_DEVICES: ACTIVE_DEVICES[device_id]['name'] = new_name
     try:
-        with open(DEVICE_NAMES_FILE, 'w') as f:
-            json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
-    except Exception as e:
-        logging.error(f"Failed to save custom device names: {e}")
-        
+        with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
+    except Exception: pass
     return jsonify({"status": "success", "message": "Device renamed."}), 200
 
 @app.route('/api/network-data', methods=['GET'])
 def get_network_data():
     current_time = time.time()
     active_devices = {}
-    
     with device_lock:
         for d_id, data in list(ACTIVE_DEVICES.items()):
-            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: 
-                active_devices[d_id] = data
-            else: 
-                del ACTIVE_DEVICES[d_id]
-                
+            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: active_devices[d_id] = data
+            else: del ACTIVE_DEVICES[d_id]
     with stats_lock:
-        global_stats = {
-            "total_scans": STATS_CACHE["total_scans"], 
-            "total_registrations": STATS_CACHE["total_registrations"], 
-            "today_scans": STATS_CACHE["today_scans"]
-        }
+        global_stats = {"total_scans": STATS_CACHE["total_scans"], "total_registrations": STATS_CACHE["total_registrations"], "today_scans": STATS_CACHE["today_scans"]}
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
 @app.route('/api/stream-scans')
@@ -945,32 +730,17 @@ def stream_scans():
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
     data = request.json or {}
-    payload = {
-        "identifier": str(data.get('attendee_id', data.get('qr_data', data.get('id', '')))).strip(), 
-        "search_type": data.get('search_type', 'id'), 
-        "device_name": data.get('device_name', f"Scanner ({request.remote_addr})"), 
-        "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    }
+    payload = {"identifier": str(data.get('attendee_id', data.get('qr_data', data.get('id', '')))).strip(), "search_type": data.get('search_type', 'id'), "device_name": data.get('device_name', f"Scanner ({request.remote_addr})"), "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')}
     status_code, body = _submit_db_job("checkin", payload)
     return jsonify(body), status_code
 
 @app.route('/api/register', methods=['POST'])
 def process_registration():
     data = request.json or {}
-    mobile_number = str(data.get('mobile', '')).strip()
-    full_name = str(data.get('full_name', '')).strip()
-
-    if not full_name:
-        return jsonify({"status": "error", "message": "Full name is required."}), 400
-    if not mobile_number or len(mobile_number) < 10:
-        return jsonify({"status": "error", "message": "A valid 10-digit mobile number is required."}), 400
-
-    payload = {
-        "data": data, 
-        "mobile_number": mobile_number, 
-        "device_label": data.get('device_name', f"Kiosk ({request.user_agent.platform or 'Unknown'} - {request.remote_addr})"), 
-        "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    }
+    mobile_number, full_name = str(data.get('mobile', '')).strip(), str(data.get('full_name', '')).strip()
+    if not full_name: return jsonify({"status": "error", "message": "Full name is required."}), 400
+    if not mobile_number or len(mobile_number) < 10: return jsonify({"status": "error", "message": "A valid 10-digit mobile number is required."}), 400
+    payload = {"data": data, "mobile_number": mobile_number, "device_label": data.get('device_name', f"Kiosk ({request.user_agent.platform or 'Unknown'} - {request.remote_addr})"), "iso_timestamp": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.000Z')}
     status_code, body = _submit_db_job("register", payload)
     return jsonify(body), status_code
 
@@ -996,56 +766,39 @@ def check_mobile():
 @app.route('/api/pincode/<code>', methods=['GET'])
 def lookup_pincode(code):
     code = (code or '').strip()
-    if not code.isdigit() or len(code) != 6:
-        return jsonify({"status": "error", "message": "Enter a valid 6-digit pincode."}), 400
-    if not INDIAPINS_AVAILABLE:
-        return jsonify({"status": "unavailable", "message": "Pincode lookup not installed on this hub."}), 503
+    if not code.isdigit() or len(code) != 6: return jsonify({"status": "error", "message": "Enter a valid 6-digit pincode."}), 400
+    if not INDIAPINS_AVAILABLE: return jsonify({"status": "unavailable", "message": "Pincode lookup not installed on this hub."}), 503
     try:
         matches = indiapins.matching(code)
-        if not matches:
-            return jsonify({"status": "not_found"}), 200
+        if not matches: return jsonify({"status": "not_found"}), 200
         first = matches[0]
         return jsonify({"status": "success", "district": first.get("District", ""), "state": first.get("State", "")}), 200
-    except Exception as e:
-        logging.error(f"Pincode lookup error for {code}: {e}")
-        return jsonify({"status": "error", "message": "Lookup failed."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Lookup failed."}), 500
 
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
-    limit = request.args.get('limit', 500, type=int)
-    limit = max(1, min(limit, 1000))
-    page = request.args.get('page', 1, type=int)
+    limit, page = max(1, min(request.args.get('limit', 500, type=int), 1000)), request.args.get('page', 1, type=int)
     offset = max(0, (page - 1) * limit)
-
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
     if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
         main_att = session.query(Attendee).order_by(Attendee.created_at.asc(), Attendee.id.asc()).offset(offset).limit(limit).all()
-        kiosk_att = []
-        rem_limit = limit - len(main_att)
-        if rem_limit > 0:
-            kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(offset).limit(rem_limit).all()
-            
+        kiosk_att, rem_limit = [], limit - len(main_att)
+        if rem_limit > 0: kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(offset).limit(rem_limit).all()
         results = []
         for att in (main_att + kiosk_att):
             att_dict = {
-                "id": att.id, "attendee_id": att.attendee_id, "full_name": att.full_name,
-                "mobile": att.mobile, "email": att.email,
-                "gender": att.gender.name if hasattr(att.gender, 'name') else str(att.gender),
-                "attendee_type": att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type),
-                "business_name": att.business_name, "business_category": att.business_category,
-                "city": att.city, "state": att.state, "pincode": att.pincode,
-                "needs_cloud_sync": getattr(att, 'needs_cloud_sync', False),
-                "checkin_history": att.checkin_history if isinstance(att.checkin_history, dict) else {},
+                "id": att.id, "attendee_id": att.attendee_id, "full_name": att.full_name, "mobile": att.mobile, "email": att.email,
+                "gender": att.gender.name if hasattr(att.gender, 'name') else str(att.gender), "attendee_type": att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type),
+                "business_name": att.business_name, "business_category": att.business_category, "city": att.city, "state": att.state, "pincode": att.pincode,
+                "needs_cloud_sync": getattr(att, 'needs_cloud_sync', False), "checkin_history": att.checkin_history if isinstance(att.checkin_history, dict) else {},
                 "created_at": att.created_at.isoformat() + "Z" if att.created_at else None
             }
             results.append(att_dict)
         return jsonify(results), 200
-    except Exception as e:
-        logging.error(f"Failed to fetch attendees API: {e}")
-        return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
     finally:
         try: session.close()
         except Exception: pass
@@ -1057,7 +810,7 @@ class WaitressHttpThread(threading.Thread):
         self.ctx = app.app_context(); self.ctx.push()
     def run(self):
         try: self.server.run()
-        except Exception: logging.exception("Waitress engine crashed")
+        except Exception: pass
     def shutdown(self): self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
@@ -1071,7 +824,7 @@ class HttpsFlaskThread(threading.Thread):
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
         try: self.server.start()
-        except Exception: logging.exception("Cheroot engine crashed")
+        except Exception: pass
     def shutdown(self): self.server.stop()
 
 def get_local_ip():
@@ -1094,16 +847,10 @@ class AnimatedMeter:
         self.current_val = 0.0
         self.target_val = 0.0
         self._last_int_val = -1
-
-    def set_target(self, val):
-        self.target_val = float(val)
-
+    def set_target(self, val): self.target_val = float(val)
     def tick(self):
-        if abs(self.target_val - self.current_val) > 0.1:
-            self.current_val += (self.target_val - self.current_val) * 0.10 
-        else:
-            self.current_val = self.target_val
-            
+        if abs(self.target_val - self.current_val) > 0.1: self.current_val += (self.target_val - self.current_val) * 0.10 
+        else: self.current_val = self.target_val
         new_int_val = int(round(self.current_val))
         if new_int_val != self._last_int_val:
             self.meter.amountusedvar.set(new_int_val)
@@ -1113,57 +860,39 @@ class ServerHub(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.6 (Enterprise Dual-Sync Edition)")
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        
         ww, wh = max(1024, min(1600, int(sw * 0.90))), max(600, min(900, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
         self.minsize(1024, 600)
-
         self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
-
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
-        
         self.cf_lock = threading.Lock()
         self.cloudflare_url = "Offline"
         self.cf_process = None
         self._cf_connecting = False  
-        
         self.SessionMySQL = None
         self.SessionSQLite = None
         self._db_checked = False
-        
         threading.Thread(target=self.connect_db, daemon=True).start()
-
         self.http_thread = None
         self.https_thread = None
-        
         self.log_lock = threading.Lock()
         self.log_buffer_flask = []
         self.log_buffer_network = []
         self.log_buffer_cf = []
-        
         self.gui_queue = queue.Queue()
         self._meter_cache = {}
         global gui_log_callback
         gui_log_callback = self.log_flask_event
-        
         self.build_ui()
-        self.animated_meters = {
-            "cpu": AnimatedMeter(self.mini_meter_cpu),
-            "ram": AnimatedMeter(self.mini_meter_ram),
-            "net": AnimatedMeter(self.mini_meter_net),
-            "api": AnimatedMeter(self.mini_meter_api)
-        }
-
+        self.animated_meters = {"cpu": AnimatedMeter(self.mini_meter_cpu), "ram": AnimatedMeter(self.mini_meter_ram), "net": AnimatedMeter(self.mini_meter_net), "api": AnimatedMeter(self.mini_meter_api)}
         self.flush_log_buffers()
         self.process_gui_queue()
         self.refresh_stats()
         self.refresh_hw_meters()
         self.animation_loop()
-
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        
         self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
@@ -1182,27 +911,19 @@ class ServerHub(ttk.Window):
         try:
             session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
             return int((time.time() - start) * 1000), "ONLINE"
-        except Exception:
-            return 0, "OFFLINE"
+        except Exception: return 0, "OFFLINE"
 
     def _ping_cloud(self, session):
-        with self.cf_lock:
-            cf_url = self.cloudflare_url
-            
-        if cf_url == "Offline" or cf_url == "Pending":
-            return 0, "OFFLINE"
-            
+        with self.cf_lock: cf_url = self.cloudflare_url
+        if cf_url == "Offline" or cf_url == "Pending": return 0, "OFFLINE"
         start = time.time()
         try:
             session.get(f"{cf_url}/api/status", timeout=(3, 7), verify=False)
             return int((time.time() - start) * 1000), "ONLINE"
         except requests.exceptions.RequestException as e:
             err_msg = str(e)
-            if "Max retries exceeded" in err_msg or "NameResolutionError" in err_msg:
-                clean_msg = "DNS resolution pending or tunnel unreachable."
-            else:
-                clean_msg = err_msg[:100] + "..."
-                
+            if "Max retries exceeded" in err_msg or "NameResolutionError" in err_msg: clean_msg = "DNS resolution pending or tunnel unreachable."
+            else: clean_msg = err_msg[:100] + "..."
             if getattr(self, "_last_ping_err", "") != clean_msg: 
                 self._append_log('cf', f"[PING ERROR] {clean_msg}")
                 self._last_ping_err = clean_msg
@@ -1216,14 +937,10 @@ class ServerHub(ttk.Window):
             try:
                 future_local = self.ping_executor.submit(self._ping_local, session)
                 future_cloud = self.ping_executor.submit(self._ping_cloud, session)
-                
                 l_ms, l_stat = future_local.result(timeout=4)
                 c_ms, c_stat = future_cloud.result(timeout=9)
-
-                with network_latency_lock: 
-                    NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
-            except Exception as e:
-                logging.error(f"Ping Daemon Processing Error: {e}")
+                with network_latency_lock: NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
+            except Exception: pass
             _global_shutdown_event.wait(3.0)
 
     def _append_log(self, widget_id, message, tag=None):
@@ -1233,78 +950,54 @@ class ServerHub(ttk.Window):
             elif widget_id == 'network': self.log_buffer_network.append(segments)
             elif widget_id == 'cf': self.log_buffer_cf.append(segments)
 
-    def log_flask_event(self, message): 
-        self._append_log('flask', message)
+    def log_flask_event(self, message): self._append_log('flask', message)
 
     def flush_log_buffers(self):
         if not self.winfo_exists(): return
         try:
             with self.log_lock:
-                flask_logs = list(self.log_buffer_flask)
-                net_logs = list(self.log_buffer_network)
-                cf_logs = list(self.log_buffer_cf)
-                self.log_buffer_flask.clear()
-                self.log_buffer_network.clear()
-                self.log_buffer_cf.clear()
-
+                flask_logs, net_logs, cf_logs = list(self.log_buffer_flask), list(self.log_buffer_network), list(self.log_buffer_cf)
+                self.log_buffer_flask.clear(); self.log_buffer_network.clear(); self.log_buffer_cf.clear()
             if flask_logs: self._write_logs_to_widget(self.log_flask.text, flask_logs)
             if net_logs: self._write_logs_to_widget(self.log_network.text, net_logs)
-            if cf_logs and hasattr(self, 'log_cf') and self.log_cf: 
-                self._write_logs_to_widget(self.log_cf.text, cf_logs)
-        except Exception as e:
-            logging.error(f"flush_log_buffers error: {e}")
-        finally:
-            self.after(200, self.flush_log_buffers)
+            if cf_logs and hasattr(self, 'log_cf') and self.log_cf: self._write_logs_to_widget(self.log_cf.text, cf_logs)
+        except Exception: pass
+        finally: self.after(200, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
         if not text_widget.winfo_exists(): return
         text_widget.configure(state=NORMAL)
-        
         if len(log_batches) > 100:
             log_batches = log_batches[-100:]
             text_widget.insert(END, f"[{datetime.now().strftime('%H:%M:%S')}] [SYSTEM] Extremely high load detected! UI skipped older logs to maintain performance. Check log file for full history.\n", "log_warning")
-
         for segments in log_batches:
             for txt, tg in segments: 
                 if tg: text_widget.insert(END, txt, tg)
                 else: text_widget.insert(END, txt)
             text_widget.insert(END, "\n")
         text_widget.see(END)
-        
         lc = int(text_widget.index('end-1c').split('.')[0])
-        if lc > MAX_LOG_LINES: 
-            text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
-            
+        if lc > MAX_LOG_LINES: text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
         text_widget.configure(state=DISABLED)
 
     def process_gui_queue(self):
         if not self.winfo_exists(): return
-        
         start_time = time.perf_counter()
         try:
             while time.perf_counter() - start_time < 0.015:
-                try: 
-                    task = self.gui_queue.get_nowait()
-                except queue.Empty: 
-                    break
-                try:
-                    task()
-                except Exception as e:
-                    logging.error(f"gui_queue task execution error: {e}")
-        except Exception as e:
-            logging.error(f"process_gui_queue outer error: {e}")
-        finally:
-            self.after(25, self.process_gui_queue)
+                try: task = self.gui_queue.get_nowait()
+                except queue.Empty: break
+                try: task()
+                except Exception: pass
+        except Exception: pass
+        finally: self.after(25, self.process_gui_queue)
 
     def animation_loop(self):
         if not self.winfo_exists(): return
         try:
-            for anim_meter in self.animated_meters.values():
-                anim_meter.tick()
-        except Exception as e:
-            pass
-        finally:
-            self.after(16, self.animation_loop) 
+            for anim_meter in self.animated_meters.values(): anim_meter.tick()
+        except Exception: pass
+        finally: self.after(16, self.animation_loop) 
 
     def clear_system_logs(self):
         with self.log_lock: self.log_buffer_flask.clear()
@@ -1335,7 +1028,6 @@ class ServerHub(ttk.Window):
 
     def _configure_custom_styles(self):
         colors = self.style.colors
-        
         self.APP_BG = "#1E1E1E"        
         self.PANEL_BG = "#252526"      
         self.BORDER = "#3E3E42"        
@@ -1344,34 +1036,25 @@ class ServerHub(ttk.Window):
         self.SUCCESS_FG = "#4EC9B0"
         self.WARN_FG = "#D7BA7D"
         self.ERR_FG = "#F44747"
-        
         self.configure(background=self.APP_BG)
         self.style.configure(".", background=self.APP_BG, foreground=self.TEXT_FG, font=("Segoe UI", 9))
         self.style.configure("TFrame", background=self.APP_BG)
         self.style.configure("TLabel", background=self.APP_BG, foreground=self.TEXT_FG)
-
         self.style.configure("Panel.TFrame", background=self.PANEL_BG)
         self.style.configure("Panel.TLabel", background=self.PANEL_BG, foreground=self.TEXT_FG)
         self.style.configure("PanelInfo.TLabel", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 8, "bold"))
         self.style.configure("Panel.TCheckbutton", background=self.PANEL_BG, foreground=self.TEXT_FG)
-
         self.style.configure("TLabelframe", background=self.PANEL_BG, bordercolor=self.BORDER)
         self.style.configure("TLabelframe.Label", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 9, "bold"))
-
         self.style.configure("Card.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
         self.style.configure("CardTitle.TLabel", background=self.PANEL_BG, foreground="#9D9D9D", font=("Segoe UI", 8, "bold"))
-        
-        for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"): 
-            self.style.configure(f"CardValue.{key}.TLabel", background=self.PANEL_BG, foreground=colors.get(key), font=("Segoe UI", 20, "bold"))
-        
+        for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"): self.style.configure(f"CardValue.{key}.TLabel", background=self.PANEL_BG, foreground=colors.get(key), font=("Segoe UI", 20, "bold"))
         self.style.configure("CardFlash.TLabel", background=self.PANEL_BG, foreground="#FFD700", font=("Segoe UI", 20, "bold"))
         self.style.configure("Soft.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
-        
         self.style.configure("Treeview.Heading", background=self.PANEL_BG, foreground=self.ACCENT, bordercolor=self.BORDER, relief="flat", font=("Segoe UI", 9, "bold"))
         self.style.map("Treeview.Heading", background=[("active", "#2D2D30")])
         self.style.configure("Treeview", bordercolor=self.BORDER, borderwidth=1, background=self.APP_BG, foreground=self.TEXT_FG, fieldbackground=self.APP_BG, rowheight=28)
         self.style.map('Treeview', background=[('selected', '#094771')]) 
-        
         self.style.configure("LogHeader.TLabel", background="#2D2D30", foreground=self.SUCCESS_FG, font=("Segoe UI", 9, "bold"), padding=10)
 
     def _build_status_badge(self, parent, initial_text, bootstyle):
@@ -1384,17 +1067,13 @@ class ServerHub(ttk.Window):
     def _create_log_box(self, parent, title, clear_cmd, side=LEFT, padx=4):
         frame = ttk.Frame(parent, style="Soft.TFrame")
         frame.pack(side=side, fill=BOTH, expand=True, padx=padx, pady=0)
-        
         hdr = ttk.Frame(frame, style="Panel.TFrame")
         hdr.pack(fill=X)
-        
         ttk.Label(hdr, text=title if title else "Live Log Feed", style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
         if clear_cmd: ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
-            
         log_box = ScrolledText(frame, font=("Consolas", 8))
         log_box.pack(fill=BOTH, expand=True, padx=0, pady=0)
         log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
-        
         log_box.text.tag_configure("log_default", foreground="#D4D4D4")
         log_box.text.tag_configure("log_timestamp", foreground="#858585", font=("Consolas", 8))
         log_box.text.tag_configure("log_device", foreground=self.ACCENT, font=("Consolas", 8, "bold"))
@@ -1419,17 +1098,14 @@ class ServerHub(ttk.Window):
         with device_lock:
             if d_id not in ACTIVE_DEVICES: return
             old_name = ACTIVE_DEVICES[d_id]['name']
-            
         new_name = simpledialog.askstring("Rename Device", f"Enter new name for '{old_name}':", initialvalue=old_name, parent=self)
         if new_name and new_name.strip() and new_name.strip() != old_name:
             with device_lock:
                 CUSTOM_DEVICE_NAMES[d_id] = new_name.strip()
-                if d_id in ACTIVE_DEVICES:
-                    ACTIVE_DEVICES[d_id]['name'] = new_name.strip()
+                if d_id in ACTIVE_DEVICES: ACTIVE_DEVICES[d_id]['name'] = new_name.strip()
             try:
-                with open(DEVICE_NAMES_FILE, 'w') as f:
-                    json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
-            except Exception as e: pass
+                with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
+            except Exception: pass
             self.refresh_stats()
             self._append_log('network', f"[INFO] Device '{old_name}' renamed to '{new_name.strip()}'.")
 
@@ -1440,31 +1116,25 @@ class ServerHub(ttk.Window):
         with device_lock:
             if d_id not in ACTIVE_DEVICES: return
             d_name = ACTIVE_DEVICES[d_id]['name']
-
         msg = simpledialog.askstring("Send Message", f"Enter message to push to '{d_name}':", parent=self)
         if msg and msg.strip():
-            with device_lock:
-                DEVICE_MESSAGES[d_id] = msg.strip()
+            with device_lock: DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
 
     def build_ui(self):
         self._configure_custom_styles()
         self.root_container = ttk.Frame(self, style="TFrame")
         self.root_container.pack(fill=BOTH, expand=True)
-
         sidebar_outer = ttk.Frame(self.root_container, width=250, style="TFrame")
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
-        
         self.sidebar_canvas = ttk.Canvas(sidebar_outer, highlightthickness=0, background=self.APP_BG)
         sidebar_vsb = ttk.Scrollbar(sidebar_outer, orient=VERTICAL, command=self.sidebar_canvas.yview)
         self.sidebar_canvas.configure(yscrollcommand=sidebar_vsb.set)
         sidebar_vsb.pack(side=RIGHT, fill=Y)
         self.sidebar_canvas.pack(side=LEFT, fill=BOTH, expand=True)
-
         sidebar = ttk.Frame(self.sidebar_canvas, padding=12, style="TFrame")
         sidebar_window = self.sidebar_canvas.create_window((0, 0), window=sidebar, anchor="nw")
-        
         sidebar.bind("<Configure>", lambda e: self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox("all")))
         self.sidebar_canvas.bind("<Configure>", lambda e: self.sidebar_canvas.itemconfig(sidebar_window, width=e.width))
         self.sidebar_canvas.bind("<Enter>", lambda e: self.sidebar_canvas.bind_all("<MouseWheel>", lambda ev: self.sidebar_canvas.yview_scroll(int(-1 * (ev.delta / 120)), "units")))
@@ -1479,11 +1149,9 @@ class ServerHub(ttk.Window):
         self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ STOP ENGINE", bootstyle="danger-outline", state=DISABLED, command=self.stop_flask)
         self.btn_stop_flask.pack(fill=X, pady=2)
         ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", style="PanelInfo.TLabel").pack(pady=(8, 4))
-        
         self.lbl_flask_qr = ttk.Label(flask_frame, style="Panel.TLabel")
         self.lbl_flask_qr.pack()
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
-        
         self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font=("Segoe UI", 9), style="Panel.TLabel", cursor="hand2")
         self.lbl_flask_link.pack(pady=4)
         self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
@@ -1504,16 +1172,13 @@ class ServerHub(ttk.Window):
         self.btn_start_cf.pack(fill=X, pady=2)
         self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ STOP TUNNEL", bootstyle="danger-outline", state=DISABLED, command=self.stop_cf)
         self.btn_stop_cf.pack(fill=X, pady=2)
-        
         ttk.Label(cf_frame, text="Public Tunnel QR:", style="PanelInfo.TLabel").pack(pady=(8, 4))
         self.lbl_cf_qr = ttk.Label(cf_frame, style="Panel.TLabel")
         self.lbl_cf_qr.pack()
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
-        
         self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font=("Segoe UI", 9), style="Panel.TLabel", cursor="hand2")
         self.lbl_cf_link.pack(pady=4)
         self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url not in ["Offline", "Pending"] else None)
-        
         cf_btn_row = ttk.Frame(cf_frame, style="Panel.TFrame")
         cf_btn_row.pack(fill=X, pady=(4, 2))
         ttk.Button(cf_btn_row, text="Copy URL", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
@@ -1523,12 +1188,10 @@ class ServerHub(ttk.Window):
         test_frame.pack(fill=X, pady=6)
         self.test_mode = ttk.BooleanVar(value=False)
         self.test_date = ttk.StringVar(value="2026-08-30")
-        
         chk_wrap = ttk.Frame(test_frame, style="Panel.TFrame")
         chk_wrap.pack(anchor=W, pady=4)
         self.chk_test = ttk.Checkbutton(chk_wrap, text="Testing Mode OFF", variable=self.test_mode, bootstyle="warning-round-toggle", style="Panel.TCheckbutton", command=self.toggle_test_mode)
         self.chk_test.pack()
-        
         self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
         self.cb_test_date.pack(fill=X, pady=(4, 0))
         self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
@@ -1544,11 +1207,9 @@ class ServerHub(ttk.Window):
         
         header_container = ttk.Frame(content, style="TFrame")
         header_container.pack(fill=X, pady=(0, 15))
-        
         left_hdr = ttk.Frame(header_container, style="TFrame")
         left_hdr.pack(side=LEFT, fill=Y)
         ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font=("Segoe UI", 18, "bold"), foreground=self.SUCCESS_FG).pack(anchor=W)
-        
         bot_hdr = ttk.Frame(left_hdr, style="TFrame")
         bot_hdr.pack(fill=X, pady=(8, 0))
         self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
@@ -1557,12 +1218,10 @@ class ServerHub(ttk.Window):
 
         right_hdr = ttk.Frame(header_container, style="TFrame")
         right_hdr.pack(side=RIGHT, fill=Y)
-        
         actions_f = ttk.Frame(right_hdr, style="TFrame")
         actions_f.pack(side=RIGHT, padx=(12, 0))
         ttk.Button(actions_f, text="⟳ Refresh", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 6))
         ttk.Button(actions_f, text="⛶ Fullscreen", bootstyle="outline-info", command=self.toggle_fullscreen).pack(side=TOP, fill=X)
-        
         hw_f = ttk.Frame(right_hdr, style="TFrame")
         hw_f.pack(side=RIGHT)
         
@@ -1578,37 +1237,28 @@ class ServerHub(ttk.Window):
         
         net_info_card = ttk.Frame(right_hdr, style="Card.TFrame", padding=(12, 6))
         net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
-        
         ttk.Label(net_info_card, text="SYSTEM HEALTH", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 4))
-        
         self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN: WAIT", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
         self.lbl_hdr_local_ping.grid(row=1, column=0, sticky=W, padx=(0, 12), pady=2)
-        
         self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN: WAIT", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
         self.lbl_hdr_cloud_ping.grid(row=1, column=1, sticky=W, pady=2)
-        
         self.lbl_hdr_traffic = ttk.Label(net_info_card, text="Traffic: 0 req/s", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.ACCENT)
         self.lbl_hdr_traffic.grid(row=2, column=0, sticky=W, padx=(0, 12), pady=2)
-        
         self.lbl_hdr_db_queue = ttk.Label(net_info_card, text="DB Q: 0", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground="#C586C0")
         self.lbl_hdr_db_queue.grid(row=2, column=1, sticky=W, pady=2)
 
         ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(0, 4))
         stats_container = ttk.Frame(content, style="TFrame")
         stats_container.pack(fill=X, expand=False, pady=(0, 16))
-        
         row1 = ttk.Frame(stats_container, style="TFrame")
         row1.pack(fill=X, expand=True, pady=(0, 6))
         self.stat_vars = {}
-        
         self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
         self._create_stat_card(row1, "KIOSK REGISTRATIONS", "0", INFO, "kiosk_reg")
         self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
         self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
-        
         row2 = ttk.Frame(stats_container, style="TFrame")
         row2.pack(fill=X, expand=True, pady=(0, 0))
-        
         self._create_stat_card(row2, "TODAY CHECK-IN", "0", SUCCESS, "chk_today")
         self._create_stat_card(row2, "30th Aug Check-ins", "0", LIGHT, "chk_30")
         self._create_stat_card(row2, "31st Aug Check-ins", "0", LIGHT, "chk_31")
@@ -1624,7 +1274,6 @@ class ServerHub(ttk.Window):
 
         devices_frame = ttk.Frame(content, style="Soft.TFrame")
         devices_frame.pack(fill=X, expand=False, pady=(0, 16)) 
-        
         tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
         tree_scroll.pack(side=RIGHT, fill=Y)
 
@@ -1680,23 +1329,14 @@ class ServerHub(ttk.Window):
         
         footer = ttk.Frame(content, style="TFrame")
         footer.pack(fill=X, pady=(8, 0))
-        ttk.Label(
-            footer, 
-            text="Engineered for Event Resilience\nPowered by EllowDigital", 
-            font=("Consolas", 9, "bold"), 
-            foreground="#D7BA7D", 
-            justify=RIGHT
-        ).pack(side=RIGHT)
+        ttk.Label(footer, text="Engineered for Event Resilience\nPowered by EllowDigital", font=("Consolas", 9, "bold"), foreground="#D7BA7D", justify=RIGHT).pack(side=RIGHT)
 
     def on_close(self):
         try:
             _global_shutdown_event.set() 
-            if self.http_thread or self.https_thread: 
-                self.stop_flask()
-            with self.cf_lock:
-                cf_proc = self.cf_process
-            if cf_proc: 
-                self.stop_cf()
+            if self.http_thread or self.https_thread: self.stop_flask()
+            with self.cf_lock: cf_proc = self.cf_process
+            if cf_proc: self.stop_cf()
         except Exception: pass
         finally:
             self.ping_executor.shutdown(wait=False)
@@ -1759,9 +1399,7 @@ class ServerHub(ttk.Window):
     def refresh_hw_meters(self):
         if not self.winfo_exists(): return
         try:
-            with _telemetry_lock:
-                snap_telemetry = dict(TELEMETRY_DATA)
-
+            with _telemetry_lock: snap_telemetry = dict(TELEMETRY_DATA)
             c, r = snap_telemetry.get("cpu", 0), snap_telemetry.get("ram", 0)
             self.animated_meters["cpu"].set_target(c)
             self._meter_set_style(self.mini_meter_cpu, SUCCESS if c < 60 else (WARNING if c < 85 else DANGER), "cpu_style")
@@ -1776,21 +1414,10 @@ class ServerHub(ttk.Window):
                 self.net_tooltip.text = "Internet Disconnected\nNo active interface found."
             else:
                 mbps = snap_telemetry.get("total_mbps", 0.0)
-                dl_mbps = snap_telemetry.get("dl_mbps", 0.0)
-                ul_mbps = snap_telemetry.get("ul_mbps", 0.0)
-                dl_mb = snap_telemetry.get("total_dl_mb", 0.0)
-                ul_mb = snap_telemetry.get("total_ul_mb", 0.0)
+                dl_mbps, ul_mbps = snap_telemetry.get("dl_mbps", 0.0), snap_telemetry.get("ul_mbps", 0.0)
+                dl_mb, ul_mb = snap_telemetry.get("total_dl_mb", 0.0), snap_telemetry.get("total_ul_mb", 0.0)
 
-                tt_text = (
-                    f"Status: Connected\n"
-                    f"Connection Type: {net_type}\n"
-                    f"Interface Name: {snap_telemetry.get('iface_name', 'N/A')}\n"
-                    f"Link Speed: {snap_telemetry.get('link_speed', 0)} Mbps\n\n"
-                    f"Live Download: {dl_mbps:.2f} Mbps\n"
-                    f"Live Upload: {ul_mbps:.2f} Mbps\n"
-                    f"Total Downloaded: {dl_mb:.1f} MB\n"
-                    f"Total Uploaded: {ul_mb:.1f} MB"
-                )
+                tt_text = (f"Status: Connected\nConnection Type: {net_type}\nInterface Name: {snap_telemetry.get('iface_name', 'N/A')}\nLink Speed: {snap_telemetry.get('link_speed', 0)} Mbps\n\nLive Download: {dl_mbps:.2f} Mbps\nLive Upload: {ul_mbps:.2f} Mbps\nTotal Downloaded: {dl_mb:.1f} MB\nTotal Uploaded: {ul_mb:.1f} MB")
                 cap = 100
                 if mbps > 100: cap = 1000
                 if mbps > 1000: cap = 10000
@@ -1809,15 +1436,11 @@ class ServerHub(ttk.Window):
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms, c_ms = snap_net["local_ms"], snap_net["cloud_ms"]
 
-            if snap_net["local_status"] == "ONLINE":
-                self.lbl_hdr_local_ping.configure(text=f"LAN: {loc_ms} ms", foreground=self.SUCCESS_FG)
-            else:
-                self.lbl_hdr_local_ping.configure(text="LAN: DOWN", foreground=self.ERR_FG)
+            if snap_net["local_status"] == "ONLINE": self.lbl_hdr_local_ping.configure(text=f"LAN: {loc_ms} ms", foreground=self.SUCCESS_FG)
+            else: self.lbl_hdr_local_ping.configure(text="LAN: DOWN", foreground=self.ERR_FG)
 
-            if snap_net["cloud_status"] == "ONLINE":
-                self.lbl_hdr_cloud_ping.configure(text=f"WAN: {c_ms} ms", foreground=self.SUCCESS_FG)
-            else:
-                self.lbl_hdr_cloud_ping.configure(text="WAN: DOWN", foreground=self.WARN_FG)
+            if snap_net["cloud_status"] == "ONLINE": self.lbl_hdr_cloud_ping.configure(text=f"WAN: {c_ms} ms", foreground=self.SUCCESS_FG)
+            else: self.lbl_hdr_cloud_ping.configure(text="WAN: DOWN", foreground=self.WARN_FG)
                 
             req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
             t_color = self.ACCENT if req_sec < 50 else (self.WARN_FG if req_sec < 200 else self.ERR_FG)
@@ -1838,16 +1461,12 @@ class ServerHub(ttk.Window):
             current_time = time.time()
             with device_lock:
                 for d_id, data in list(ACTIVE_DEVICES.items()):
-                    if current_time - data['last_seen'] >= DEVICE_ONLINE_WINDOW:
-                        del ACTIVE_DEVICES[d_id]
-
+                    if current_time - data['last_seen'] >= DEVICE_ONLINE_WINDOW: del ACTIVE_DEVICES[d_id]
                 active_ids = [d_id for d_id, data in ACTIVE_DEVICES.items() if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW]
                 device_info = {d_id: dict(ACTIVE_DEVICES[d_id]) for d_id in active_ids}
 
             self._set_stat("online_scanners", len(active_ids))
-            if hasattr(self, 'lbl_devices_header'): 
-                self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
-
+            if hasattr(self, 'lbl_devices_header'): self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
             for row in self.tree_devices.get_children(): self.tree_devices.delete(row)
                 
             if active_ids:
@@ -1869,15 +1488,13 @@ class ServerHub(ttk.Window):
                 self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS) if self.SessionSQLite else self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
 
             with stats_lock: snap = dict(STATS_CACHE)
-                
             for k, v in zip(["total_att", "kiosk_reg", "sqlite_total", "chk_30", "chk_31", "chk_01", "chk_today", "chk_total"], 
                             [snap["total_attendees"], snap["total_registrations"], snap["total_attendees"], snap["chk_30"], snap["chk_31"], snap["chk_01"], snap["today_scans"], snap["total_scans"]]): 
                 self._set_stat(k, v)
 
             if hasattr(self, 'lbl_stats_health'):
                 stale = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
-                if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
-                    self.lbl_stats_health.configure(text=f"⚠ DB Sync Delay ({int(stale)}s). Memory UI remains active.", bootstyle=WARNING)
+                if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4: self.lbl_stats_health.configure(text=f"⚠ DB Sync Delay ({int(stale)}s). Memory UI remains active.", bootstyle=WARNING)
                 else: self.lbl_stats_health.configure(text="")
         except Exception as e:
             logging.error(f"refresh_stats error: {e}")
@@ -1907,15 +1524,12 @@ class ServerHub(ttk.Window):
         self._append_log('flask', f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
         
     def stop_flask(self):
-        if self.btn_stop_cf['state'] == NORMAL: 
-            self.stop_cf()
-            
+        if self.btn_stop_cf['state'] == NORMAL: self.stop_cf()
         self.btn_stop_flask.configure(state=DISABLED)
         self.btn_start_flask.configure(state=NORMAL)
         self.btn_start_cf.configure(state=DISABLED)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         self.lbl_flask_link.configure(text="Server Offline", foreground="#858585")
-        
         stop_db_writers()
         if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
         if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
@@ -1931,25 +1545,17 @@ class ServerHub(ttk.Window):
         self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS)
 
     def start_cf(self):
-        if not self.http_thread: 
-            return self._append_log('cf', "[ERROR] Start Local Engine FIRST!")
-            
+        if not self.http_thread: return self._append_log('cf', "[ERROR] Start Local Engine FIRST!")
         self.btn_start_cf.configure(state=DISABLED)
         self.btn_stop_cf.configure(state=NORMAL)
         self._cf_connecting = True
         self._animate_cf_connecting()
-        
-        with self.cf_lock:
-            self.cloudflare_url = "Pending"
-            
+        with self.cf_lock: self.cloudflare_url = "Pending"
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
-
         def _run_cf():
             try:
                 proc = subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
-                with self.cf_lock:
-                    self.cf_process = proc
-
+                with self.cf_lock: self.cf_process = proc
                 url_found = False
                 for line in proc.stdout:
                     cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
@@ -1960,18 +1566,14 @@ class ServerHub(ttk.Window):
                             tunnel_url = m.group(0)
                             url_found = True
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
-                            
                             def finalize_tunnel(t_url):
                                 time.sleep(30)
-                                with self.cf_lock:
-                                    self.cloudflare_url = t_url
+                                with self.cf_lock: self.cloudflare_url = t_url
                                 self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
                                 self.gui_queue.put(lambda u=t_url: self.lbl_cf_link.configure(text=u, foreground=self.ACCENT))
                                 self.gui_queue.put(self._mark_cf_live)
                                 self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
-                                
                             threading.Thread(target=finalize_tunnel, args=(tunnel_url,), daemon=True).start()
-                            
             except FileNotFoundError:
                 self.gui_queue.put(self.stop_cf)
                 self._append_log('cf', "[ERROR] 'cloudflared' not found in PATH.")
@@ -1985,20 +1587,15 @@ class ServerHub(ttk.Window):
         self._cf_connecting = False  
         self.btn_start_cf.configure(state=NORMAL if self.http_thread else DISABLED)
         self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
-        
         with self.cf_lock:
             proc = self.cf_process
             self.cf_process = None
             self.cloudflare_url = "Offline"
-
         if proc:
             try: 
-                if platform.system() == "Windows":
-                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    proc.terminate()
+                if platform.system() == "Windows": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else: proc.terminate()
             except Exception: pass
-                
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.configure(text="Tunnel Offline", foreground="#858585")
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
