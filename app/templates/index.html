@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>TDE UP 2026 — Operations Hub</title>
+  <link rel="manifest" href="/manifest.json">
   <style>
     :root {
       --bg-dark: #0b0d14;
@@ -43,7 +44,6 @@
       box-sizing: border-box;
     }
 
-    /* --- Top Bar & Network Pill --- */
     .top-bar {
       width: 100%;
       display: flex;
@@ -90,7 +90,6 @@
       background: #555;
     }
 
-    /* --- BANNERS --- */
     .banner {
       width: 100%;
       text-align: center;
@@ -123,7 +122,6 @@
       display: inline-block;
     }
 
-    /* --- Header Branding --- */
     .header {
       text-align: center;
       margin-bottom: 40px;
@@ -168,35 +166,29 @@
       letter-spacing: 6px;
     }
 
-    /* --- Responsive Grid System --- */
     .menu-container {
       display: grid;
       grid-template-columns: 1fr;
-      /* Mobile Default (1 Column) */
       gap: 20px;
       width: 100%;
     }
 
-    /* Tablet Layout: 2 Columns, 3rd card stays in 1st column */
     @media (min-width: 650px) {
       .menu-container {
         grid-template-columns: 1fr 1fr;
       }
     }
 
-    /* Desktop Layout: 2 Columns, 3rd card spans full width */
     @media (min-width: 950px) {
       .menu-card:nth-child(3) {
         grid-column: 1 / -1;
       }
     }
 
-    /* --- Exact Screen-Matched Card Design --- */
     .menu-card {
       display: flex;
       align-items: center;
       padding: 24px;
-      /* Diagonal Glassmorphism Reflection Exact Match */
       background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 35%, rgba(0, 0, 0, 0.15) 35.1%, rgba(0, 0, 0, 0.4) 100%), var(--card-bg);
       border: 1px solid rgba(255, 255, 255, 0.06);
       border-radius: var(--radius-lg);
@@ -257,7 +249,6 @@
       font-weight: 500;
     }
 
-    /* --- Support & Contact Section --- */
     .support-box {
       width: 100%;
       background: radial-gradient(ellipse at top, rgba(255, 170, 0, 0.08) 0%, transparent 70%), rgba(15, 15, 15, 0.6);
@@ -277,7 +268,6 @@
       font-weight: 700;
     }
 
-    /* Mobile Call Button Pill */
     .btn-call {
       display: inline-flex;
       align-items: center;
@@ -305,7 +295,6 @@
       transform: translateY(1px);
     }
 
-    /* Desktop Contact Text */
     .desktop-contact {
       display: none;
       font-size: 1.4rem;
@@ -316,7 +305,6 @@
       text-shadow: 0 0 20px rgba(255, 170, 0, 0.5);
     }
 
-    /* Toggle Support visibility based on exact screenshots */
     @media (min-width: 650px) {
       .btn-call {
         display: none !important;
@@ -338,13 +326,46 @@
       text-transform: uppercase;
       letter-spacing: 1px;
     }
+
+    #operator-msg-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    #operator-msg-modal.show {
+      opacity: 1;
+    }
+
+    .modal-content {
+      background: var(--surface);
+      border: 2px solid var(--success);
+      padding: 40px;
+      border-radius: var(--radius-lg);
+      text-align: center;
+      max-width: 450px;
+      width: 90%;
+      transform: scale(0.8);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+    }
+
+    #operator-msg-modal.show .modal-content {
+      transform: scale(1);
+    }
   </style>
 </head>
 
 <body>
   <div class="app-container">
-
-    <!-- Top Right Network Status -->
     <div class="top-bar">
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
@@ -352,7 +373,6 @@
       </div>
     </div>
 
-    <!-- Hidden Banners -->
     <div id="test-mode-banner" class="banner test-mode-banner">
       ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
     </div>
@@ -362,13 +382,11 @@
       <br><span class="subtext">Open the Scanner or Registration tab while online to push them to the Hub.</span>
     </div>
 
-    <!-- Hub Header -->
     <div class="header">
-      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.4</span></h1>
+      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.6</span></h1>
       <p>Operations Portal</p>
     </div>
 
-    <!-- Responsive Layout Grid -->
     <div class="menu-container">
       <a href="/scanner" rel="noopener noreferrer" class="menu-card" onclick="playClick()">
         <div class="icon-box">📷</div>
@@ -401,14 +419,9 @@
       </a>
     </div>
 
-    <!-- Adaptive Support Section -->
     <div class="support-box">
       <p>Experiencing hardware or network issues?</p>
-
-      <!-- Shows ONLY on Mobile -->
       <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
-
-      <!-- Shows ONLY on Tablets & PCs -->
       <div class="desktop-contact">📞 Support: +91 8960 446 756</div>
     </div>
 
@@ -416,15 +429,32 @@
       Engineered for Event Resilience<br />
       Powered by EllowDigital
     </div>
+  </div>
 
-  </div> <!-- End App Container -->
+  <div id="operator-msg-modal" style="z-index: 99999;">
+    <div class="modal-content"
+      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%;">
+      <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
+      <p id="operator-msg-text" style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap;"></p>
+      <button onclick="closeOperatorMsg()"
+        style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">Acknowledge</button>
+    </div>
+  </div>
 
   <script>
-    // Audio engine for menu clicks
-    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => { });
+    }
+
+    let audioCtx = null;
+    function initAudio() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
+    }
+
     function playClick() {
       try {
-        if (audioCtx.state === "suspended") audioCtx.resume();
+        initAudio();
         const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
         osc.connect(gain); gain.connect(audioCtx.destination);
         osc.type = "sine"; osc.frequency.setValueAtTime(600, audioCtx.currentTime);
@@ -433,7 +463,36 @@
       } catch (e) { }
     }
 
+    function playAudioTone(type) {
+      try {
+        initAudio();
+        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        const now = audioCtx.currentTime;
+        if (type === "ALERT") {
+          osc.type = "triangle"; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(800, now + 0.2);
+          gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now); osc.stop(now + 0.5);
+        }
+      } catch (e) { }
+    }
+
+    function getDeviceId() {
+      let id = localStorage.getItem("hub_device_id");
+      if (!id) {
+        id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        localStorage.setItem("hub_device_id", id);
+      }
+      return id;
+    }
+
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Hub Operations"; }
+
+    function closeOperatorMsg() {
+      const modal = document.getElementById("operator-msg-modal");
+      modal.classList.remove("show");
+      setTimeout(() => modal.style.display = "none", 300);
+    }
 
     function checkPendingSyncs() {
       let scans = JSON.parse(localStorage.getItem("offline_scans") || "[]");
@@ -449,7 +508,10 @@
       }
     }
 
+    let isFetching = false;
     async function syncServerStatus() {
+      if (isFetching) return;
+
       const dot = document.getElementById("net-dot");
       const text = document.getElementById("net-text");
       const testBanner = document.getElementById("test-mode-banner");
@@ -464,15 +526,33 @@
         return;
       }
 
+      isFetching = true;
       const startTime = performance.now();
+
+      let payload = {
+        device_id: getDeviceId(),
+        device_name: getDeviceName(),
+        battery: "N/A",
+        temp: "N/A"
+      };
+
+      if (navigator.getBattery) {
+        try {
+          const b = await navigator.getBattery();
+          payload.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : '');
+        } catch (e) { }
+      }
+
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-        const response = await fetch(`/api/status?device_name=${encodeURIComponent(getDeviceName())}`, {
-          method: "GET",
+        const response = await fetch("/api/status", {
+          method: "POST",
           cache: "no-store",
-          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal
         });
         clearTimeout(timeoutId);
 
@@ -491,13 +571,25 @@
             } else {
               testBanner.style.display = "none";
             }
+
+            if (data.message) {
+              const msgBox = document.getElementById("operator-msg-modal");
+              document.getElementById("operator-msg-text").innerText = data.message;
+              msgBox.style.display = "flex";
+              setTimeout(() => msgBox.classList.add("show"), 10);
+              playAudioTone("ALERT");
+            }
           } catch (err) { }
         }
       } catch (e) {
         dot.className = "net-dot net-poor";
         text.textContent = "Connecting...";
+      } finally {
+        isFetching = false;
       }
     }
+
+    document.addEventListener("click", initAudio, { once: true });
 
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") syncServerStatus();
