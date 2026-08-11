@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import ipaddress
 import requests
 import urllib3
+import asyncio
 from datetime import datetime, timezone, timedelta
 import tkinter as tk
 from tkinter import simpledialog
@@ -32,7 +33,7 @@ import webbrowser
 import psutil
 
 from flask import Flask, render_template, request, jsonify, Response
-from waitress import create_server
+from waitress import create_server 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -42,6 +43,15 @@ try:
 except ImportError:
     cheroot_wsgi = None
     BuiltinSSLAdapter = None
+
+try:
+    import websockets
+    import av
+    from aiortc import RTCPeerConnection, RTCSessionDescription
+    from aiortc.contrib.media import MediaPlayer, MediaRecorder
+    WEBRTC_SUPPORTED = True
+except ImportError:
+    WEBRTC_SUPPORTED = False
 
 try:
     from cryptography import x509
@@ -184,7 +194,8 @@ os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(CONFIG_DIR, exist_ok=True)
 
 HTTP_PORT = 5000 
-HTTPS_PORT = 5001  
+HTTPS_PORT = 5001
+WS_AUDIO_PORT = 5002
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
 DB_WRITER_THREADS = 32            
@@ -247,6 +258,142 @@ STATS_CACHE = {
     "last_refreshed": 0.0, "last_error": None,
 }
 stats_lock = threading.Lock()
+
+CONNECTED_WS = {}
+ACTIVE_PCS = {}
+_ws_loop = None
+
+async def signaling_handler(websocket, path=None):
+    try:
+        # Handle newer websockets version where path is retrieved from request
+        if path is None:
+            try:
+                path = websocket.request.path
+            except AttributeError:
+                path = ""
+                
+        query = path.split("?device_id=")
+        if len(query) > 1:
+            device_id = query[1]
+        else:
+            device_id = "Unknown"
+            
+        CONNECTED_WS[device_id] = websocket
+        
+        pc = None
+        player = None
+        recorder = None
+        
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+                msg_type = data.get("type")
+                
+                # Only initialize WebRTC devices if a call is actually starting (an offer is sent)
+                if msg_type == "offer":
+                    if not pc:
+                        pc = RTCPeerConnection()
+                        ACTIVE_PCS[device_id] = pc
+                        
+                        sys_name = platform.system()
+                        try:
+                            if sys_name == 'Windows':
+                                player = MediaPlayer('audio=default', format='dshow')
+                                recorder = MediaRecorder('default', format='waveaudio')
+                            elif sys_name == 'Darwin':
+                                player = MediaPlayer(':0', format='avfoundation')
+                            else:
+                                player = MediaPlayer('default', format='pulse')
+                                recorder = MediaRecorder('default', format='pulse')
+                                
+                            if player and player.audio:
+                                pc.addTrack(player.audio)
+                        except Exception as e:
+                            logging.debug(f"Media Init Error (Ignored): {e}")
+
+                        @pc.on("track")
+                        def on_track(track):
+                            if track.kind == "audio":
+                                if recorder:
+                                    recorder.addTrack(track)
+                                else:
+                                    async def consume_track():
+                                        try:
+                                            while True:
+                                                await track.recv()
+                                        except Exception:
+                                            pass
+                                    asyncio.create_task(consume_track())
+
+                        if recorder:
+                            await recorder.start()
+                        
+                        @pc.on("connectionstatechange")
+                        async def on_connectionstatechange():
+                            if pc.connectionState in ["failed", "closed"]:
+                                if device_id in ACTIVE_PCS:
+                                    del ACTIVE_PCS[device_id]
+                                if recorder:
+                                    await recorder.stop()
+                                if player and player.audio:
+                                    player.audio.stop()
+                                    
+                    offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
+                    await pc.setRemoteDescription(offer)
+                    answer = await pc.createAnswer()
+                    await pc.setLocalDescription(answer)
+                    await websocket.send(json.dumps({
+                        "type": "answer",
+                        "sdp": pc.localDescription.sdp
+                    }))
+                    
+                elif msg_type == "candidate":
+                    pass 
+                    
+                elif msg_type == "call_ended":
+                    if pc:
+                        await pc.close()
+                    if recorder:
+                        await recorder.stop()
+                    if player and player.audio:
+                        player.audio.stop()
+                        
+            except Exception as e:
+                logging.error(f"WebRTC message parsing error: {e}")
+                
+    except Exception as e:
+        logging.error(f"WebRTC socket error: {e}")
+    finally:
+        if device_id in CONNECTED_WS:
+            del CONNECTED_WS[device_id]
+        if device_id in ACTIVE_PCS:
+            try:
+                await ACTIVE_PCS[device_id].close()
+            except:
+                pass
+            del ACTIVE_PCS[device_id]
+
+async def _run_webrtc_server():
+    try:
+        # Await the modern async context manager correctly to fix the event loop RuntimeError
+        async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT):
+            await asyncio.Future()  # run forever
+    except Exception as e:
+        logging.error(f"WebRTC Server start failed: {e}")
+
+def start_webrtc_server():
+    global _ws_loop
+    if not WEBRTC_SUPPORTED:
+        logging.error("aiortc or websockets not installed. WebRTC disabled.")
+        return
+    try:
+        _ws_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_ws_loop)
+        _ws_loop.run_until_complete(_run_webrtc_server())
+    except Exception as e:
+        logging.error(f"WebRTC Server failed to boot loop: {e}")
+
+threading.Thread(target=start_webrtc_server, daemon=True).start()
 
 def get_cached_sessions():
     global DB_SESSIONS_CACHE, _db_cache_last_failure
@@ -785,46 +932,20 @@ def register():
 def stats():
     return render_template('network_stats.html')
 
-@app.route('/api/status', methods=['GET', 'POST'])
+@app.route('/api/status', methods=['POST'])
 def get_server_status():
     ip = request.remote_addr
-    if request.method == 'POST':
-        data = request.json or {}
-        reported_name = data.get('device_name', 'Unknown Device')
-        device_id = data.get('device_id')
-        battery = data.get('battery', 'N/A')
-        temp = data.get('temp', 'N/A')
-        active_page = data.get('page', '/')
-    else:
-        reported_name = request.args.get('device_name', 'Unknown Device')
-        device_id = request.args.get('device_id')
-        battery = request.args.get('battery', 'N/A')
-        temp = request.args.get('temp', 'N/A')
-        active_page = request.args.get('page', '/')
+    data = request.json or {}
+    reported_name = data.get('device_name', 'Unknown Device')
+    device_id = data.get('device_id')
+    battery = data.get('battery', 'N/A')
+    active_page = data.get('page', '/')
 
     if reported_name == "null":
         reported_name = "Unknown Device"
     if not device_id:
         device_id = f"{ip}::{reported_name}"
         
-    if ip == '127.0.0.1':
-        try:
-            batt = psutil.sensors_battery()
-            if batt:
-                battery = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
-        except Exception:
-            pass
-        try:
-            if hasattr(psutil, 'sensors_temperatures'):
-                temps = psutil.sensors_temperatures()
-                if temps:
-                    for k, v in temps.items():
-                        if v and len(v) > 0:
-                            temp = f"{int(v[0].current)}°C"
-                            break
-        except Exception:
-            pass
-
     pending_msg = None
     with device_lock:
         display_name = CUSTOM_DEVICE_NAMES.get(device_id, reported_name)
@@ -836,7 +957,6 @@ def get_server_status():
             'original_name': reported_name,
             'ip': ip,
             'battery': battery,
-            'temp': temp,
             'page': active_page
         }
         
@@ -1443,6 +1563,26 @@ class ServerHub(ttk.Window):
                 DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
 
+    def _prompt_start_call(self):
+        global _ws_loop
+        if not WEBRTC_SUPPORTED:
+            Messagebox.show_error("Missing audio libraries. Please pip install aiortc av websockets.", "Error")
+            return
+            
+        d_id = getattr(self, '_context_device_id', None)
+        if not d_id or d_id == "empty_msg":
+            return
+        
+        ws = CONNECTED_WS.get(d_id)
+        if ws and ws.open and _ws_loop:
+            asyncio.run_coroutine_threadsafe(
+                ws.send(json.dumps({"type": "incoming_call"})),
+                _ws_loop
+            )
+            self._append_log('network', f"[VOICE] Ringing device {d_id}...")
+        else:
+            Messagebox.show_warning("Device is not connected to the voice server.", "Unavailable")
+
     def _prompt_broadcast_message(self):
         with device_lock:
             active_count = len(ACTIVE_DEVICES)
@@ -1618,18 +1758,18 @@ class ServerHub(ttk.Window):
         tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
         tree_scroll.pack(side=RIGHT, fill=Y)
 
-        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "page", "telemetry", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
+        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "page", "battery", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
         self.tree_devices.heading("name", text="Device Name")
         self.tree_devices.heading("ip", text="IP Address")
         self.tree_devices.heading("page", text="Active Page")
-        self.tree_devices.heading("telemetry", text="Telemetry")
+        self.tree_devices.heading("battery", text="Battery")
         self.tree_devices.heading("last_seen", text="Last Heartbeat")
         self.tree_devices.heading("signal", text="Signal")
         
         self.tree_devices.column("name", width=180, anchor=W)
         self.tree_devices.column("ip", width=110, anchor=W)
         self.tree_devices.column("page", width=110, anchor=CENTER)
-        self.tree_devices.column("telemetry", width=120, anchor=CENTER)
+        self.tree_devices.column("battery", width=90, anchor=CENTER)
         self.tree_devices.column("last_seen", width=100, anchor=CENTER)
         self.tree_devices.column("signal", width=80, anchor=CENTER)
         self.tree_devices.pack(side=LEFT, fill=BOTH, expand=True, padx=(2, 0), pady=2)
@@ -1642,8 +1782,9 @@ class ServerHub(ttk.Window):
         self.tree_devices.tag_configure("empty", foreground="#858585")
 
         self.device_menu = tk.Menu(self.tree_devices, tearoff=0, bg="#252526", fg="#CCCCCC")
+        self.device_menu.add_command(label="📞 Call Device", command=self._prompt_start_call)
         self.device_menu.add_command(label="✏️ Rename Device", command=self._prompt_rename_device)
-        self.device_menu.add_command(label="📨 Send Message", command=self._prompt_send_message)
+        self.device_menu.add_command(label="📨 Send Text Message", command=self._prompt_send_message)
         
         self.tree_devices.bind("<Button-3>", self._show_device_menu)
         if platform.system() == "Darwin":
@@ -1864,7 +2005,6 @@ class ServerHub(ttk.Window):
                     sec_ago = max(0, int(current_time - info['last_seen']))
                     sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
                     batt = info.get('battery', 'N/A')
-                    temp = info.get('temp', 'N/A')
                     page_path = info.get('page', '/')
                     
                     page_label = {
@@ -1874,9 +2014,7 @@ class ServerHub(ttk.Window):
                         "/stats": "Network Stats"
                     }.get(page_path, page_path)
 
-                    telemetry_str = f"🔋 {batt} | 🌡️ {temp}"
-                    
-                    values = (info['name'], info['ip'], page_label, telemetry_str, "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig)
+                    values = (info['name'], info['ip'], page_label, f"🔋 {batt}", "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig)
                     if d_id in existing_iids:
                         self.tree_devices.item(d_id, values=values, tags=(tag,))
                         existing_iids.remove(d_id)

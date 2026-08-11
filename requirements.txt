@@ -27,5 +27,5 @@ psutil
 matplotlib
 indiapins
 cheroot
-pyaudio
+aiortc
 websockets
