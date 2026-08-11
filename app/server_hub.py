@@ -19,6 +19,7 @@ import requests
 import urllib3
 import asyncio
 import ssl
+import array
 from datetime import datetime, timezone, timedelta
 import tkinter as tk
 from tkinter import simpledialog
@@ -37,6 +38,13 @@ from flask import Flask, render_template, request, jsonify, Response
 from waitress import create_server 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- NEW: PyAudio Check for Live PC Speaker Playback ---
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except ImportError:
+    PYAUDIO_AVAILABLE = False
 
 try:
     from cheroot import wsgi as cheroot_wsgi
@@ -271,11 +279,9 @@ async def cleanup_call(device_id):
     if device_id in ACTIVE_CALLS_DATA:
         cdata = ACTIVE_CALLS_DATA.pop(device_id)
         pc = cdata.get('pc')
-        recorder = cdata.get('recorder')
         player = cdata.get('player')
         try:
             if pc: await pc.close()
-            if recorder: await recorder.stop()
             if player and player.audio: player.audio.stop()
         except Exception as e:
             logging.error(f"Cleanup error: {e}")
@@ -286,7 +292,6 @@ async def cleanup_call(device_id):
 
 async def signaling_handler(websocket, path=None):
     try:
-        # Handle newer websockets version where path is retrieved from request
         if path is None:
             try:
                 path = websocket.request.path
@@ -306,48 +311,81 @@ async def signaling_handler(websocket, path=None):
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
-                # Client accepted the call
                 if msg_type == "offer":
                     if device_id not in ACTIVE_CALLS_DATA:
                         pc = RTCPeerConnection()
                         player = None
-                        recorder = None
                         
                         sys_name = platform.system()
                         try:
+                            # The Server's Microphone input
                             if sys_name == 'Windows':
                                 player = MediaPlayer('audio=default', format='dshow')
-                                recorder = MediaRecorder('default', format='waveaudio')
                             elif sys_name == 'Darwin':
                                 player = MediaPlayer(':0', format='avfoundation')
-                                recorder = MediaRecorder('default', format='avfoundation')
                             else:
                                 player = MediaPlayer('default', format='pulse')
-                                recorder = MediaRecorder('default', format='pulse')
                                 
                             if player and player.audio:
                                 pc.addTrack(player.audio)
                         except Exception as e:
                             logging.debug(f"Media Init Error (Ignored): {e}")
 
+                        # Route the incoming Staff audio to the VU Meter & PyAudio speaker
                         @pc.on("track")
                         def on_track(track):
                             if track.kind == "audio":
-                                if recorder:
-                                    recorder.addTrack(track)
-                                else:
-                                    async def consume_track():
+                                async def play_audio_and_meter():
+                                    global app_window
+                                    p = None
+                                    stream = None
+                                    if PYAUDIO_AVAILABLE:
                                         try:
-                                            while True:
-                                                await track.recv()
+                                            p = pyaudio.PyAudio()
                                         except Exception:
                                             pass
-                                    asyncio.create_task(consume_track())
+                                    
+                                    try:
+                                        while True:
+                                            frame = await track.recv()
+                                            
+                                            # Calculate live Volume VU Level
+                                            try:
+                                                data = frame.planes[0].to_bytes()
+                                                samples = array.array('h', data)
+                                                peak = max(abs(s) for s in samples) if samples else 0
+                                                # Boost sensitivity scale for speech
+                                                vol_percent = min(100, int((peak / 32768.0) * 250)) 
+                                                
+                                                if app_window:
+                                                    app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                            except Exception:
+                                                pass
+                                            
+                                            # Write to PC Speakers directly
+                                            if p:
+                                                try:
+                                                    if not stream:
+                                                        channels = len(frame.layout.channels)
+                                                        rate = frame.sample_rate
+                                                        stream = p.open(format=pyaudio.paInt16, channels=channels, rate=rate, output=True)
+                                                    
+                                                    ndarray = frame.to_ndarray()
+                                                    stream.write(ndarray.tobytes())
+                                                except Exception as err:
+                                                    pass
+                                                    
+                                    except Exception:
+                                        pass
+                                    finally:
+                                        if stream: stream.stop_stream(); stream.close()
+                                        if p: p.terminate()
+                                        if app_window:
+                                            app_window.gui_queue.put(lambda d=device_id: app_window.update_call_meter(d, 0))
 
-                        if recorder:
-                            await recorder.start()
+                                asyncio.create_task(play_audio_and_meter())
                             
-                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'player': player, 'recorder': recorder}
+                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'player': player}
                         
                         global app_window
                         if app_window:
@@ -540,7 +578,6 @@ def ensure_ssl_certificate(local_ip):
     key_path = os.path.join(CERT_DIR, 'hub_key.pem')
     _ensure_root_ca(ca_cert_path, ca_key_path)
 
-    # Gather all current active IP addresses dynamically
     current_system_ips = set()
     try:
         for interface, snics in psutil.net_if_addrs().items():
@@ -561,7 +598,6 @@ def ensure_ssl_certificate(local_ip):
             san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             cert_ips = {str(ip) for ip in san_ext.value.get_values_for_type(x509.IPAddress)}
             
-            # If ANY active IP address is missing from the certificate, FORCE regeneration
             all_ips_present = all(ip in cert_ips for ip in current_system_ips)
             
             if is_valid_time and all_ips_present:
@@ -1296,11 +1332,14 @@ class ServerHub(ttk.Window):
         self._meter_cache = {}
         self._context_device_id = None
         
-        # New dict to track active Call GUI popups
+        # Track active Call GUI popups
         self.active_call_windows = {}
 
         global gui_log_callback
+        global app_window
         gui_log_callback = self.log_flask_event
+        app_window = self
+        
         self.build_ui()
         self.animated_meters = {
             "cpu": AnimatedMeter(self.mini_meter_cpu),
@@ -1330,44 +1369,64 @@ class ServerHub(ttk.Window):
 
         win = ttk.Toplevel(self)
         win.title("Active Voice Call")
-        win.geometry("380x250")
+        win.geometry("380x320")
         win.attributes('-topmost', True)
         win.protocol("WM_DELETE_WINDOW", lambda: self.end_call_ui(device_id))
         
-        ttk.Label(win, text="🎙️ Call Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(20, 5))
-        ttk.Label(win, text=f"Connected to: {d_name}", font=("Segoe UI", 10)).pack(pady=(0, 15))
+        ttk.Label(win, text="🎙️ Call Accepted & Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(15, 5))
+        ttk.Label(win, text=f"Connected to: {d_name}", font=("Segoe UI", 10)).pack(pady=(0, 10))
+        
+        if not PYAUDIO_AVAILABLE:
+            ttk.Label(win, text="⚠️ 'pyaudio' missing. PC Speakers Disabled.", font=("Segoe UI", 8), bootstyle=WARNING).pack(pady=(0,5))
+            
+        ttk.Label(win, text="Incoming Audio Level:", font=("Segoe UI", 9)).pack(anchor=W, padx=25)
+        meter = ttk.Progressbar(win, bootstyle="success", maximum=100, value=0)
+        meter.pack(fill=X, padx=25, pady=(0, 15))
         
         btn_frame = ttk.Frame(win)
         btn_frame.pack(fill=X, padx=20, pady=5)
         
-        win.mic_muted = False
-        win.spk_muted = False
-        
-        btn_mic = ttk.Button(btn_frame, text="Mute My Mic", bootstyle="warning-outline", command=lambda: self.toggle_mic(device_id, win, btn_mic))
+        btn_mic = ttk.Button(btn_frame, text="Mute My Mic", bootstyle="warning-outline", command=lambda: self.toggle_mic(device_id, btn_mic))
         btn_mic.pack(side=LEFT, expand=True, padx=5)
         
-        btn_spk = ttk.Button(btn_frame, text="Mute Speaker", bootstyle="info-outline", command=lambda: self.toggle_speaker(device_id, win, btn_spk))
+        btn_spk = ttk.Button(btn_frame, text="Mute Speaker", bootstyle="info-outline", command=lambda: self.toggle_speaker(device_id, btn_spk))
         btn_spk.pack(side=LEFT, expand=True, padx=5)
         
         btn_end = ttk.Button(win, text="❌ End Call", bootstyle="danger", command=lambda: self.end_call_ui(device_id))
         btn_end.pack(fill=X, padx=25, pady=15)
         
-        self.active_call_windows[device_id] = win
+        self.active_call_windows[device_id] = {'win': win, 'meter': meter, 'mic_muted': False, 'spk_muted': False}
         self._append_log('network', f"[VOICE] Call established with {d_name}.")
 
-    def toggle_mic(self, device_id, win, btn):
-        win.mic_muted = not win.mic_muted
-        btn.configure(text="Unmute My Mic" if win.mic_muted else "Mute My Mic", bootstyle="warning" if win.mic_muted else "warning-outline")
-        ws = CONNECTED_WS.get(device_id)
-        if ws and _ws_loop:
-            asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": win.mic_muted})), _ws_loop)
+    def update_call_meter(self, device_id, volume):
+        if device_id in self.active_call_windows:
+            meter = self.active_call_windows[device_id]['meter']
+            if meter.winfo_exists():
+                meter.configure(value=volume)
+                if volume > 70:
+                    meter.configure(bootstyle="danger")
+                elif volume > 40:
+                    meter.configure(bootstyle="warning")
+                else:
+                    meter.configure(bootstyle="success")
 
-    def toggle_speaker(self, device_id, win, btn):
-        win.spk_muted = not win.spk_muted
-        btn.configure(text="Unmute Speaker" if win.spk_muted else "Mute Speaker", bootstyle="info" if win.spk_muted else "info-outline")
-        ws = CONNECTED_WS.get(device_id)
-        if ws and _ws_loop:
-            asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": win.spk_muted})), _ws_loop)
+    def toggle_mic(self, device_id, btn):
+        state = self.active_call_windows.get(device_id)
+        if state:
+            state['mic_muted'] = not state['mic_muted']
+            btn.configure(text="Unmute My Mic" if state['mic_muted'] else "Mute My Mic", bootstyle="warning" if state['mic_muted'] else "warning-outline")
+            ws = CONNECTED_WS.get(device_id)
+            if ws and _ws_loop:
+                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": state['mic_muted']})), _ws_loop)
+
+    def toggle_speaker(self, device_id, btn):
+        state = self.active_call_windows.get(device_id)
+        if state:
+            state['spk_muted'] = not state['spk_muted']
+            btn.configure(text="Unmute Speaker" if state['spk_muted'] else "Mute Speaker", bootstyle="info" if state['spk_muted'] else "info-outline")
+            ws = CONNECTED_WS.get(device_id)
+            if ws and _ws_loop:
+                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": state['spk_muted']})), _ws_loop)
 
     def end_call_ui(self, device_id):
         ws = CONNECTED_WS.get(device_id)
@@ -1378,9 +1437,10 @@ class ServerHub(ttk.Window):
             self.close_call_ui(device_id)
 
     def close_call_ui(self, device_id):
-        if device_id in self.active_call_windows:
+        state = self.active_call_windows.get(device_id)
+        if state:
             try:
-                self.active_call_windows[device_id].destroy()
+                state['win'].destroy()
             except Exception:
                 pass
             del self.active_call_windows[device_id]
