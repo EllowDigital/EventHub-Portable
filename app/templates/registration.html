@@ -104,6 +104,20 @@
       }
     }
 
+    @keyframes pulseBg {
+      0% {
+        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4);
+      }
+
+      70% {
+        box-shadow: 0 0 0 10px rgba(0, 230, 118, 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0);
+      }
+    }
+
     .header {
       width: 100%;
       display: flex;
@@ -583,13 +597,181 @@
     .dev-modal-content button:active {
       transform: translateY(2px);
     }
+
+    /* --- MINIMIZABLE CALL UI STYLES --- */
+    .call-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.92);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      z-index: 100000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.4s ease, backdrop-filter 0.4s ease;
+    }
+
+    .call-overlay.minimized {
+      inset: auto;
+      bottom: 25px;
+      right: 25px;
+      width: auto;
+      height: auto;
+      background: transparent;
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+      pointer-events: none;
+    }
+
+    .active-call-card {
+      background: var(--surface);
+      padding: 30px;
+      border-radius: 24px;
+      border: 2px solid var(--success);
+      text-align: center;
+      box-shadow: 0 0 60px rgba(0, 230, 118, 0.25);
+      max-width: 350px;
+      width: 90%;
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      pointer-events: auto;
+    }
+
+    .call-overlay.minimized .active-call-card {
+      padding: 15px 20px;
+      border-radius: 16px;
+      width: 280px;
+      max-width: calc(100vw - 50px);
+      text-align: left;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .call-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .call-overlay.minimized .call-card-header {
+      margin-bottom: 5px;
+    }
+
+    .call-badge {
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: var(--success);
+      background: rgba(0, 230, 118, 0.15);
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 1px solid rgba(0, 230, 118, 0.4);
+    }
+
+    .pulse-badge {
+      animation: pulseBg 2s infinite;
+    }
+
+    .btn-icon {
+      background: rgba(255, 255, 255, 0.1);
+      border: none;
+      color: #fff;
+      font-size: 1.1rem;
+      width: 35px;
+      height: 35px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.2);
+      transform: scale(1.1);
+    }
+
+    .call-info {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 30px;
+    }
+
+    .call-overlay.minimized .call-info {
+      flex-direction: row;
+      margin-bottom: 5px;
+      gap: 15px;
+    }
+
+    .call-avatar {
+      font-size: 60px;
+      animation: pulseMic 1.5s infinite;
+      margin: 0;
+    }
+
+    .call-overlay.minimized .call-avatar {
+      font-size: 30px;
+      animation: none;
+    }
+
+    .call-title {
+      margin: 0;
+      color: var(--success);
+      font-weight: 900;
+      font-size: 1.5rem;
+    }
+
+    .call-overlay.minimized .call-title {
+      font-size: 1.1rem;
+    }
+
+    .call-subtitle {
+      color: var(--text-muted);
+      margin: 5px 0 0 0;
+      font-size: 0.95rem;
+      font-weight: 500;
+    }
+
+    .call-overlay.minimized .call-subtitle {
+      display: none;
+    }
+
+    .btn-end-call {
+      background: var(--danger);
+      color: #fff;
+      border: none;
+      padding: 16px 40px;
+      border-radius: 30px;
+      font-weight: 900;
+      font-size: 1.1rem;
+      cursor: pointer;
+      width: 100%;
+      text-transform: uppercase;
+      box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3);
+      transition: transform 0.2s;
+    }
+
+    .btn-end-call:hover {
+      transform: scale(1.02);
+      box-shadow: 0 8px 25px rgba(255, 68, 68, 0.5);
+    }
+
+    .call-overlay.minimized .btn-end-call {
+      padding: 10px 20px;
+      font-size: 0.9rem;
+    }
   </style>
 </head>
 
 <body>
   <div class="app-container">
     <div class="header">
-      <a href="/" class="btn-back">
+      <a href="/" class="btn-back" id="nav-hub-btn">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
           <line x1="19" y1="12" x2="5" y2="12"></line>
@@ -762,7 +944,8 @@
   </div>
 
   <!-- Persistent Operator Message Modal -->
-  <div id="operator-msg-modal" style="display: none;">
+  <div id="operator-msg-modal"
+    style="z-index: 99999; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center;">
     <div class="modal-content"
       style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
@@ -776,10 +959,9 @@
   </div>
 
   <!-- WebRTC Incoming Call Modal -->
-  <div id="incoming-call-modal"
-    style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
-    <div
-      style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--primary); text-align: center; box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); max-width: 350px; width: 90%; animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
+    <div class="active-call-card"
+      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
       <div
         style="font-size: 55px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
         📞</div>
@@ -795,19 +977,26 @@
     </div>
   </div>
 
-  <!-- WebRTC Active Call Modal -->
-  <div id="active-call-modal"
-    style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
-    <div
-      style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--success); text-align: center; box-shadow: 0 0 60px rgba(0, 230, 118, 0.25); max-width: 350px; width: 90%;">
-      <div style="font-size: 60px; margin-bottom: 25px; animation: pulseMic 1.5s infinite; display: inline-block;">🎙️
+  <!-- NEW Minimizable WebRTC Active Call Modal -->
+  <div id="active-call-overlay" class="call-overlay" style="display: none;">
+    <div class="active-call-card" id="active-call-card">
+      <div class="call-card-header">
+        <span class="call-badge pulse-badge">🟢 Live Audio</span>
+        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()"
+          title="Minimize / Maximize">🗕</button>
       </div>
-      <h2 style="margin: 0 0 10px 0; color: var(--success); font-weight: 900;">Call Active</h2>
-      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Bidirectional
-        radio channel open.</p>
-      <button onclick="endCall()"
-        style="background: var(--danger); color: #fff; border: none; padding: 16px 40px; border-radius: 30px; font-weight: 900; font-size: 1.1rem; cursor: pointer; width: 100%; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">End
-        Call</button>
+
+      <div class="call-info">
+        <div class="call-avatar" id="call-avatar">🎙️</div>
+        <div class="call-text">
+          <h2 class="call-title">Secure Channel</h2>
+          <p class="call-subtitle">Command Hub Connected.</p>
+        </div>
+      </div>
+
+      <div class="call-actions">
+        <button onclick="endCall()" class="btn-end-call">❌ End Call</button>
+      </div>
     </div>
   </div>
 
@@ -1023,7 +1212,6 @@
           try {
             const data = await response.json();
 
-            // Auto-Sync Rename: Synchronize new name provided by the central server hub
             if (data.canonical_name && data.canonical_name !== getDeviceName() && data.canonical_name !== "Unknown Device") {
               localStorage.setItem("hub_device_name", data.canonical_name);
               document.getElementById("display-device-name").textContent = data.canonical_name;
@@ -1354,6 +1542,25 @@
     }
 
     // ==========================================
+    // MINIMIZABLE CALL UI LOGIC
+    // ==========================================
+    let isCallMinimized = false;
+
+    function toggleMinimizeCall() {
+      const overlay = document.getElementById("active-call-overlay");
+      const btn = document.getElementById("btn-minimize-call");
+
+      isCallMinimized = !isCallMinimized;
+      if (isCallMinimized) {
+        overlay.classList.add("minimized");
+        btn.innerHTML = "🗖";
+      } else {
+        overlay.classList.remove("minimized");
+        btn.innerHTML = "🗕";
+      }
+    }
+
+    // ==========================================
     // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
     // ==========================================
 
@@ -1437,9 +1644,7 @@
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
         };
 
-        wsCall.onerror = (error) => {
-          console.error("Voice WebSocket Connection Error.", error);
-        };
+        wsCall.onerror = (error) => { };
       } catch (e) {
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = setTimeout(connectCallServer, 5000);
@@ -1452,7 +1657,13 @@
 
       try {
         localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        document.getElementById("active-call-modal").style.display = "flex";
+
+        document.getElementById("active-call-overlay").style.display = "flex";
+
+        // Auto-minimize after a moment so they can keep working
+        setTimeout(() => {
+          if (!isCallMinimized) toggleMinimizeCall();
+        }, 1500);
 
         peerConnection = new RTCPeerConnection({
           iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -1477,9 +1688,9 @@
             sdp: peerConnection.localDescription.sdp
           }));
         }
+
       } catch (err) {
-        console.error("WebRTC Error:", err);
-        alert("Microphone Access Denied! Voice calls require a secure connection and hardware permissions.");
+        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection or Localhost.");
         rejectCall();
       }
     }
@@ -1503,12 +1714,33 @@
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
-      document.getElementById("active-call-modal").style.display = "none";
+      document.getElementById("active-call-overlay").style.display = "none";
+
+      // Reset minimization state for next call
+      if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
         wsCall.send(JSON.stringify({ type: 'call_ended' }));
       }
     }
+
+    // Prevent accidental page close while on a call
+    window.addEventListener("beforeunload", function (e) {
+      if (peerConnection && peerConnection.connectionState === "connected") {
+        const confirmationMessage = "Leaving this page will end your active voice call. Continue?";
+        (e || window.event).returnValue = confirmationMessage;
+        return confirmationMessage;
+      }
+    });
+
+    // Intercept Back button if on a call
+    document.getElementById('nav-hub-btn').addEventListener('click', function (e) {
+      if (peerConnection && peerConnection.connectionState === 'connected') {
+        e.preventDefault();
+        window.open(this.href, '_blank');
+        showToast("Call Active: Hub opened safely in a new tab.");
+      }
+    });
 
     document.addEventListener("click", initAudio, { once: true });
 
