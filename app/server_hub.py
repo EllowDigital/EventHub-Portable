@@ -82,8 +82,10 @@ except ImportError:
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-# Global app window reference so async routines can call GUI methods
+# Global app references for WebRTC GUI syncing
 app_window = None
+GLOBAL_GROUP_CALL_ACTIVE = False
+GROUP_CALL_WINDOW = None
 
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
@@ -279,12 +281,7 @@ _ws_loop = None
 
 # --- CUSTOM NATIVE AUDIO ROUTING TRACK ---
 class SoundDeviceMicTrack(MediaStreamTrack):
-    """
-    Bypasses FFmpeg and deeply hooks into the physical PC microphone 
-    using numpy and sounddevice to beam raw audio natively to the phone.
-    """
     kind = "audio"
-
     def __init__(self):
         super().__init__()
         self.q = queue.Queue()
@@ -292,18 +289,14 @@ class SoundDeviceMicTrack(MediaStreamTrack):
         self.pts = 0
         try:
             self.stream = sd.RawInputStream(
-                samplerate=48000, 
-                channels=1, 
-                dtype='int16',
-                blocksize=960, # 20ms frames
-                callback=self.callback
+                samplerate=48000, channels=1, dtype='int16',
+                blocksize=960, callback=self.callback
             )
             self.stream.start()
         except Exception as e:
             logging.error(f"PC Microphone hook failed: {e}")
 
     def callback(self, indata, frames, time, status):
-        # Push physical mic bytes to the WebRTC queue
         try:
             self.q.put_nowait(bytes(indata))
         except queue.Full:
@@ -311,7 +304,6 @@ class SoundDeviceMicTrack(MediaStreamTrack):
 
     async def recv(self):
         if not self.stream:
-            # Transmit dead silence to keep WebRTC connection alive if no mic exists
             await asyncio.sleep(0.02)
             frame = av.AudioFrame(format='s16', layout='mono', samples=960)
             frame.sample_rate = 48000
@@ -320,7 +312,6 @@ class SoundDeviceMicTrack(MediaStreamTrack):
             self.pts += 960
             return frame
 
-        # Fetch mic byte data and bind it to a native aiortc AudioFrame
         data = await asyncio.get_event_loop().run_in_executor(None, self.q.get)
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -338,15 +329,12 @@ class SoundDeviceMicTrack(MediaStreamTrack):
 
 
 def _audio_playback_worker(q, sample_rate, channels):
-    """
-    Dedicated background thread to play incoming audio without blocking the WebRTC loop.
-    """
     try:
         with sd.RawOutputStream(samplerate=sample_rate, channels=channels, dtype='int16') as stream:
             while True:
                 data = q.get()
                 if data is None: 
-                    break # Kill signal received
+                    break 
                 stream.write(data)
     except Exception as e:
         logging.error(f"Speaker Playback Error: {e}")
@@ -362,16 +350,17 @@ async def cleanup_call(device_id):
         try:
             if pc: await pc.close()
             if mic_track: mic_track.stop()
-            if play_q: play_q.put(None) # Tell speaker thread to die gracefully
+            if play_q: play_q.put(None)
         except Exception as e:
             pass
             
-    global app_window
-    if app_window:
+    global app_window, GLOBAL_GROUP_CALL_ACTIVE
+    if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
         app_window.gui_queue.put(lambda: app_window.close_call_ui(device_id))
 
 
 async def signaling_handler(websocket, path=None):
+    global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW
     try:
         if path is None:
             try:
@@ -387,19 +376,24 @@ async def signaling_handler(websocket, path=None):
             
         CONNECTED_WS[device_id] = websocket
         
+        # AUTO-JOIN GROUP CALL LOGIC
+        if GLOBAL_GROUP_CALL_ACTIVE:
+            try:
+                await websocket.send(json.dumps({"type": "incoming_call"}))
+            except:
+                pass
+        
         async for message in websocket:
             try:
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
-                # Client accepted the call
                 if msg_type == "offer":
                     if device_id not in ACTIVE_CALLS_DATA:
                         pc = RTCPeerConnection()
                         play_q = queue.Queue()
                         mic_track = None
                         
-                        # Mount PC Microphone
                         if SOUNDDEVICE_AVAILABLE:
                             try:
                                 mic_track = SoundDeviceMicTrack()
@@ -407,19 +401,17 @@ async def signaling_handler(websocket, path=None):
                             except Exception as e:
                                 logging.error(f"Failed to attach PC Mic: {e}")
 
-                        # Route Incoming Phone Audio to PC Speakers & VU Meter
                         @pc.on("track")
                         def on_track(track):
                             if track.kind == "audio":
                                 async def process_incoming_audio():
-                                    global app_window
+                                    global app_window, GLOBAL_GROUP_CALL_ACTIVE
                                     started_player = False
                                     try:
                                         while True:
                                             frame = await track.recv()
                                             data_bytes = frame.planes[0].to_bytes()
                                             
-                                            # Boot speaker daemon thread dynamically on first frame
                                             if not started_player and SOUNDDEVICE_AVAILABLE:
                                                 channels = len(frame.layout.channels)
                                                 rate = frame.sample_rate
@@ -429,15 +421,16 @@ async def signaling_handler(websocket, path=None):
                                             if started_player:
                                                 play_q.put(data_bytes)
                                             
-                                            # Calculate live Volume VU Level
                                             try:
                                                 samples = array.array('h', data_bytes)
                                                 peak = max(abs(s) for s in samples) if samples else 0
-                                                # Boost sensitivity scale for better UI visual response
                                                 vol_percent = min(100, int((peak / 32768.0) * 100 * 2.5)) 
                                                 
                                                 if app_window:
-                                                    app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                                    if GLOBAL_GROUP_CALL_ACTIVE:
+                                                        app_window.gui_queue.put(lambda v=vol_percent: app_window.update_group_call_meter(v))
+                                                    else:
+                                                        app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
                                             except Exception:
                                                 pass
                                                 
@@ -449,7 +442,7 @@ async def signaling_handler(websocket, path=None):
                         ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'mic_track': mic_track, 'play_q': play_q}
                         
                         global app_window
-                        if app_window:
+                        if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
                             app_window.gui_queue.put(lambda: app_window.show_active_call_ui(device_id))
                         
                         @pc.on("connectionstatechange")
@@ -466,6 +459,11 @@ async def signaling_handler(websocket, path=None):
                         "type": "answer",
                         "sdp": pc.localDescription.sdp
                     }))
+                    
+                    # If this is an auto-joined group call, push current mute states down to the late device
+                    if GLOBAL_GROUP_CALL_ACTIVE and GROUP_CALL_WINDOW:
+                        await websocket.send(json.dumps({"type": "server_muted", "muted": GROUP_CALL_WINDOW['mic_muted']}))
+                        await websocket.send(json.dumps({"type": "client_muted", "muted": GROUP_CALL_WINDOW['spk_muted']}))
                     
                 elif msg_type == "candidate":
                     pass 
@@ -489,14 +487,12 @@ async def _run_webrtc_server():
         key_path = os.path.join(CERT_DIR, 'hub_key.pem')
         
         ssl_context = None
-        # Apply the same SSL certificates used by Cheroot to the WebRTC server
         if os.path.exists(cert_path) and os.path.exists(key_path):
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
-        # Pass the ssl_context into the websockets server
         async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
-            await asyncio.Future()  # run forever
+            await asyncio.Future()
     except Exception as e:
         logging.error(f"WebRTC Server start failed: {e}")
 
@@ -588,7 +584,6 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
         except ValueError:
             pass
             
-        # SECURE ALL AVAILABLE NETWORK ADAPTERS
         try:
             for interface, snics in psutil.net_if_addrs().items():
                 for snic in snics:
@@ -1419,6 +1414,109 @@ class ServerHub(ttk.Window):
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
         threading.Thread(target=traffic_monitor_loop, daemon=True).start()
 
+    def _prompt_group_call(self):
+        global GLOBAL_GROUP_CALL_ACTIVE, _ws_loop
+        if not WEBRTC_SUPPORTED:
+            Messagebox.show_error("Missing audio libraries. Please pip install aiortc sounddevice", "Error")
+            return
+            
+        if GLOBAL_GROUP_CALL_ACTIVE:
+            Messagebox.show_warning("A Group Call is already active.", "Warning")
+            return
+            
+        GLOBAL_GROUP_CALL_ACTIVE = True
+        self.show_group_call_ui()
+        
+        if _ws_loop:
+            for d_id, ws in list(CONNECTED_WS.items()):
+                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "incoming_call"})), _ws_loop)
+        self._append_log('network', "[VOICE] Initiated Group Call to all connected devices.")
+
+    def show_group_call_ui(self):
+        global GROUP_CALL_WINDOW
+        if GROUP_CALL_WINDOW is not None:
+            return
+
+        win = ttk.Toplevel(self)
+        win.title("Active Group Call")
+        win.geometry("400x350")
+        win.attributes('-topmost', True)
+        win.protocol("WM_DELETE_WINDOW", self.end_group_call_ui)
+        
+        ttk.Label(win, text="📢 Group Call Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(15, 5))
+        ttk.Label(win, text="All connected devices are ringing/joined.", font=("Segoe UI", 10)).pack(pady=(0, 10))
+        
+        if not SOUNDDEVICE_AVAILABLE:
+            ttk.Label(win, text="⚠️ 'sounddevice' missing. PC Speakers Disabled.", font=("Segoe UI", 8), bootstyle=WARNING).pack(pady=(0,5))
+            
+        ttk.Label(win, text="Highest Incoming Audio Level:", font=("Segoe UI", 9)).pack(anchor=W, padx=25)
+        meter = ttk.Progressbar(win, bootstyle="success", maximum=100, value=0)
+        meter.pack(fill=X, padx=25, pady=(0, 15))
+        
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(fill=X, padx=20, pady=5)
+        
+        btn_mic = ttk.Button(btn_frame, text="Mute My Mic (All)", bootstyle="warning-outline", command=lambda: self.toggle_group_mic(btn_mic))
+        btn_mic.pack(side=LEFT, expand=True, padx=5)
+        
+        btn_spk = ttk.Button(btn_frame, text="Mute Speakers (All)", bootstyle="info-outline", command=lambda: self.toggle_group_speaker(btn_spk))
+        btn_spk.pack(side=LEFT, expand=True, padx=5)
+        
+        btn_end = ttk.Button(win, text="❌ End Group Call", bootstyle="danger", command=self.end_group_call_ui)
+        btn_end.pack(fill=X, padx=25, pady=15)
+        
+        GROUP_CALL_WINDOW = {'win': win, 'meter': meter, 'mic_muted': False, 'spk_muted': False}
+
+    def update_group_call_meter(self, volume):
+        global GROUP_CALL_WINDOW
+        if GROUP_CALL_WINDOW:
+            meter = GROUP_CALL_WINDOW['meter']
+            if meter.winfo_exists():
+                meter.configure(value=volume)
+                if volume > 70:
+                    meter.configure(bootstyle="danger")
+                elif volume > 40:
+                    meter.configure(bootstyle="warning")
+                else:
+                    meter.configure(bootstyle="success")
+
+    def toggle_group_mic(self, btn):
+        global GROUP_CALL_WINDOW, _ws_loop
+        if GROUP_CALL_WINDOW:
+            GROUP_CALL_WINDOW['mic_muted'] = not GROUP_CALL_WINDOW['mic_muted']
+            muted = GROUP_CALL_WINDOW['mic_muted']
+            btn.configure(text="Unmute My Mic (All)" if muted else "Mute My Mic (All)", bootstyle="warning" if muted else "warning-outline")
+            if _ws_loop:
+                for ws in list(CONNECTED_WS.values()):
+                    asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": muted})), _ws_loop)
+
+    def toggle_group_speaker(self, btn):
+        global GROUP_CALL_WINDOW, _ws_loop
+        if GROUP_CALL_WINDOW:
+            GROUP_CALL_WINDOW['spk_muted'] = not GROUP_CALL_WINDOW['spk_muted']
+            muted = GROUP_CALL_WINDOW['spk_muted']
+            btn.configure(text="Unmute Speakers (All)" if muted else "Mute Speakers (All)", bootstyle="info" if muted else "info-outline")
+            if _ws_loop:
+                for ws in list(CONNECTED_WS.values()):
+                    asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": muted})), _ws_loop)
+
+    def end_group_call_ui(self):
+        global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW, _ws_loop
+        GLOBAL_GROUP_CALL_ACTIVE = False
+        
+        if _ws_loop:
+            for d_id, ws in list(CONNECTED_WS.items()):
+                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "call_ended"})), _ws_loop)
+                asyncio.run_coroutine_threadsafe(cleanup_call(d_id), _ws_loop)
+        
+        if GROUP_CALL_WINDOW:
+            try:
+                GROUP_CALL_WINDOW['win'].destroy()
+            except Exception:
+                pass
+            GROUP_CALL_WINDOW = None
+        self._append_log('network', "[VOICE] Group Call ended.")
+
     def show_active_call_ui(self, device_id):
         if device_id in self.active_call_windows:
             return
@@ -1996,6 +2094,10 @@ class ServerHub(ttk.Window):
         
         self.btn_broadcast = ttk.Button(devices_header_row, text="📢 Broadcast to All", bootstyle="warning-outline", command=self._prompt_broadcast_message)
         self.btn_broadcast.pack(side=RIGHT, padx=(10, 0))
+        
+        # --- NEW: Group Call Button ---
+        self.btn_group_call = ttk.Button(devices_header_row, text="📞 Group Call All", bootstyle="success-outline", command=self._prompt_group_call)
+        self.btn_group_call.pack(side=RIGHT, padx=(10, 0))
         
         self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 9), bootstyle=WARNING)
         self.lbl_stats_health.pack(side=RIGHT, anchor=E)
