@@ -492,9 +492,9 @@
       background: rgba(0, 0, 0, 0.85);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
+      z-index: 9999;
       align-items: center;
       justify-content: center;
-      z-index: 9999;
       opacity: 0;
       transition: opacity 0.3s ease;
     }
@@ -593,7 +593,6 @@
 
     .dev-modal-content button:active {
       transform: translateY(2px);
-      box-shadow: 0 2px 5px rgba(0, 210, 255, 0.3);
     }
 
     /* --- ROBUST MESSAGE MODAL CSS --- */
@@ -607,7 +606,6 @@
       align-items: center;
       justify-content: center;
       z-index: 999999;
-      /* Supreme Z-index */
       opacity: 0;
       transition: opacity 0.3s ease;
     }
@@ -1092,7 +1090,7 @@
       t.textContent = msg;
       t.classList.add("show");
       clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => t.classList.remove("show"), 3000);
+      toastTimeout = setTimeout(() => t.classList.remove("show"), 4000);
     }
 
     function getDeviceId() {
@@ -1246,7 +1244,6 @@
           try {
             const data = await response.json();
 
-            // Auto-Sync Rename: Synchronize new name provided by the central server hub
             if (data.canonical_name && data.canonical_name !== getDeviceName() && data.canonical_name !== "Unknown Device") {
               localStorage.setItem("hub_device_name", data.canonical_name);
               document.getElementById("display-device-name").textContent = data.canonical_name;
@@ -1675,16 +1672,14 @@
         };
 
         wsCall.onclose = (e) => {
-          console.log(`Voice server disconnected (Code: ${e.code}). Retrying in 5s...`);
           clearTimeout(wsReconnectTimer);
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
         };
 
         wsCall.onerror = (error) => {
-          console.error("Voice WebSocket Connection Error. If on HTTPS, ensure port 5002 has a trusted certificate.", error);
+          console.error("Voice WebSocket Connection Error.", error);
         };
       } catch (e) {
-        console.error("Failed to initialize WebSocket:", e);
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = setTimeout(connectCallServer, 5000);
       }
@@ -1728,7 +1723,7 @@
         }
 
       } catch (err) {
-        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection or Localhost.");
+        alert("Microphone Access Denied! Voice calls require a secure connection and hardware permissions.");
         rejectCall();
       }
     }
@@ -1761,15 +1756,6 @@
       }
     }
 
-    // Prevent accidental page close while on a call
-    window.addEventListener("beforeunload", function (e) {
-      if (peerConnection && peerConnection.connectionState === "connected") {
-        const confirmationMessage = "Leaving this page will end your active voice call. Continue?";
-        (e || window.event).returnValue = confirmationMessage;
-        return confirmationMessage;
-      }
-    });
-
     // Intercept Back button if on a call
     document.getElementById('nav-hub-btn').addEventListener('click', function (e) {
       if (peerConnection && peerConnection.connectionState === 'connected') {
@@ -1785,10 +1771,12 @@
       if (document.visibilityState === "visible") syncServerStatus();
     });
 
-    window.addEventListener("DOMContentLoaded", () => {
-      fetchStats();
+    window.addEventListener("load", () => {
+      initDeviceName();
+      updateOfflineBadge();
       connectCallServer();
-      setInterval(fetchStats, 3000);
+      setInterval(syncServerStatus, 3000);
+      syncServerStatus();
     });
   </script>
 </body>
