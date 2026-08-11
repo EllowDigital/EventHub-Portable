@@ -485,8 +485,7 @@
     }
 
     #success-modal,
-    #device-modal,
-    #operator-msg-modal {
+    #device-modal {
       display: none;
       position: fixed;
       inset: 0;
@@ -501,8 +500,7 @@
     }
 
     #success-modal.show,
-    #device-modal.show,
-    #operator-msg-modal.show {
+    #device-modal.show {
       opacity: 1;
     }
 
@@ -520,8 +518,7 @@
     }
 
     #success-modal.show .modal-content,
-    #device-modal.show .dev-modal-content,
-    #operator-msg-modal.show .modal-content {
+    #device-modal.show .dev-modal-content {
       transform: scale(1);
     }
 
@@ -596,6 +593,45 @@
 
     .dev-modal-content button:active {
       transform: translateY(2px);
+      box-shadow: 0 2px 5px rgba(0, 210, 255, 0.3);
+    }
+
+    /* --- ROBUST MESSAGE MODAL CSS --- */
+    #operator-msg-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      /* Supreme Z-index */
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    #operator-msg-modal.show {
+      opacity: 1;
+    }
+
+    .msg-modal-content {
+      background: var(--warning);
+      color: #000;
+      padding: 30px;
+      border-radius: 15px;
+      border: 3px solid #ff9100;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+      transform: scale(0.8);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    #operator-msg-modal.show .msg-modal-content {
+      transform: scale(1);
     }
 
     /* --- MINIMIZABLE CALL UI STYLES --- */
@@ -943,11 +979,9 @@
     </div>
   </div>
 
-  <!-- Persistent Operator Message Modal -->
-  <div id="operator-msg-modal"
-    style="z-index: 99999; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center;">
-    <div class="modal-content"
-      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
+  <!-- Persistent Operator Message Modal (FULLY FIXED REPAINT BUG) -->
+  <div id="operator-msg-modal">
+    <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
       <p id="operator-msg-text"
         style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
@@ -1212,6 +1246,7 @@
           try {
             const data = await response.json();
 
+            // Auto-Sync Rename: Synchronize new name provided by the central server hub
             if (data.canonical_name && data.canonical_name !== getDeviceName() && data.canonical_name !== "Unknown Device") {
               localStorage.setItem("hub_device_name", data.canonical_name);
               document.getElementById("display-device-name").textContent = data.canonical_name;
@@ -1640,12 +1675,16 @@
         };
 
         wsCall.onclose = (e) => {
+          console.log(`Voice server disconnected (Code: ${e.code}). Retrying in 5s...`);
           clearTimeout(wsReconnectTimer);
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
         };
 
-        wsCall.onerror = (error) => { };
+        wsCall.onerror = (error) => {
+          console.error("Voice WebSocket Connection Error. If on HTTPS, ensure port 5002 has a trusted certificate.", error);
+        };
       } catch (e) {
+        console.error("Failed to initialize WebSocket:", e);
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = setTimeout(connectCallServer, 5000);
       }
@@ -1660,7 +1699,6 @@
 
         document.getElementById("active-call-overlay").style.display = "flex";
 
-        // Auto-minimize after a moment so they can keep working
         setTimeout(() => {
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
@@ -1716,7 +1754,6 @@
       document.getElementById("incoming-call-modal").style.display = "none";
       document.getElementById("active-call-overlay").style.display = "none";
 
-      // Reset minimization state for next call
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
@@ -1748,12 +1785,10 @@
       if (document.visibilityState === "visible") syncServerStatus();
     });
 
-    window.addEventListener("load", () => {
-      initDeviceName();
-      updateOfflineBadge();
+    window.addEventListener("DOMContentLoaded", () => {
+      fetchStats();
       connectCallServer();
-      setInterval(syncServerStatus, 3000);
-      syncServerStatus();
+      setInterval(fetchStats, 3000);
     });
   </script>
 </body>
