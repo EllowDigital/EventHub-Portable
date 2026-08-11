@@ -72,6 +72,38 @@
       }
     }
 
+    /* WebRTC Animations */
+    @keyframes ringShake {
+      0% {
+        transform: rotate(-15deg);
+      }
+
+      50% {
+        transform: rotate(15deg);
+      }
+
+      100% {
+        transform: rotate(-15deg);
+      }
+    }
+
+    @keyframes pulseMic {
+      0% {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      50% {
+        transform: scale(1.15);
+        opacity: 0.7;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
     .header {
       width: 100%;
       display: flex;
@@ -730,7 +762,7 @@
   </div>
 
   <!-- Persistent Operator Message Modal -->
-  <div id="operator-msg-modal" class="permission-overlay" style="z-index: 99999; display: none;">
+  <div id="operator-msg-modal" style="display: none;">
     <div class="modal-content"
       style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
@@ -740,6 +772,42 @@
         style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: transform 0.2s;">
         Acknowledge Message
       </button>
+    </div>
+  </div>
+
+  <!-- WebRTC Incoming Call Modal -->
+  <div id="incoming-call-modal"
+    style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
+    <div
+      style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--primary); text-align: center; box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); max-width: 350px; width: 90%; animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+      <div
+        style="font-size: 55px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
+        📞</div>
+      <h2 style="margin: 0 0 10px 0; color: var(--text-main); font-weight: 900;">Incoming Call</h2>
+      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Command Hub is
+        dispatching audio...</p>
+      <div style="display: flex; gap: 15px; justify-content: center;">
+        <button onclick="acceptCall()"
+          style="background: var(--success); color: #000; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
+        <button onclick="rejectCall()"
+          style="background: var(--danger); color: #fff; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- WebRTC Active Call Modal -->
+  <div id="active-call-modal"
+    style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
+    <div
+      style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--success); text-align: center; box-shadow: 0 0 60px rgba(0, 230, 118, 0.25); max-width: 350px; width: 90%;">
+      <div style="font-size: 60px; margin-bottom: 25px; animation: pulseMic 1.5s infinite; display: inline-block;">🎙️
+      </div>
+      <h2 style="margin: 0 0 10px 0; color: var(--success); font-weight: 900;">Call Active</h2>
+      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Bidirectional
+        radio channel open.</p>
+      <button onclick="endCall()"
+        style="background: var(--danger); color: #fff; border: none; padding: 16px 40px; border-radius: 30px; font-weight: 900; font-size: 1.1rem; cursor: pointer; width: 100%; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">End
+        Call</button>
     </div>
   </div>
 
@@ -922,8 +990,7 @@
         device_id: getDeviceId(),
         device_name: getDeviceName(),
         page: window.location.pathname,
-        battery: "N/A",
-        temp: "N/A"
+        battery: "N/A"
       };
 
       if (navigator.getBattery) {
@@ -1051,7 +1118,7 @@
               }
             } else { errDiv.textContent = ""; }
           } catch (err) { errDiv.textContent = ""; }
-        }, 250); // Improved API typing responsive delay
+        }, 250);
       } else {
         errDiv.textContent = "";
         errDiv.className = "err-msg";
@@ -1092,7 +1159,7 @@
             errDiv.textContent = "";
             errDiv.className = "err-msg";
           }
-        }, 250); // Improved API typing responsive delay
+        }, 250);
       } else {
         errDiv.textContent = "";
         errDiv.className = "err-msg";
@@ -1286,6 +1353,163 @@
         });
     }
 
+    // ==========================================
+    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
+    // ==========================================
+
+    let wsCall = null;
+    let peerConnection = null;
+    let localStream = null;
+    let wsReconnectTimer = null;
+    let ringInterval = null;
+
+    const remoteAudio = new Audio();
+    remoteAudio.autoplay = true;
+
+    function playRingingTone() {
+      initAudio();
+      ringInterval = setInterval(() => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.type = "square";
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+        osc.frequency.setValueAtTime(480, audioCtx.currentTime + 0.2);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.0);
+        osc.start(); osc.stop(audioCtx.currentTime + 1.0);
+      }, 2000);
+    }
+
+    function stopRinging() {
+      if (ringInterval) {
+        clearInterval(ringInterval);
+        ringInterval = null;
+      }
+    }
+
+    function connectCallServer() {
+      if (wsCall && (wsCall.readyState === WebSocket.OPEN || wsCall.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+
+      const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+      const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
+
+      if (window.location.hostname.includes("trycloudflare.com")) {
+        console.warn("⚠️ Cloudflare Tunnel Detected: Port 5002 for WebRTC audio may be blocked by Cloudflare unless explicitly routed.");
+      }
+
+      try {
+        wsCall = new WebSocket(wsUrl);
+
+        wsCall.onmessage = async (event) => {
+          try {
+            const data = JSON.parse(event.data);
+
+            if (data.type === 'incoming_call') {
+              document.getElementById("incoming-call-modal").style.display = "flex";
+              playRingingTone();
+            }
+            else if (data.type === 'answer' && peerConnection) {
+              await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+            }
+            else if (data.type === 'server_muted') {
+              remoteAudio.muted = data.muted;
+            }
+            else if (data.type === 'client_muted') {
+              if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                  track.enabled = !data.muted;
+                });
+              }
+            }
+            else if (data.type === 'call_ended') {
+              endCall(false);
+            }
+          } catch (parseError) {
+            console.error("Failed to parse WebRTC data:", parseError);
+          }
+        };
+
+        wsCall.onclose = (e) => {
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = setTimeout(connectCallServer, 5000);
+        };
+
+        wsCall.onerror = (error) => {
+          console.error("Voice WebSocket Connection Error.", error);
+        };
+      } catch (e) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = setTimeout(connectCallServer, 5000);
+      }
+    }
+
+    async function acceptCall() {
+      stopRinging();
+      document.getElementById("incoming-call-modal").style.display = "none";
+
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        document.getElementById("active-call-modal").style.display = "flex";
+
+        peerConnection = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        localStream.getTracks().forEach(track => {
+          peerConnection.addTrack(track, localStream);
+        });
+
+        peerConnection.ontrack = (event) => {
+          if (!remoteAudio.srcObject) {
+            remoteAudio.srcObject = event.streams[0];
+          }
+        };
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        if (wsCall && wsCall.readyState === WebSocket.OPEN) {
+          wsCall.send(JSON.stringify({
+            type: 'offer',
+            sdp: peerConnection.localDescription.sdp
+          }));
+        }
+      } catch (err) {
+        console.error("WebRTC Error:", err);
+        alert("Microphone Access Denied! Voice calls require a secure connection and hardware permissions.");
+        rejectCall();
+      }
+    }
+
+    function rejectCall() {
+      endCall(true);
+    }
+
+    function endCall(sendPing = true) {
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach(t => t.stop());
+        localStream = null;
+      }
+      if (remoteAudio.srcObject) {
+        remoteAudio.srcObject = null;
+      }
+
+      stopRinging();
+      document.getElementById("incoming-call-modal").style.display = "none";
+      document.getElementById("active-call-modal").style.display = "none";
+
+      if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
+        wsCall.send(JSON.stringify({ type: 'call_ended' }));
+      }
+    }
+
     document.addEventListener("click", initAudio, { once: true });
 
     document.addEventListener("visibilitychange", () => {
@@ -1295,6 +1519,7 @@
     window.addEventListener("load", () => {
       initDeviceName();
       updateOfflineBadge();
+      connectCallServer();
       setInterval(syncServerStatus, 3000);
       syncServerStatus();
     });
