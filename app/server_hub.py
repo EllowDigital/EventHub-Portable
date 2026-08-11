@@ -478,6 +478,20 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
             san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
         except ValueError:
             pass
+            
+        # --- NEW FIX: SECURE ALL AVAILABLE NETWORK ADAPTERS ---
+        try:
+            for interface, snics in psutil.net_if_addrs().items():
+                for snic in snics:
+                    if snic.family == socket.AF_INET and snic.address not in ["127.0.0.1", local_ip]:
+                        try:
+                            san_entries.append(x509.IPAddress(ipaddress.ip_address(snic.address)))
+                        except ValueError:
+                            pass
+        except Exception:
+            pass
+        # ------------------------------------------------------
+        
         ski = x509.SubjectKeyIdentifier.from_public_key(server_key.public_key())
         aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key())
         cert = (
