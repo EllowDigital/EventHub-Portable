@@ -20,6 +20,7 @@ import urllib3
 import asyncio
 import ssl
 import array
+import fractions
 from datetime import datetime, timezone, timedelta
 import tkinter as tk
 from tkinter import simpledialog
@@ -39,7 +40,7 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- NEW: Sounddevice Check for Live PC Speaker Playback ---
+# --- NATIVE AUDIO ROUTING VIA SOUNDDEVICE ---
 try:
     import sounddevice as sd
     import soundfile as sf
@@ -58,8 +59,7 @@ except ImportError:
 try:
     import websockets
     import av
-    from aiortc import RTCPeerConnection, RTCSessionDescription
-    from aiortc.contrib.media import MediaPlayer, MediaRecorder
+    from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
     WEBRTC_SUPPORTED = True
 except ImportError:
     WEBRTC_SUPPORTED = False
@@ -277,24 +277,102 @@ CONNECTED_WS = {}
 ACTIVE_CALLS_DATA = {}
 _ws_loop = None
 
+# --- CUSTOM NATIVE AUDIO ROUTING TRACK ---
+class SoundDeviceMicTrack(MediaStreamTrack):
+    """
+    Bypasses FFmpeg and deeply hooks into the physical PC microphone 
+    using numpy and sounddevice to beam raw audio natively to the phone.
+    """
+    kind = "audio"
+
+    def __init__(self):
+        super().__init__()
+        self.q = queue.Queue()
+        self.stream = None
+        self.pts = 0
+        try:
+            self.stream = sd.RawInputStream(
+                samplerate=48000, 
+                channels=1, 
+                dtype='int16',
+                blocksize=960, # 20ms frames
+                callback=self.callback
+            )
+            self.stream.start()
+        except Exception as e:
+            logging.error(f"PC Microphone hook failed: {e}")
+
+    def callback(self, indata, frames, time, status):
+        # Push physical mic bytes to the WebRTC queue
+        try:
+            self.q.put_nowait(bytes(indata))
+        except queue.Full:
+            pass
+
+    async def recv(self):
+        if not self.stream:
+            # Transmit dead silence to keep WebRTC connection alive if no mic exists
+            await asyncio.sleep(0.02)
+            frame = av.AudioFrame(format='s16', layout='mono', samples=960)
+            frame.sample_rate = 48000
+            frame.pts = self.pts
+            frame.time_base = fractions.Fraction(1, 48000)
+            self.pts += 960
+            return frame
+
+        # Fetch mic byte data and bind it to a native aiortc AudioFrame
+        data = await asyncio.get_event_loop().run_in_executor(None, self.q.get)
+        frame = av.AudioFrame(format='s16', layout='mono', samples=960)
+        frame.sample_rate = 48000
+        frame.planes[0].update(data)
+        frame.pts = self.pts
+        frame.time_base = fractions.Fraction(1, 48000)
+        self.pts += 960
+        return frame
+        
+    def stop(self):
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+        super().stop()
+
+
+def _audio_playback_worker(q, sample_rate, channels):
+    """
+    Dedicated background thread to play incoming audio without blocking the WebRTC loop.
+    """
+    try:
+        with sd.RawOutputStream(samplerate=sample_rate, channels=channels, dtype='int16') as stream:
+            while True:
+                data = q.get()
+                if data is None: 
+                    break # Kill signal received
+                stream.write(data)
+    except Exception as e:
+        logging.error(f"Speaker Playback Error: {e}")
+
+
 async def cleanup_call(device_id):
     if device_id in ACTIVE_CALLS_DATA:
         cdata = ACTIVE_CALLS_DATA.pop(device_id)
         pc = cdata.get('pc')
-        player = cdata.get('player')
+        mic_track = cdata.get('mic_track')
+        play_q = cdata.get('play_q')
+        
         try:
             if pc: await pc.close()
-            if player and player.audio: player.audio.stop()
+            if mic_track: mic_track.stop()
+            if play_q: play_q.put(None) # Tell speaker thread to die gracefully
         except Exception as e:
-            logging.error(f"Cleanup error: {e}")
+            pass
             
     global app_window
     if app_window:
         app_window.gui_queue.put(lambda: app_window.close_call_ui(device_id))
 
+
 async def signaling_handler(websocket, path=None):
     try:
-        # Handle newer websockets version where path is retrieved from request
         if path is None:
             try:
                 path = websocket.request.path
@@ -318,75 +396,57 @@ async def signaling_handler(websocket, path=None):
                 if msg_type == "offer":
                     if device_id not in ACTIVE_CALLS_DATA:
                         pc = RTCPeerConnection()
-                        player = None
+                        play_q = queue.Queue()
+                        mic_track = None
                         
-                        sys_name = platform.system()
-                        try:
-                            # The Server's Microphone input
-                            if sys_name == 'Windows':
-                                player = MediaPlayer('audio=default', format='dshow')
-                            elif sys_name == 'Darwin':
-                                player = MediaPlayer(':0', format='avfoundation')
-                            else:
-                                player = MediaPlayer('default', format='pulse')
-                                
-                            if player and player.audio:
-                                pc.addTrack(player.audio)
-                        except Exception as e:
-                            logging.debug(f"Media Init Error (Ignored): {e}")
+                        # Mount PC Microphone
+                        if SOUNDDEVICE_AVAILABLE:
+                            try:
+                                mic_track = SoundDeviceMicTrack()
+                                pc.addTrack(mic_track)
+                            except Exception as e:
+                                logging.error(f"Failed to attach PC Mic: {e}")
 
-                        # Route the incoming Staff audio to the VU Meter & Sounddevice speaker
+                        # Route Incoming Phone Audio to PC Speakers & VU Meter
                         @pc.on("track")
                         def on_track(track):
                             if track.kind == "audio":
-                                async def play_audio_and_meter():
+                                async def process_incoming_audio():
                                     global app_window
-                                    stream = None
-                                    
+                                    started_player = False
                                     try:
                                         while True:
                                             frame = await track.recv()
+                                            data_bytes = frame.planes[0].to_bytes()
+                                            
+                                            # Boot speaker daemon thread dynamically on first frame
+                                            if not started_player and SOUNDDEVICE_AVAILABLE:
+                                                channels = len(frame.layout.channels)
+                                                rate = frame.sample_rate
+                                                threading.Thread(target=_audio_playback_worker, args=(play_q, rate, channels), daemon=True).start()
+                                                started_player = True
+                                                
+                                            if started_player:
+                                                play_q.put(data_bytes)
                                             
                                             # Calculate live Volume VU Level
                                             try:
-                                                data_bytes = frame.planes[0].to_bytes()
                                                 samples = array.array('h', data_bytes)
                                                 peak = max(abs(s) for s in samples) if samples else 0
-                                                # Boost sensitivity scale for speech
-                                                vol_percent = min(100, int((peak / 32768.0) * 250)) 
+                                                # Boost sensitivity scale for better UI visual response
+                                                vol_percent = min(100, int((peak / 32768.0) * 100 * 2.5)) 
                                                 
                                                 if app_window:
                                                     app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
                                             except Exception:
                                                 pass
-                                            
-                                            # Write to PC Speakers directly using sounddevice
-                                            if SOUNDDEVICE_AVAILABLE:
-                                                try:
-                                                    if not stream:
-                                                        channels = len(frame.layout.channels)
-                                                        rate = frame.sample_rate
-                                                        # RawOutputStream seamlessly accepts byte data
-                                                        stream = sd.RawOutputStream(samplerate=rate, channels=channels, dtype='int16')
-                                                        stream.start()
-                                                    
-                                                    # Pass raw bytes to the output stream
-                                                    stream.write(frame.to_ndarray().tobytes())
-                                                except Exception as err:
-                                                    logging.debug(f"Sounddevice playback error: {err}")
-                                                    
+                                                
                                     except Exception:
                                         pass
-                                    finally:
-                                        if stream: 
-                                            stream.stop()
-                                            stream.close()
-                                        if app_window:
-                                            app_window.gui_queue.put(lambda d=device_id: app_window.update_call_meter(d, 0))
 
-                                asyncio.create_task(play_audio_and_meter())
+                                asyncio.create_task(process_incoming_audio())
                             
-                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'player': player}
+                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'mic_track': mic_track, 'play_q': play_q}
                         
                         global app_window
                         if app_window:
@@ -2321,7 +2381,10 @@ class ServerHub(ttk.Window):
         self._animate_cf_connecting()
         with self.cf_lock:
             self.cloudflare_url = "Pending"
+            
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
+        self._append_log('cf', "[WARNING] Voice Calling requires local LAN or an advanced Cloudflare config mapping port 5002. Voice over quick-tunnels is disabled.")
+
         def _run_cf():
             try:
                 proc = subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
