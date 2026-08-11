@@ -40,7 +40,7 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- NATIVE AUDIO ROUTING VIA SOUNDDEVICE ---
+# --- NATIVE AUDIO ROUTING ---
 try:
     import sounddevice as sd
     import soundfile as sf
@@ -275,35 +275,62 @@ STATS_CACHE = {
 }
 stats_lock = threading.Lock()
 
+
+# ==============================================================================
+# --- ENTERPRISE AUDIO ENGINE (NATIVE MIXER & SPLITTER) ---
+# ==============================================================================
 CONNECTED_WS = {}
 ACTIVE_CALLS_DATA = {}
 _ws_loop = None
 
-# --- CUSTOM NATIVE AUDIO ROUTING TRACK ---
-class SoundDeviceMicTrack(MediaStreamTrack):
+GLOBAL_AUDIO_MIXER = {}
+MIXER_LOCK = threading.Lock()
+GLOBAL_MIC_SUBSCRIBERS = set()
+
+class GlobalMicStream:
+    """
+    Grabs the Server's physical microphone exactly ONCE.
+    Splits the raw audio byte stream directly to multiple connected WebRTC connections.
+    """
+    def __init__(self):
+        self.stream = None
+        if SOUNDDEVICE_AVAILABLE:
+            try:
+                self.stream = sd.RawInputStream(
+                    samplerate=48000, channels=1, dtype='int16',
+                    blocksize=960, callback=self.callback
+                )
+                self.stream.start()
+            except Exception as e:
+                logging.error(f"PC Microphone hook failed: {e}")
+
+    def callback(self, indata, frames, time, status):
+        data = bytes(indata)
+        for q in list(GLOBAL_MIC_SUBSCRIBERS):
+            try:
+                if q.qsize() < 10:  # Drop frames if network lags, keeps voice real-time
+                    q.put_nowait(data)
+            except queue.Full:
+                pass
+
+global_mic = GlobalMicStream()
+
+class WebRTCMicTrack(MediaStreamTrack):
     kind = "audio"
     def __init__(self):
         super().__init__()
-        self.q = queue.Queue()
-        self.stream = None
+        self.q = queue.Queue(maxsize=10)
+        GLOBAL_MIC_SUBSCRIBERS.add(self.q)
         self.pts = 0
-        try:
-            self.stream = sd.RawInputStream(
-                samplerate=48000, channels=1, dtype='int16',
-                blocksize=960, callback=self.callback
-            )
-            self.stream.start()
-        except Exception as e:
-            logging.error(f"PC Microphone hook failed: {e}")
 
-    def callback(self, indata, frames, time, status):
-        try:
-            self.q.put_nowait(bytes(indata))
-        except queue.Full:
-            pass
+    def stop(self):
+        if self.q in GLOBAL_MIC_SUBSCRIBERS:
+            GLOBAL_MIC_SUBSCRIBERS.remove(self.q)
+        super().stop()
 
     async def recv(self):
-        if not self.stream:
+        # Generate silence if no mic is hooked up
+        if not global_mic.stream:
             await asyncio.sleep(0.02)
             frame = av.AudioFrame(format='s16', layout='mono', samples=960)
             frame.sample_rate = 48000
@@ -312,6 +339,7 @@ class SoundDeviceMicTrack(MediaStreamTrack):
             self.pts += 960
             return frame
 
+        # Fetch byte data from the global splitter and push it into the WebRTC wrapper
         data = await asyncio.get_event_loop().run_in_executor(None, self.q.get)
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -320,24 +348,38 @@ class SoundDeviceMicTrack(MediaStreamTrack):
         frame.time_base = fractions.Fraction(1, 48000)
         self.pts += 960
         return frame
-        
-    def stop(self):
-        if self.stream:
-            self.stream.stop()
-            self.stream.close()
-        super().stop()
 
 
-def _audio_playback_worker(q, sample_rate, channels):
+def _global_audio_playback_worker():
+    """
+    Dedicated unblocked hardware thread. Merges multiple incoming audio channels 
+    into a single stream perfectly, preventing 'Device Busy' crashes during Group Calls.
+    """
+    if not SOUNDDEVICE_AVAILABLE: return
     try:
-        with sd.RawOutputStream(samplerate=sample_rate, channels=channels, dtype='int16') as stream:
-            while True:
-                data = q.get()
-                if data is None: 
-                    break 
-                stream.write(data)
+        with sd.RawOutputStream(samplerate=48000, channels=1, dtype='int16', blocksize=960) as stream:
+            while not _global_shutdown_event.is_set():
+                with MIXER_LOCK:
+                    channels = list(GLOBAL_AUDIO_MIXER.values())
+                    # Flush the channel data so stale audio doesn't echo
+                    for k in list(GLOBAL_AUDIO_MIXER.keys()):
+                        GLOBAL_AUDIO_MIXER[k] = np.zeros(960, dtype=np.int16)
+
+                if not channels:
+                    stream.write(np.zeros(960, dtype=np.int16).tobytes())
+                    continue
+
+                # Add all active channels together, hard-clip at 16-bit bounds to stop crackling
+                mixed = np.zeros(960, dtype=np.int32)
+                for frame in channels:
+                    mixed += frame
+                
+                mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+                stream.write(mixed.tobytes())
     except Exception as e:
-        logging.error(f"Speaker Playback Error: {e}")
+        logging.error(f"Global Hardware Mixer Error: {e}")
+
+threading.Thread(target=_global_audio_playback_worker, daemon=True).start()
 
 
 async def cleanup_call(device_id):
@@ -345,14 +387,15 @@ async def cleanup_call(device_id):
         cdata = ACTIVE_CALLS_DATA.pop(device_id)
         pc = cdata.get('pc')
         mic_track = cdata.get('mic_track')
-        play_q = cdata.get('play_q')
-        
         try:
             if pc: await pc.close()
             if mic_track: mic_track.stop()
-            if play_q: play_q.put(None)
-        except Exception as e:
+        except Exception:
             pass
+            
+    with MIXER_LOCK:
+        if device_id in GLOBAL_AUDIO_MIXER:
+            del GLOBAL_AUDIO_MIXER[device_id]
             
     global app_window, GLOBAL_GROUP_CALL_ACTIVE
     if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
@@ -376,7 +419,7 @@ async def signaling_handler(websocket, path=None):
             
         CONNECTED_WS[device_id] = websocket
         
-        # AUTO-JOIN GROUP CALL LOGIC
+        # Late-Join Group Call Detection
         if GLOBAL_GROUP_CALL_ACTIVE:
             try:
                 await websocket.send(json.dumps({"type": "incoming_call"}))
@@ -391,55 +434,58 @@ async def signaling_handler(websocket, path=None):
                 if msg_type == "offer":
                     if device_id not in ACTIVE_CALLS_DATA:
                         pc = RTCPeerConnection()
-                        play_q = queue.Queue()
                         mic_track = None
                         
                         if SOUNDDEVICE_AVAILABLE:
                             try:
-                                mic_track = SoundDeviceMicTrack()
+                                mic_track = WebRTCMicTrack()
                                 pc.addTrack(mic_track)
                             except Exception as e:
-                                logging.error(f"Failed to attach PC Mic: {e}")
+                                logging.error(f"Failed to attach Native Mic to WebRTC: {e}")
+
+                        # Standardize any incoming format instantly to 48kHz Mono 16-bit
+                        resampler = av.AudioResampler(format='s16', layout='mono', rate=48000)
 
                         @pc.on("track")
                         def on_track(track):
                             if track.kind == "audio":
                                 async def process_incoming_audio():
                                     global app_window, GLOBAL_GROUP_CALL_ACTIVE
-                                    started_player = False
                                     try:
                                         while True:
                                             frame = await track.recv()
-                                            data_bytes = frame.planes[0].to_bytes()
-                                            
-                                            if not started_player and SOUNDDEVICE_AVAILABLE:
-                                                channels = len(frame.layout.channels)
-                                                rate = frame.sample_rate
-                                                threading.Thread(target=_audio_playback_worker, args=(play_q, rate, channels), daemon=True).start()
-                                                started_player = True
+                                            frames = resampler.resample(frame)
+                                            for f in frames:
+                                                data_bytes = f.planes[0].to_bytes()
+                                                samples = np.frombuffer(data_bytes, dtype=np.int16)
                                                 
-                                            if started_player:
-                                                play_q.put(data_bytes)
-                                            
-                                            try:
-                                                samples = array.array('h', data_bytes)
-                                                peak = max(abs(s) for s in samples) if samples else 0
-                                                vol_percent = min(100, int((peak / 32768.0) * 100 * 2.5)) 
+                                                # Inject this device's audio into the master output mix
+                                                with MIXER_LOCK:
+                                                    GLOBAL_AUDIO_MIXER[device_id] = samples
                                                 
-                                                if app_window:
-                                                    if GLOBAL_GROUP_CALL_ACTIVE:
-                                                        app_window.gui_queue.put(lambda v=vol_percent: app_window.update_group_call_meter(v))
+                                                # Beautiful RMS Volume Analysis for lively UI meter
+                                                try:
+                                                    rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
+                                                    if rms < 150: # Intelligent Noise Floor Gate
+                                                        vol_percent = 0
                                                     else:
-                                                        app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
-                                            except Exception:
-                                                pass
-                                                
+                                                        # Curve so normal speaking bounces happily
+                                                        vol_percent = min(100, int((rms / 4000.0) * 100)) 
+                                                    
+                                                    if app_window:
+                                                        if GLOBAL_GROUP_CALL_ACTIVE:
+                                                            app_window.gui_queue.put(lambda v=vol_percent: app_window.update_group_call_meter(v))
+                                                        else:
+                                                            app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                                except Exception:
+                                                    pass
+                                                    
                                     except Exception:
                                         pass
 
                                 asyncio.create_task(process_incoming_audio())
                             
-                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'mic_track': mic_track, 'play_q': play_q}
+                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'mic_track': mic_track}
                         
                         global app_window
                         if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
@@ -460,7 +506,6 @@ async def signaling_handler(websocket, path=None):
                         "sdp": pc.localDescription.sdp
                     }))
                     
-                    # If this is an auto-joined group call, push current mute states down to the late device
                     if GLOBAL_GROUP_CALL_ACTIVE and GROUP_CALL_WINDOW:
                         await websocket.send(json.dumps({"type": "server_muted", "muted": GROUP_CALL_WINDOW['mic_muted']}))
                         await websocket.send(json.dumps({"type": "client_muted", "muted": GROUP_CALL_WINDOW['spk_muted']}))
@@ -509,6 +554,8 @@ def start_webrtc_server():
         logging.error(f"WebRTC Server failed to boot loop: {e}")
 
 threading.Thread(target=start_webrtc_server, daemon=True).start()
+
+# ==============================================================================
 
 def get_cached_sessions():
     global DB_SESSIONS_CACHE, _db_cache_last_failure
@@ -1472,10 +1519,13 @@ class ServerHub(ttk.Window):
         if GROUP_CALL_WINDOW:
             meter = GROUP_CALL_WINDOW['meter']
             if meter.winfo_exists():
-                meter.configure(value=volume)
-                if volume > 70:
+                curr = meter['value']
+                # Fast attack, slow release smoothing
+                val = volume if volume > curr else curr - ((curr - volume) * 0.15)
+                meter.configure(value=val)
+                if val > 75:
                     meter.configure(bootstyle="danger")
-                elif volume > 40:
+                elif val > 45:
                     meter.configure(bootstyle="warning")
                 else:
                     meter.configure(bootstyle="success")
@@ -1561,10 +1611,13 @@ class ServerHub(ttk.Window):
         if device_id in self.active_call_windows:
             meter = self.active_call_windows[device_id]['meter']
             if meter.winfo_exists():
-                meter.configure(value=volume)
-                if volume > 70:
+                curr = meter['value']
+                # Fast attack, slow release smoothing
+                val = volume if volume > curr else curr - ((curr - volume) * 0.15)
+                meter.configure(value=val)
+                if val > 75:
                     meter.configure(bootstyle="danger")
-                elif volume > 40:
+                elif val > 45:
                     meter.configure(bootstyle="warning")
                 else:
                     meter.configure(bootstyle="success")
@@ -1908,7 +1961,7 @@ class ServerHub(ttk.Window):
     def _prompt_start_call(self):
         global _ws_loop
         if not WEBRTC_SUPPORTED:
-            Messagebox.show_error("Missing audio libraries. Please pip install aiortc av websockets.", "Error")
+            Messagebox.show_error("Missing audio libraries. Please pip install aiortc sounddevice.", "Error")
             return
             
         d_id = getattr(self, '_context_device_id', None)
