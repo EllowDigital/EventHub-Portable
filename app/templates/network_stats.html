@@ -56,6 +56,7 @@
         opacity: 0;
         transform: translateY(15px);
       }
+
       to {
         opacity: 1;
         transform: translateY(0);
@@ -67,6 +68,7 @@
         transform: scale(0.9);
         opacity: 0;
       }
+
       100% {
         transform: scale(1);
         opacity: 1;
@@ -75,15 +77,34 @@
 
     /* WebRTC Animations */
     @keyframes ringShake {
-      0% { transform: rotate(-15deg); }
-      50% { transform: rotate(15deg); }
-      100% { transform: rotate(-15deg); }
+      0% {
+        transform: rotate(-15deg);
+      }
+
+      50% {
+        transform: rotate(15deg);
+      }
+
+      100% {
+        transform: rotate(-15deg);
+      }
     }
 
     @keyframes pulseMic {
-      0% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.15); opacity: 0.7; }
-      100% { transform: scale(1); opacity: 1; }
+      0% {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      50% {
+        transform: scale(1.15);
+        opacity: 0.7;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
     }
 
     .header {
@@ -239,9 +260,17 @@
       line-height: 1.1;
     }
 
-    .card-primary p { color: var(--primary); }
-    .card-success p { color: var(--success); }
-    .card-purple p { color: var(--purple); }
+    .card-primary p {
+      color: var(--primary);
+    }
+
+    .card-success p {
+      color: var(--success);
+    }
+
+    .card-purple p {
+      color: var(--purple);
+    }
 
     .speedometer {
       position: relative;
@@ -322,7 +351,8 @@
       text-align: left;
     }
 
-    th, td {
+    th,
+    td {
       padding: 18px 20px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
       white-space: nowrap;
@@ -412,18 +442,24 @@
         flex-direction: column;
         padding: 20px;
       }
+
       .header-title {
         justify-content: center;
       }
+
       .btn {
         width: 100%;
       }
-      th, td {
+
+      th,
+      td {
         padding: 14px 12px;
       }
+
       .grid {
         grid-template-columns: 1fr 1fr;
       }
+
       .stat-card p {
         font-size: 2.2rem;
       }
@@ -436,7 +472,8 @@
   <main class="app-container">
     <header class="header">
       <button class="btn" onclick="handleNavigation('/')">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
           <line x1="19" y1="12" x2="5" y2="12"></line>
           <polyline points="12 19 5 12 12 5"></polyline>
         </svg>
@@ -510,7 +547,8 @@
           </thead>
           <tbody id="device-table-body">
             <tr>
-              <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 40px; font-weight: 600; white-space: normal;">
+              <td colspan="4"
+                style="text-align: center; color: var(--text-muted); padding: 40px; font-weight: 600; white-space: normal;">
                 Scanning network for connected devices...
               </td>
             </tr>
@@ -521,36 +559,53 @@
   </main>
 
   <!-- Persistent Operator Message Modal -->
-  <div id="operator-msg-modal" style="z-index: 99999; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center;">
-    <div class="modal-content" style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
+  <div id="operator-msg-modal"
+    style="z-index: 99999; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center;">
+    <div class="modal-content"
+      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
-      <p id="operator-msg-text" style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
-      <button onclick="closeOperatorMsg()" style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: transform 0.2s;">
+      <p id="operator-msg-text"
+        style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
+      <button onclick="closeOperatorMsg()"
+        style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: transform 0.2s;">
         Acknowledge Message
       </button>
     </div>
   </div>
 
   <!-- WebRTC Incoming Call Modal -->
-  <div id="incoming-call-modal" style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
-    <div style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--primary); text-align: center; box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); max-width: 350px; width: 90%; animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-      <div style="font-size: 55px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">📞</div>
+  <div id="incoming-call-modal"
+    style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
+    <div
+      style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--primary); text-align: center; box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); max-width: 350px; width: 90%; animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+      <div
+        style="font-size: 55px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
+        📞</div>
       <h2 style="margin: 0 0 10px 0; color: var(--text-main); font-weight: 900;">Incoming Call</h2>
-      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Command Hub is dispatching audio...</p>
+      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Command Hub is
+        dispatching audio...</p>
       <div style="display: flex; gap: 15px; justify-content: center;">
-        <button onclick="acceptCall()" style="background: var(--success); color: #000; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
-        <button onclick="rejectCall()" style="background: var(--danger); color: #fff; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+        <button onclick="acceptCall()"
+          style="background: var(--success); color: #000; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
+        <button onclick="rejectCall()"
+          style="background: var(--danger); color: #fff; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
       </div>
     </div>
   </div>
 
   <!-- WebRTC Active Call Modal -->
-  <div id="active-call-modal" style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
-    <div style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--success); text-align: center; box-shadow: 0 0 60px rgba(0, 230, 118, 0.25); max-width: 350px; width: 90%;">
-      <div style="font-size: 60px; margin-bottom: 25px; animation: pulseMic 1.5s infinite; display: inline-block;">🎙️</div>
+  <div id="active-call-modal"
+    style="z-index: 100000; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.92); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); align-items: center; justify-content: center;">
+    <div
+      style="background: var(--surface); padding: 40px; border-radius: 24px; border: 2px solid var(--success); text-align: center; box-shadow: 0 0 60px rgba(0, 230, 118, 0.25); max-width: 350px; width: 90%;">
+      <div style="font-size: 60px; margin-bottom: 25px; animation: pulseMic 1.5s infinite; display: inline-block;">🎙️
+      </div>
       <h2 style="margin: 0 0 10px 0; color: var(--success); font-weight: 900;">Call Active</h2>
-      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Bidirectional radio channel open.</p>
-      <button onclick="endCall()" style="background: var(--danger); color: #fff; border: none; padding: 16px 40px; border-radius: 30px; font-weight: 900; font-size: 1.1rem; cursor: pointer; width: 100%; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">End Call</button>
+      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Bidirectional
+        radio channel open.</p>
+      <button onclick="endCall()"
+        style="background: var(--danger); color: #fff; border: none; padding: 16px 40px; border-radius: 30px; font-weight: 900; font-size: 1.1rem; cursor: pointer; width: 100%; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">End
+        Call</button>
     </div>
   </div>
 
@@ -570,7 +625,7 @@
     function playAudioTone(type) {
       try {
         initAudio();
-        const osc = audioCtx.createOscillator(); 
+        const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         osc.connect(gain); gain.connect(audioCtx.destination);
         const now = audioCtx.currentTime;
@@ -704,7 +759,7 @@
         DOM.hubStatusText.innerText = "OFFLINE";
         DOM.hubStatusText.style.color = "var(--danger)";
         DOM.hubStatusDot.className = "status-dot status-offline";
-        DOM.hubStatusDot.style.background = ""; 
+        DOM.hubStatusDot.style.background = "";
         updateSpeedometer(-1);
         return;
       }
@@ -712,7 +767,7 @@
       DOM.offlineBanner.style.display = "none";
 
       const start = performance.now();
-      
+
       let payload = {
         device_id: getDeviceId(),
         device_name: getDeviceName(),
@@ -732,12 +787,12 @@
         const timeoutId = setTimeout(() => controller.abort(), 5000);
 
         const [statusRes, dataRes] = await Promise.all([
-          fetch("/api/status", { 
-              method: "POST",
-              cache: "no-store",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-              signal: controller.signal 
+          fetch("/api/status", {
+            method: "POST",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal
           }).catch(() => null),
           fetch("/api/network-data", { cache: "no-store", signal: controller.signal }).catch(() => null)
         ]);
@@ -747,10 +802,10 @@
 
         if (statusRes && statusRes.ok) {
           const statusData = await statusRes.json();
-          
+
           // Auto-Sync Rename
           if (statusData.canonical_name && statusData.canonical_name !== getDeviceName() && statusData.canonical_name !== "Unknown Device") {
-             localStorage.setItem("hub_device_name", statusData.canonical_name);
+            localStorage.setItem("hub_device_name", statusData.canonical_name);
           }
 
           if (statusData.test_mode) {
@@ -759,7 +814,7 @@
           } else {
             DOM.testBanner.style.display = "none";
           }
-          
+
           // Show incoming Hub messages
           if (statusData.message) {
             const msgBox = document.getElementById("operator-msg-modal");
@@ -774,7 +829,7 @@
           DOM.hubStatusText.innerText = "ONLINE";
           DOM.hubStatusText.style.color = "var(--success)";
           DOM.hubStatusDot.className = "status-dot status-online";
-          DOM.hubStatusDot.style.background = ""; 
+          DOM.hubStatusDot.style.background = "";
 
           DOM.scanners.innerText = Object.keys(data.active_devices || {}).length;
           DOM.totReg.innerText = data.global_stats?.total_registrations || 0;
@@ -875,7 +930,7 @@
             }
             else if (data.type === 'call_ended') {
               // Server ended the call forcefully
-              endCall(false); 
+              endCall(false);
             }
           } catch (parseError) {
             console.error("Failed to parse WebRTC data:", parseError);
