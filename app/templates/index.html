@@ -419,6 +419,44 @@
       bottom: 30px;
     }
 
+    /* --- ROBUST MESSAGE MODAL CSS --- */
+    #operator-msg-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      /* Supreme Z-index */
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    #operator-msg-modal.show {
+      opacity: 1;
+    }
+
+    .msg-modal-content {
+      background: var(--warning);
+      color: #000;
+      padding: 30px;
+      border-radius: 15px;
+      border: 3px solid #ff9100;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+      transform: scale(0.8);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    #operator-msg-modal.show .msg-modal-content {
+      transform: scale(1);
+    }
+
     /* --- MINIMIZABLE CALL UI STYLES --- */
     .call-overlay {
       position: fixed;
@@ -443,7 +481,6 @@
       backdrop-filter: none;
       -webkit-backdrop-filter: none;
       pointer-events: none;
-      /* Allows clicking underlying page */
     }
 
     .active-call-card {
@@ -457,7 +494,6 @@
       width: 90%;
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       pointer-events: auto;
-      /* Keeps card clickable when overlay is minimized */
     }
 
     .call-overlay.minimized .active-call-card {
@@ -660,11 +696,9 @@
 
   <div id="toast">Message</div>
 
-  <!-- Persistent Operator Message Modal -->
-  <div id="operator-msg-modal"
-    style="z-index: 99999; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center;">
-    <div class="modal-content"
-      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
+  <!-- Persistent Operator Message Modal (FULLY REWRITTEN TO AVOID REPAINT BUG) -->
+  <div id="operator-msg-modal">
+    <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
       <p id="operator-msg-text"
         style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
@@ -694,7 +728,7 @@
     </div>
   </div>
 
-  <!-- NEW Minimizable WebRTC Active Call Modal -->
+  <!-- Minimizable WebRTC Active Call Modal -->
   <div id="active-call-overlay" class="call-overlay" style="display: none;">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
@@ -779,7 +813,9 @@
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Hub Operations"; }
 
     function closeOperatorMsg() {
-      document.getElementById("operator-msg-modal").style.display = "none";
+      const modal = document.getElementById("operator-msg-modal");
+      modal.classList.remove("show");
+      setTimeout(() => modal.style.display = "none", 300);
     }
 
     function checkPendingSyncs() {
@@ -869,6 +905,8 @@
               const msgBox = document.getElementById("operator-msg-modal");
               document.getElementById("operator-msg-text").innerText = data.message;
               msgBox.style.display = "flex";
+              // Timeout ensures the browser reflows before running the opacity animation
+              setTimeout(() => msgBox.classList.add("show"), 10);
               playAudioTone("ALERT");
             }
           } catch (err) { }
@@ -943,6 +981,10 @@
       const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
+      if (window.location.hostname.includes("trycloudflare.com")) {
+        console.warn("⚠️ Cloudflare Tunnel Detected: Port 5002 for WebRTC audio may be blocked by Cloudflare unless explicitly routed.");
+      }
+
       try {
         wsCall = new WebSocket(wsUrl);
 
@@ -976,6 +1018,7 @@
         };
 
         wsCall.onclose = (e) => {
+          console.log(`Voice server disconnected (Code: ${e.code}). Retrying in 5s...`);
           clearTimeout(wsReconnectTimer);
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
         };
@@ -996,7 +1039,6 @@
 
         document.getElementById("active-call-overlay").style.display = "flex";
 
-        // Auto-minimize after a moment so they can keep working
         setTimeout(() => {
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
@@ -1052,17 +1094,12 @@
       document.getElementById("incoming-call-modal").style.display = "none";
       document.getElementById("active-call-overlay").style.display = "none";
 
-      // Reset minimization state for next call
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
         wsCall.send(JSON.stringify({ type: 'call_ended' }));
       }
     }
-
-    // ==========================================
-    // SAFE NAVIGATION LOGIC
-    // ==========================================
 
     // Prevent accidental page close while on a call
     window.addEventListener("beforeunload", function (e) {

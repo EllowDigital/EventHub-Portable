@@ -471,6 +471,43 @@
       bottom: 30px;
     }
 
+    /* --- ROBUST MESSAGE MODAL CSS --- */
+    #operator-msg-modal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.85);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      align-items: center;
+      justify-content: center;
+      z-index: 999999;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    #operator-msg-modal.show {
+      opacity: 1;
+    }
+
+    .msg-modal-content {
+      background: var(--warning);
+      color: #000;
+      padding: 30px;
+      border-radius: 15px;
+      border: 3px solid #ff9100;
+      max-width: 400px;
+      width: 90%;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+      transform: scale(0.8);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    #operator-msg-modal.show .msg-modal-content {
+      transform: scale(1);
+    }
+
     /* --- MINIMIZABLE CALL UI STYLES --- */
     .call-overlay {
       position: fixed;
@@ -762,11 +799,9 @@
 
   <div id="toast">Message</div>
 
-  <!-- Persistent Operator Message Modal -->
-  <div id="operator-msg-modal"
-    style="z-index: 99999; display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); align-items: center; justify-content: center;">
-    <div class="modal-content"
-      style="background: var(--warning); color: #000; padding: 30px; border-radius: 15px; border: 3px solid #ff9100; max-width: 400px; width: 90%; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.8); animation: popIn 0.3s ease-out;">
+  <!-- Persistent Operator Message Modal (FULLY FIXED REPAINT BUG) -->
+  <div id="operator-msg-modal">
+    <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
       <p id="operator-msg-text"
         style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
@@ -796,7 +831,7 @@
     </div>
   </div>
 
-  <!-- NEW Minimizable WebRTC Active Call Modal -->
+  <!-- Minimizable WebRTC Active Call Modal -->
   <div id="active-call-overlay" class="call-overlay" style="display: none;">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
@@ -883,7 +918,9 @@
     }
 
     function closeOperatorMsg() {
-      document.getElementById("operator-msg-modal").style.display = "none";
+      const modal = document.getElementById("operator-msg-modal");
+      modal.classList.remove("show");
+      setTimeout(() => modal.style.display = "none", 300);
     }
 
     const escapeHTML = (str) => {
@@ -1027,7 +1064,6 @@
         if (statusRes && statusRes.ok) {
           const statusData = await statusRes.json();
 
-          // Auto-Sync Rename
           if (statusData.canonical_name && statusData.canonical_name !== getDeviceName() && statusData.canonical_name !== "Unknown Device") {
             localStorage.setItem("hub_device_name", statusData.canonical_name);
           }
@@ -1039,11 +1075,12 @@
             DOM.testBanner.style.display = "none";
           }
 
-          // Show incoming Hub messages
+          // Show incoming Hub messages safely with display block + show class
           if (statusData.message) {
             const msgBox = document.getElementById("operator-msg-modal");
             document.getElementById("operator-msg-text").innerText = statusData.message;
             msgBox.style.display = "flex";
+            setTimeout(() => msgBox.classList.add("show"), 10);
             playAudioTone("ALERT");
           }
         }
@@ -1257,7 +1294,7 @@
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
-        wsCall.send(JSON.stringify({ type: 'call_ended' }));
+        wsCall.send(json.stringify({ type: 'call_ended' }));
       }
     }
 
