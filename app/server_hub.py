@@ -72,6 +72,9 @@ except ImportError:
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+# Global app window reference so async routines can call GUI methods
+app_window = None
+
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
@@ -261,8 +264,25 @@ STATS_CACHE = {
 stats_lock = threading.Lock()
 
 CONNECTED_WS = {}
-ACTIVE_PCS = {}
+ACTIVE_CALLS_DATA = {}
 _ws_loop = None
+
+async def cleanup_call(device_id):
+    if device_id in ACTIVE_CALLS_DATA:
+        cdata = ACTIVE_CALLS_DATA.pop(device_id)
+        pc = cdata.get('pc')
+        recorder = cdata.get('recorder')
+        player = cdata.get('player')
+        try:
+            if pc: await pc.close()
+            if recorder: await recorder.stop()
+            if player and player.audio: player.audio.stop()
+        except Exception as e:
+            logging.error(f"Cleanup error: {e}")
+            
+    global app_window
+    if app_window:
+        app_window.gui_queue.put(lambda: app_window.close_call_ui(device_id))
 
 async def signaling_handler(websocket, path=None):
     try:
@@ -281,20 +301,17 @@ async def signaling_handler(websocket, path=None):
             
         CONNECTED_WS[device_id] = websocket
         
-        pc = None
-        player = None
-        recorder = None
-        
         async for message in websocket:
             try:
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
-                # Only initialize WebRTC devices if a call is actually starting (an offer is sent)
+                # Client accepted the call
                 if msg_type == "offer":
-                    if not pc:
+                    if device_id not in ACTIVE_CALLS_DATA:
                         pc = RTCPeerConnection()
-                        ACTIVE_PCS[device_id] = pc
+                        player = None
+                        recorder = None
                         
                         sys_name = platform.system()
                         try:
@@ -303,6 +320,7 @@ async def signaling_handler(websocket, path=None):
                                 recorder = MediaRecorder('default', format='waveaudio')
                             elif sys_name == 'Darwin':
                                 player = MediaPlayer(':0', format='avfoundation')
+                                recorder = MediaRecorder('default', format='avfoundation')
                             else:
                                 player = MediaPlayer('default', format='pulse')
                                 recorder = MediaRecorder('default', format='pulse')
@@ -328,17 +346,19 @@ async def signaling_handler(websocket, path=None):
 
                         if recorder:
                             await recorder.start()
+                            
+                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'player': player, 'recorder': recorder}
+                        
+                        global app_window
+                        if app_window:
+                            app_window.gui_queue.put(lambda: app_window.show_active_call_ui(device_id))
                         
                         @pc.on("connectionstatechange")
                         async def on_connectionstatechange():
                             if pc.connectionState in ["failed", "closed"]:
-                                if device_id in ACTIVE_PCS:
-                                    del ACTIVE_PCS[device_id]
-                                if recorder:
-                                    await recorder.stop()
-                                if player and player.audio:
-                                    player.audio.stop()
-                                    
+                                await cleanup_call(device_id)
+
+                    pc = ACTIVE_CALLS_DATA[device_id]['pc']
                     offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
                     await pc.setRemoteDescription(offer)
                     answer = await pc.createAnswer()
@@ -352,12 +372,7 @@ async def signaling_handler(websocket, path=None):
                     pass 
                     
                 elif msg_type == "call_ended":
-                    if pc:
-                        await pc.close()
-                    if recorder:
-                        await recorder.stop()
-                    if player and player.audio:
-                        player.audio.stop()
+                    await cleanup_call(device_id)
                         
             except Exception as e:
                 logging.error(f"WebRTC message parsing error: {e}")
@@ -367,12 +382,7 @@ async def signaling_handler(websocket, path=None):
     finally:
         if device_id in CONNECTED_WS:
             del CONNECTED_WS[device_id]
-        if device_id in ACTIVE_PCS:
-            try:
-                await ACTIVE_PCS[device_id].close()
-            except:
-                pass
-            del ACTIVE_PCS[device_id]
+        await cleanup_call(device_id)
 
 async def _run_webrtc_server():
     try:
@@ -1285,6 +1295,10 @@ class ServerHub(ttk.Window):
         self.gui_queue = queue.Queue(maxsize=1000)
         self._meter_cache = {}
         self._context_device_id = None
+        
+        # New dict to track active Call GUI popups
+        self.active_call_windows = {}
+
         global gui_log_callback
         gui_log_callback = self.log_flask_event
         self.build_ui()
@@ -1304,6 +1318,73 @@ class ServerHub(ttk.Window):
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
         threading.Thread(target=traffic_monitor_loop, daemon=True).start()
+
+    def show_active_call_ui(self, device_id):
+        if device_id in self.active_call_windows:
+            return
+        
+        d_name = "Unknown Device"
+        with device_lock:
+            if device_id in ACTIVE_DEVICES:
+                d_name = ACTIVE_DEVICES[device_id]['name']
+
+        win = ttk.Toplevel(self)
+        win.title("Active Voice Call")
+        win.geometry("380x250")
+        win.attributes('-topmost', True)
+        win.protocol("WM_DELETE_WINDOW", lambda: self.end_call_ui(device_id))
+        
+        ttk.Label(win, text="🎙️ Call Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(20, 5))
+        ttk.Label(win, text=f"Connected to: {d_name}", font=("Segoe UI", 10)).pack(pady=(0, 15))
+        
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(fill=X, padx=20, pady=5)
+        
+        win.mic_muted = False
+        win.spk_muted = False
+        
+        btn_mic = ttk.Button(btn_frame, text="Mute My Mic", bootstyle="warning-outline", command=lambda: self.toggle_mic(device_id, win, btn_mic))
+        btn_mic.pack(side=LEFT, expand=True, padx=5)
+        
+        btn_spk = ttk.Button(btn_frame, text="Mute Speaker", bootstyle="info-outline", command=lambda: self.toggle_speaker(device_id, win, btn_spk))
+        btn_spk.pack(side=LEFT, expand=True, padx=5)
+        
+        btn_end = ttk.Button(win, text="❌ End Call", bootstyle="danger", command=lambda: self.end_call_ui(device_id))
+        btn_end.pack(fill=X, padx=25, pady=15)
+        
+        self.active_call_windows[device_id] = win
+        self._append_log('network', f"[VOICE] Call established with {d_name}.")
+
+    def toggle_mic(self, device_id, win, btn):
+        win.mic_muted = not win.mic_muted
+        btn.configure(text="Unmute My Mic" if win.mic_muted else "Mute My Mic", bootstyle="warning" if win.mic_muted else "warning-outline")
+        ws = CONNECTED_WS.get(device_id)
+        if ws and _ws_loop:
+            asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": win.mic_muted})), _ws_loop)
+
+    def toggle_speaker(self, device_id, win, btn):
+        win.spk_muted = not win.spk_muted
+        btn.configure(text="Unmute Speaker" if win.spk_muted else "Mute Speaker", bootstyle="info" if win.spk_muted else "info-outline")
+        ws = CONNECTED_WS.get(device_id)
+        if ws and _ws_loop:
+            asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": win.spk_muted})), _ws_loop)
+
+    def end_call_ui(self, device_id):
+        ws = CONNECTED_WS.get(device_id)
+        if ws and _ws_loop:
+            asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "call_ended"})), _ws_loop)
+            asyncio.run_coroutine_threadsafe(cleanup_call(device_id), _ws_loop)
+        else:
+            self.close_call_ui(device_id)
+
+    def close_call_ui(self, device_id):
+        if device_id in self.active_call_windows:
+            try:
+                self.active_call_windows[device_id].destroy()
+            except Exception:
+                pass
+            del self.active_call_windows[device_id]
+            self._append_log('network', f"[VOICE] Call disconnected.")
 
     def connect_db(self):
         try:

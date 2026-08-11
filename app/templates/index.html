@@ -596,7 +596,6 @@
       isFetching = true;
       const startTime = performance.now();
 
-      // FIXED: Removed the dummy temp parameter
       let payload = {
         device_id: getDeviceId(),
         device_name: getDeviceName(),
@@ -697,20 +696,15 @@
         ringInterval = null;
       }
     }
+
     function connectCallServer() {
-      // IMPROVEMENT 1: Better state checking. 
-      // Prevents connection loops if it is already OPEN (1) or CONNECTING (0).
       if (wsCall && (wsCall.readyState === WebSocket.OPEN || wsCall.readyState === WebSocket.CONNECTING)) {
         return;
       }
 
-      // Dynamically use 'wss://' for HTTPS and 'ws://' for HTTP
       const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
-      // IMPROVEMENT 2: Cloudflare Warning
-      // Standard Cloudflare tunnels only route your main web port (443). 
-      // They will block port 5002 unless you explicitly map it in your cloudflared config.
       if (window.location.hostname.includes("trycloudflare.com")) {
         console.warn("⚠️ Cloudflare Tunnel Detected: Port 5002 for WebRTC audio may be blocked by Cloudflare unless explicitly routed.");
       }
@@ -731,6 +725,22 @@
               // Server sent the WebRTC Answer SDP
               await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
             }
+            else if (data.type === 'server_muted') {
+              // Server admin clicked "Mute My Mic", so we silence the incoming audio tag
+              remoteAudio.muted = data.muted;
+            }
+            else if (data.type === 'client_muted') {
+              // Server admin clicked "Mute Speaker", so we disable our phone mic
+              if (localStream) {
+                localStream.getAudioTracks().forEach(track => {
+                  track.enabled = !data.muted;
+                });
+              }
+            }
+            else if (data.type === 'call_ended') {
+              // Server ended the call forcefully
+              endCall(false); 
+            }
           } catch (parseError) {
             console.error("Failed to parse WebRTC data:", parseError);
           }
@@ -743,9 +753,6 @@
         };
 
         wsCall.onerror = (error) => {
-          // IMPROVEMENT 3: Removed wsCall.close(). 
-          // Browsers naturally trigger onclose() right after onerror() for fatal network drops.
-          // Manually closing it here can sometimes mask the real error object.
           console.error("Voice WebSocket Connection Error. If on HTTPS, ensure port 5002 has a trusted certificate.", error);
         };
       } catch (e) {
@@ -801,14 +808,11 @@
     }
 
     function rejectCall() {
-      stopRinging();
-      document.getElementById("incoming-call-modal").style.display = "none";
-      if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-        wsCall.send(JSON.stringify({ type: 'call_ended' }));
-      }
+      endCall(true);
     }
 
-    function endCall() {
+    // Pass false to sendPing if the server initiated the hangup so we don't loop
+    function endCall(sendPing = true) {
       if (peerConnection) {
         peerConnection.close();
         peerConnection = null;
@@ -821,8 +825,14 @@
         remoteAudio.srcObject = null;
       }
 
-      rejectCall(); // Sends the 'call_ended' ping and hides UI
+      stopRinging();
+      document.getElementById("incoming-call-modal").style.display = "none";
       document.getElementById("active-call-modal").style.display = "none";
+
+      // Alert the server that we ended the call
+      if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
+        wsCall.send(JSON.stringify({ type: 'call_ended' }));
+      }
     }
 
     document.addEventListener("click", initAudio, { once: true });
