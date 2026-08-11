@@ -39,12 +39,14 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- NEW: PyAudio Check for Live PC Speaker Playback ---
+# --- NEW: Sounddevice Check for Live PC Speaker Playback ---
 try:
-    import pyaudio
-    PYAUDIO_AVAILABLE = True
+    import sounddevice as sd
+    import soundfile as sf
+    import numpy as np
+    SOUNDDEVICE_AVAILABLE = True
 except ImportError:
-    PYAUDIO_AVAILABLE = False
+    SOUNDDEVICE_AVAILABLE = False
 
 try:
     from cheroot import wsgi as cheroot_wsgi
@@ -292,6 +294,7 @@ async def cleanup_call(device_id):
 
 async def signaling_handler(websocket, path=None):
     try:
+        # Handle newer websockets version where path is retrieved from request
         if path is None:
             try:
                 path = websocket.request.path
@@ -311,6 +314,7 @@ async def signaling_handler(websocket, path=None):
                 data = json.loads(message)
                 msg_type = data.get("type")
                 
+                # Client accepted the call
                 if msg_type == "offer":
                     if device_id not in ACTIVE_CALLS_DATA:
                         pc = RTCPeerConnection()
@@ -331,19 +335,13 @@ async def signaling_handler(websocket, path=None):
                         except Exception as e:
                             logging.debug(f"Media Init Error (Ignored): {e}")
 
-                        # Route the incoming Staff audio to the VU Meter & PyAudio speaker
+                        # Route the incoming Staff audio to the VU Meter & Sounddevice speaker
                         @pc.on("track")
                         def on_track(track):
                             if track.kind == "audio":
                                 async def play_audio_and_meter():
                                     global app_window
-                                    p = None
                                     stream = None
-                                    if PYAUDIO_AVAILABLE:
-                                        try:
-                                            p = pyaudio.PyAudio()
-                                        except Exception:
-                                            pass
                                     
                                     try:
                                         while True:
@@ -351,8 +349,8 @@ async def signaling_handler(websocket, path=None):
                                             
                                             # Calculate live Volume VU Level
                                             try:
-                                                data = frame.planes[0].to_bytes()
-                                                samples = array.array('h', data)
+                                                data_bytes = frame.planes[0].to_bytes()
+                                                samples = array.array('h', data_bytes)
                                                 peak = max(abs(s) for s in samples) if samples else 0
                                                 # Boost sensitivity scale for speech
                                                 vol_percent = min(100, int((peak / 32768.0) * 250)) 
@@ -362,24 +360,27 @@ async def signaling_handler(websocket, path=None):
                                             except Exception:
                                                 pass
                                             
-                                            # Write to PC Speakers directly
-                                            if p:
+                                            # Write to PC Speakers directly using sounddevice
+                                            if SOUNDDEVICE_AVAILABLE:
                                                 try:
                                                     if not stream:
                                                         channels = len(frame.layout.channels)
                                                         rate = frame.sample_rate
-                                                        stream = p.open(format=pyaudio.paInt16, channels=channels, rate=rate, output=True)
+                                                        # RawOutputStream seamlessly accepts byte data
+                                                        stream = sd.RawOutputStream(samplerate=rate, channels=channels, dtype='int16')
+                                                        stream.start()
                                                     
-                                                    ndarray = frame.to_ndarray()
-                                                    stream.write(ndarray.tobytes())
+                                                    # Pass raw bytes to the output stream
+                                                    stream.write(frame.to_ndarray().tobytes())
                                                 except Exception as err:
-                                                    pass
+                                                    logging.debug(f"Sounddevice playback error: {err}")
                                                     
                                     except Exception:
                                         pass
                                     finally:
-                                        if stream: stream.stop_stream(); stream.close()
-                                        if p: p.terminate()
+                                        if stream: 
+                                            stream.stop()
+                                            stream.close()
                                         if app_window:
                                             app_window.gui_queue.put(lambda d=device_id: app_window.update_call_meter(d, 0))
 
@@ -1376,8 +1377,8 @@ class ServerHub(ttk.Window):
         ttk.Label(win, text="🎙️ Call Accepted & Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(15, 5))
         ttk.Label(win, text=f"Connected to: {d_name}", font=("Segoe UI", 10)).pack(pady=(0, 10))
         
-        if not PYAUDIO_AVAILABLE:
-            ttk.Label(win, text="⚠️ 'pyaudio' missing. PC Speakers Disabled.", font=("Segoe UI", 8), bootstyle=WARNING).pack(pady=(0,5))
+        if not SOUNDDEVICE_AVAILABLE:
+            ttk.Label(win, text="⚠️ 'sounddevice' missing. PC Speakers Disabled.", font=("Segoe UI", 8), bootstyle=WARNING).pack(pady=(0,5))
             
         ttk.Label(win, text="Incoming Audio Level:", font=("Segoe UI", 9)).pack(anchor=W, padx=25)
         meter = ttk.Progressbar(win, bootstyle="success", maximum=100, value=0)
