@@ -479,7 +479,7 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
         except ValueError:
             pass
             
-        # --- NEW FIX: SECURE ALL AVAILABLE NETWORK ADAPTERS ---
+        # SECURE ALL AVAILABLE NETWORK ADAPTERS
         try:
             for interface, snics in psutil.net_if_addrs().items():
                 for snic in snics:
@@ -490,7 +490,6 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
                             pass
         except Exception:
             pass
-        # ------------------------------------------------------
         
         ski = x509.SubjectKeyIdentifier.from_public_key(server_key.public_key())
         aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key())
@@ -530,21 +529,40 @@ def ensure_ssl_certificate(local_ip):
     cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
     key_path = os.path.join(CERT_DIR, 'hub_key.pem')
     _ensure_root_ca(ca_cert_path, ca_key_path)
+
+    # Gather all current active IP addresses dynamically
+    current_system_ips = set()
+    try:
+        for interface, snics in psutil.net_if_addrs().items():
+            for snic in snics:
+                if snic.family == socket.AF_INET and snic.address != "127.0.0.1":
+                    current_system_ips.add(snic.address)
+    except Exception:
+        pass
+    current_system_ips.add(local_ip)
+
     reuse_existing = False
     if os.path.exists(cert_path) and os.path.exists(key_path):
         try:
             with open(cert_path, "rb") as f:
                 c = x509.load_pem_x509_certificate(f.read())
             is_valid_time = c.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(days=30)
+            
             san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
-            san_ips = san_ext.value.get_values_for_type(x509.IPAddress)
-            has_current_ip = ipaddress.ip_address(local_ip) in san_ips
-            if is_valid_time and has_current_ip:
+            cert_ips = {str(ip) for ip in san_ext.value.get_values_for_type(x509.IPAddress)}
+            
+            # If ANY active IP address is missing from the certificate, FORCE regeneration
+            all_ips_present = all(ip in cert_ips for ip in current_system_ips)
+            
+            if is_valid_time and all_ips_present:
                 reuse_existing = True
         except Exception:
             reuse_existing = False
+            
     if not reuse_existing:
+        logging.info("[SSL] Auto-regenerating certificates to map missing IP adapters...")
         _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
+    
     return cert_path, key_path
 
 @app.before_request
