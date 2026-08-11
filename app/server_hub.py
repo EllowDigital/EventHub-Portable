@@ -18,6 +18,7 @@ import ipaddress
 import requests
 import urllib3
 import asyncio
+import ssl
 from datetime import datetime, timezone, timedelta
 import tkinter as tk
 from tkinter import simpledialog
@@ -375,8 +376,17 @@ async def signaling_handler(websocket, path=None):
 
 async def _run_webrtc_server():
     try:
-        # Await the modern async context manager correctly to fix the event loop RuntimeError
-        async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT):
+        cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
+        key_path = os.path.join(CERT_DIR, 'hub_key.pem')
+        
+        ssl_context = None
+        # Apply the same SSL certificates used by Cheroot to the WebRTC server
+        if os.path.exists(cert_path) and os.path.exists(key_path):
+            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
+
+        # Pass the ssl_context into the websockets server
+        async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
             await asyncio.Future()  # run forever
     except Exception as e:
         logging.error(f"WebRTC Server start failed: {e}")
@@ -1574,11 +1584,14 @@ class ServerHub(ttk.Window):
             return
         
         ws = CONNECTED_WS.get(d_id)
-        if ws and ws.open and _ws_loop:
-            asyncio.run_coroutine_threadsafe(
-                ws.send(json.dumps({"type": "incoming_call"})),
-                _ws_loop
-            )
+        if ws and _ws_loop:
+            async def safe_ring():
+                try:
+                    await ws.send(json.dumps({"type": "incoming_call"}))
+                except Exception as e:
+                    logging.error(f"Failed to ring {d_id}: {e}")
+            
+            asyncio.run_coroutine_threadsafe(safe_ring(), _ws_loop)
             self._append_log('network', f"[VOICE] Ringing device {d_id}...")
         else:
             Messagebox.show_warning("Device is not connected to the voice server.", "Unavailable")
