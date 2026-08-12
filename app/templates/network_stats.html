@@ -30,19 +30,19 @@
       --text-main: #ffffff;
       --text-muted: #8b93a5;
       --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
-      --radius-sm: 8px;
-      --radius-md: 14px;
-      --radius-lg: 24px;
-      --transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       --glass-border: rgba(255, 255, 255, 0.08);
-      --glass-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     }
 
     body {
       font-family: var(--font-ui);
       background-color: var(--bg-pure-black);
       background-image:
-        radial-gradient(circle at 50% -20%, rgba(0, 210, 255, 0.15), transparent 60%),
+        radial-gradient(circle at 50% -20%, rgba(0, 210, 255, 0.12), transparent 60%),
         radial-gradient(circle at 50% 120%, rgba(0, 230, 118, 0.05), transparent 60%);
       color: var(--text-main);
       margin: 0;
@@ -57,16 +57,17 @@
 
     .app-container {
       width: 100%;
-      max-width: 1100px;
-      padding: 30px 20px;
+      max-width: 950px;
+      padding: 15px 15px;
+      /* Compact padding */
       box-sizing: border-box;
     }
 
-    /* --- ENHANCED ANIMATIONS --- */
+    /* --- ANIMATIONS --- */
     @keyframes slideUpFade {
       from {
         opacity: 0;
-        transform: translateY(40px) scale(0.95);
+        transform: translateY(20px) scale(0.97);
       }
 
       to {
@@ -78,7 +79,7 @@
     @keyframes fadeInDown {
       from {
         opacity: 0;
-        transform: translateY(-20px);
+        transform: translateY(-15px);
       }
 
       to {
@@ -89,46 +90,83 @@
 
     @keyframes pulseGlow {
       0% {
-        box-shadow: 0 0 15px var(--glow-color, rgba(0, 210, 255, 0.2));
+        box-shadow: 0 0 10px var(--glow-color, rgba(0, 210, 255, 0.2));
       }
 
       50% {
-        box-shadow: 0 0 30px var(--glow-color, rgba(0, 210, 255, 0.5));
+        box-shadow: 0 0 20px var(--glow-color, rgba(0, 210, 255, 0.5));
       }
 
       100% {
-        box-shadow: 0 0 15px var(--glow-color, rgba(0, 210, 255, 0.2));
+        box-shadow: 0 0 10px var(--glow-color, rgba(0, 210, 255, 0.2));
       }
     }
 
+    @keyframes ringShake {
+      0% {
+        transform: rotate(-10deg);
+      }
+
+      50% {
+        transform: rotate(10deg);
+      }
+
+      100% {
+        transform: rotate(-10deg);
+      }
+    }
+
+    @keyframes pulseMic {
+      0% {
+        transform: scale(1);
+        opacity: 1;
+      }
+
+      50% {
+        transform: scale(1.1);
+        opacity: 0.7;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+
+    /* --- COMPACT HEADER --- */
     .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 40px;
-      padding: 16px 24px;
+      margin-bottom: 20px;
+      /* Reduced */
+      padding: 12px 18px;
+      /* Reduced */
       position: sticky;
-      top: 20px;
+      top: 15px;
       z-index: 100;
-      background: rgba(16, 19, 26, 0.7);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      background: rgba(16, 19, 26, 0.85);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
       border-radius: var(--radius-lg);
       border: 1px solid var(--glass-border);
       box-shadow: var(--glass-shadow);
       flex-wrap: wrap;
-      gap: 15px;
-      animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+      gap: 12px;
+      animation: fadeInDown 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
+      /* Reduced */
       font-weight: 700;
-      font-size: 0.9rem;
-      padding: 12px 20px;
+      font-size: 0.85rem;
+      /* Reduced */
+      padding: 8px 14px;
+      /* Reduced */
       border-radius: var(--radius-md);
       cursor: pointer;
       transition: var(--transition);
@@ -136,14 +174,14 @@
       border: 1px solid rgba(255, 255, 255, 0.1);
       color: var(--text-main);
       text-decoration: none;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     }
 
     .btn:hover {
       background: linear-gradient(145deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
       border-color: rgba(255, 255, 255, 0.3);
-      transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
     }
 
     .btn:active {
@@ -152,10 +190,11 @@
 
     .header-title {
       margin: 0;
-      font-size: 1.35rem;
+      font-size: 1.1rem;
+      /* Shrunk */
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 8px;
       font-weight: 900;
       letter-spacing: 0.5px;
       background: linear-gradient(to right, #fff, #8b93a5);
@@ -166,30 +205,32 @@
     .status-wrapper {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       background: rgba(0, 0, 0, 0.5);
-      padding: 10px 20px;
-      border-radius: 30px;
+      padding: 6px 14px;
+      /* Reduced */
+      border-radius: 20px;
       border: 1px solid var(--glass-border);
-      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+      box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
     }
 
     .status-text {
-      font-size: 0.85rem;
+      font-size: 0.75rem;
       font-weight: 800;
       letter-spacing: 1px;
     }
 
+    /* Shrunk */
     .status-dot {
-      width: 12px;
-      height: 12px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       transition: background 0.3s, box-shadow 0.3s;
     }
 
     .status-online {
       background: var(--success);
-      box-shadow: 0 0 12px var(--success);
+      box-shadow: 0 0 10px var(--success);
     }
 
     .status-offline {
@@ -197,16 +238,20 @@
       box-shadow: none;
     }
 
+    /* --- BANNERS --- */
     .banner {
       width: 100%;
       text-align: center;
-      padding: 16px;
-      font-size: 0.95rem;
+      padding: 10px;
+      /* Reduced */
+      font-size: 0.85rem;
+      /* Reduced */
       font-weight: 800;
       border-radius: var(--radius-md);
-      margin-bottom: 30px;
+      margin-bottom: 20px;
+      /* Reduced */
       display: none;
-      animation: fadeInDown 0.4s ease;
+      animation: fadeInDown 0.3s ease;
       letter-spacing: 0.5px;
     }
 
@@ -214,31 +259,33 @@
       background: rgba(255, 187, 51, 0.1);
       color: var(--warning);
       border: 1px solid rgba(255, 187, 51, 0.3);
-      box-shadow: 0 4px 20px rgba(255, 187, 51, 0.1);
     }
 
     .banner.danger {
       background: rgba(255, 68, 68, 0.1);
       color: var(--danger);
       border: 1px solid rgba(255, 68, 68, 0.3);
-      box-shadow: 0 4px 20px rgba(255, 68, 68, 0.1);
     }
 
-    /* --- IMPROVED GRID & CARDS --- */
+    /* --- COMPACT GRID & CARDS --- */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 24px;
-      margin-bottom: 50px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      /* Shrunk base size */
+      gap: 15px;
+      /* Shrunk */
+      margin-bottom: 30px;
+      /* Shrunk */
     }
 
     .stat-card {
       position: relative;
       background: linear-gradient(160deg, var(--surface-light) 0%, var(--surface) 100%);
       border-radius: var(--radius-lg);
-      padding: 30px 20px;
+      padding: 18px 14px;
+      /* Shrunk */
       text-align: center;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
       border: 1px solid var(--glass-border);
       transition: var(--transition);
       display: flex;
@@ -246,28 +293,28 @@
       justify-content: center;
       align-items: center;
       overflow: hidden;
-      animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+      animation: slideUpFade 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
     }
 
-    /* Staggered entrance for grid items */
+    /* Staggered entrance */
     .stat-card:nth-child(1) {
-      animation-delay: 0.1s;
+      animation-delay: 0.05s;
     }
 
     .stat-card:nth-child(2) {
-      animation-delay: 0.2s;
+      animation-delay: 0.1s;
     }
 
     .stat-card:nth-child(3) {
-      animation-delay: 0.3s;
+      animation-delay: 0.15s;
     }
 
     .stat-card:nth-child(4) {
-      animation-delay: 0.4s;
+      animation-delay: 0.2s;
     }
 
     .stat-card:nth-child(5) {
-      animation-delay: 0.5s;
+      animation-delay: 0.25s;
     }
 
     .stat-card::before {
@@ -276,16 +323,16 @@
       top: 0;
       left: 0;
       width: 100%;
-      height: 4px;
+      height: 3px;
       background: var(--card-color, var(--text-muted));
       opacity: 0.8;
       transition: opacity 0.3s;
     }
 
     .stat-card:hover {
-      transform: translateY(-8px) scale(1.02);
-      border-color: var(--card-color, rgba(255, 255, 255, 0.3));
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(var(--card-color-rgb), 0.15);
+      transform: translateY(-4px) scale(1.01);
+      border-color: var(--card-color, rgba(255, 255, 255, 0.2));
+      box-shadow: 0 12px 25px rgba(0, 0, 0, 0.5), 0 0 15px rgba(var(--card-color-rgb), 0.1);
     }
 
     .stat-card:hover::before {
@@ -313,33 +360,37 @@
     }
 
     .stat-card h3 {
-      margin: 0 0 12px 0;
+      margin: 0 0 8px 0;
+      /* Shrunk */
       color: var(--text-muted);
-      font-size: 0.85rem;
+      font-size: 0.75rem;
+      /* Shrunk */
       text-transform: uppercase;
-      letter-spacing: 1.5px;
+      letter-spacing: 1px;
       font-weight: 800;
       z-index: 2;
     }
 
     .stat-card p {
       margin: 0;
-      font-size: 3.5rem;
+      font-size: 2.4rem;
+      /* Drastically Shrunk from 3.5rem */
       font-weight: 900;
       line-height: 1;
       z-index: 2;
       background: linear-gradient(135deg, #ffffff 0%, var(--card-color, #8b93a5) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
-      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+      filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
     }
 
-    /* Speedometer Enhancements */
+    /* COMPACT Speedometer */
     .speedometer {
       position: relative;
-      width: 150px;
+      width: 110px;
+      /* Shrunk */
       aspect-ratio: 2 / 1.15;
-      margin-top: 10px;
+      margin-top: 5px;
     }
 
     .speedo-svg {
@@ -351,59 +402,62 @@
     .speedo-track {
       fill: none;
       stroke: rgba(255, 255, 255, 0.05);
-      stroke-width: 14;
+      stroke-width: 12;
       stroke-linecap: round;
     }
 
     .speedo-fill {
       fill: none;
       stroke: var(--success);
-      stroke-width: 14;
+      stroke-width: 12;
       stroke-linecap: round;
       stroke-dasharray: 125.6;
       stroke-dashoffset: 125.6;
-      transition: stroke-dashoffset 1s cubic-bezier(0.175, 0.885, 0.32, 1.275), stroke 0.5s;
+      transition: stroke-dashoffset 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275), stroke 0.4s;
     }
 
     .speedo-text {
       position: absolute;
-      bottom: -10px;
+      bottom: -8px;
       width: 100%;
       text-align: center;
     }
 
     .speedo-text .val {
-      font-size: 2.2rem;
+      font-size: 1.6rem;
       font-weight: 900;
       color: var(--text-main);
-      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
     }
 
     .speedo-text .lbl {
-      font-size: 0.75rem;
+      font-size: 0.65rem;
       color: var(--text-muted);
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 1px;
+      letter-spacing: 0.5px;
     }
 
-    /* --- IMPROVED TABLE --- */
+    /* --- COMPACT TABLE --- */
     .section-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 12px;
+      /* Reduced */
       flex-wrap: wrap;
-      gap: 15px;
-      animation: slideUpFade 0.6s 0.6s both;
+      gap: 10px;
+      animation: slideUpFade 0.5s 0.3s both;
     }
 
     .section-title {
-      font-size: 1.3rem;
+      font-size: 1.1rem;
       font-weight: 900;
       margin: 0;
       color: var(--text-main);
     }
+
+    /* Shrunk */
 
     .table-container {
       width: 100%;
@@ -411,35 +465,36 @@
       background: var(--surface);
       border-radius: var(--radius-lg);
       border: 1px solid var(--glass-border);
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-      animation: slideUpFade 0.6s 0.7s both;
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.4);
+      animation: slideUpFade 0.5s 0.4s both;
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 750px;
+      min-width: 600px;
       text-align: left;
     }
 
     th,
     td {
-      padding: 20px 24px;
+      padding: 12px 16px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
     }
 
+    /* Shrunk */
+
     th {
       color: #fff;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       text-transform: uppercase;
       background: rgba(255, 255, 255, 0.03);
-      letter-spacing: 1.5px;
+      letter-spacing: 1px;
       font-weight: 800;
-      backdrop-filter: blur(10px);
     }
 
     tbody tr {
-      transition: background 0.3s;
+      transition: background 0.2s;
     }
 
     tbody tr:hover {
@@ -451,18 +506,19 @@
     }
 
     .node-ident {
-      font-size: 1.1rem;
+      font-size: 0.95rem;
       font-weight: 800;
       color: var(--text-main);
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }
 
+    /* Shrunk */
     .node-ip {
-      font-size: 0.85rem;
+      font-size: 0.75rem;
       color: var(--text-muted);
       font-family: monospace;
       background: rgba(0, 0, 0, 0.3);
-      padding: 2px 6px;
+      padding: 2px 4px;
       border-radius: 4px;
       display: inline-block;
     }
@@ -471,13 +527,12 @@
     .badge {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      padding: 6px 14px;
+      gap: 6px;
+      padding: 4px 10px;
       border-radius: 20px;
-      font-size: 0.8rem;
+      font-size: 0.7rem;
       font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
 
     .badge-success {
@@ -499,60 +554,60 @@
     }
 
     .badge-dot {
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
     }
 
     .badge-success .badge-dot {
       background: var(--success);
-      box-shadow: 0 0 8px var(--success);
+      box-shadow: 0 0 6px var(--success);
     }
 
     .badge-warning .badge-dot {
       background: var(--warning);
-      box-shadow: 0 0 8px var(--warning);
+      box-shadow: 0 0 6px var(--warning);
     }
 
     .badge-danger .badge-dot {
       background: var(--danger);
-      box-shadow: 0 0 8px var(--danger);
+      box-shadow: 0 0 6px var(--danger);
     }
 
     .latency-container {
-      width: 120px;
-      height: 8px;
+      width: 90px;
+      height: 6px;
       background: rgba(0, 0, 0, 0.6);
       border-radius: 10px;
       overflow: hidden;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
     }
 
     .latency-bar {
       height: 100%;
       border-radius: 10px;
-      transition: width 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.5s ease;
+      transition: width 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.4s ease;
     }
 
     .latency-text {
-      font-size: 0.85rem;
+      font-size: 0.75rem;
       color: var(--text-muted);
       font-weight: 700;
     }
 
     .battery-text {
       font-weight: 800;
-      font-size: 1rem;
+      font-size: 0.85rem;
       color: var(--text-main);
       background: rgba(0, 210, 255, 0.1);
       border: 1px solid rgba(0, 210, 255, 0.3);
-      padding: 6px 12px;
-      border-radius: 8px;
+      padding: 4px 10px;
+      border-radius: 6px;
       display: inline-block;
     }
 
-    /* --- MISC UI ELEMENTS --- */
+    /* --- TOAST & MODALS (Kept proportional) --- */
     #toast {
       position: fixed;
       bottom: -100px;
@@ -560,20 +615,19 @@
       transform: translateX(-50%);
       background: var(--success);
       color: #000;
-      padding: 16px 28px;
+      padding: 12px 20px;
       border-radius: var(--radius-md);
-      font-weight: 900;
-      font-size: 1rem;
+      font-weight: 800;
+      font-size: 0.9rem;
       z-index: 200000;
-      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
-      transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
     #toast.show {
-      bottom: 40px;
+      bottom: 30px;
     }
 
-    /* WebRTC & Modals (Restored styling with slight modern tweaks) */
     #operator-msg-modal {
       display: none;
       position: fixed;
@@ -595,15 +649,15 @@
     .msg-modal-content {
       background: var(--warning);
       color: #000;
-      padding: 35px;
+      padding: 25px;
       border-radius: var(--radius-lg);
-      border: 3px solid #ff9100;
-      max-width: 420px;
+      border: 2px solid #ff9100;
+      max-width: 360px;
       width: 90%;
       text-align: center;
-      box-shadow: 0 25px 80px rgba(0, 0, 0, 0.8);
+      box-shadow: 0 15px 50px rgba(0, 0, 0, 0.8);
       transform: scale(0.8);
-      transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
     #operator-msg-modal.show .msg-modal-content {
@@ -614,19 +668,19 @@
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.92);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
       z-index: 100000;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.4s ease, backdrop-filter 0.4s ease;
+      transition: background 0.3s ease, backdrop-filter 0.3s ease;
     }
 
     .call-overlay.minimized {
       inset: auto;
-      bottom: 25px;
-      right: 25px;
+      bottom: 20px;
+      right: 20px;
       width: auto;
       height: auto;
       background: transparent;
@@ -637,27 +691,27 @@
 
     .active-call-card {
       background: var(--surface);
-      padding: 35px;
-      border-radius: 28px;
+      padding: 25px;
+      border-radius: 20px;
       border: 2px solid var(--success);
       text-align: center;
-      box-shadow: 0 0 80px rgba(0, 230, 118, 0.2);
-      max-width: 360px;
+      box-shadow: 0 0 50px rgba(0, 230, 118, 0.2);
+      max-width: 320px;
       width: 90%;
-      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       pointer-events: auto;
     }
 
     .call-overlay.minimized .active-call-card {
-      padding: 15px 20px;
-      border-radius: 16px;
-      width: 280px;
-      max-width: calc(100vw - 50px);
+      padding: 10px 16px;
+      border-radius: 12px;
+      width: 250px;
+      max-width: calc(100vw - 40px);
       text-align: left;
-      box-shadow: 0 15px 50px rgba(0, 0, 0, 0.9);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
       border-width: 1px;
     }
 
@@ -665,19 +719,19 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
 
     .call-overlay.minimized .call-card-header {
-      margin-bottom: 5px;
+      margin-bottom: 4px;
     }
 
     .call-badge {
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 800;
       color: var(--success);
       background: rgba(0, 230, 118, 0.15);
-      padding: 6px 12px;
+      padding: 4px 10px;
       border-radius: 20px;
       border: 1px solid rgba(0, 230, 118, 0.4);
     }
@@ -690,9 +744,9 @@
       background: rgba(255, 255, 255, 0.1);
       border: none;
       color: #fff;
-      font-size: 1.1rem;
-      width: 38px;
-      height: 38px;
+      font-size: 1rem;
+      width: 32px;
+      height: 32px;
       border-radius: 50%;
       cursor: pointer;
       transition: 0.2s;
@@ -710,25 +764,25 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 15px;
-      margin-bottom: 30px;
+      gap: 10px;
+      margin-bottom: 20px;
     }
 
     .call-overlay.minimized .call-info {
       flex-direction: row;
-      margin-bottom: 5px;
-      gap: 15px;
+      margin-bottom: 4px;
+      gap: 10px;
     }
 
     .call-avatar {
-      font-size: 65px;
+      font-size: 45px;
       animation: pulseMic 1.5s infinite;
       margin: 0;
-      filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
+      filter: drop-shadow(0 5px 10px rgba(0, 0, 0, 0.5));
     }
 
     .call-overlay.minimized .call-avatar {
-      font-size: 30px;
+      font-size: 24px;
       animation: none;
       filter: none;
     }
@@ -737,17 +791,17 @@
       margin: 0;
       color: var(--success);
       font-weight: 900;
-      font-size: 1.6rem;
+      font-size: 1.3rem;
     }
 
     .call-overlay.minimized .call-title {
-      font-size: 1.1rem;
+      font-size: 1rem;
     }
 
     .call-subtitle {
       color: var(--text-muted);
-      margin: 5px 0 0 0;
-      font-size: 0.95rem;
+      margin: 4px 0 0 0;
+      font-size: 0.85rem;
       font-weight: 600;
     }
 
@@ -759,32 +813,32 @@
       background: var(--danger);
       color: #fff;
       border: none;
-      padding: 18px 40px;
-      border-radius: 30px;
+      padding: 12px 30px;
+      border-radius: 25px;
       font-weight: 900;
-      font-size: 1.15rem;
+      font-size: 1rem;
       cursor: pointer;
       width: 100%;
       text-transform: uppercase;
-      box-shadow: 0 8px 25px rgba(255, 68, 68, 0.4);
+      box-shadow: 0 6px 15px rgba(255, 68, 68, 0.4);
       transition: transform 0.2s;
-      letter-spacing: 1px;
+      letter-spacing: 0.5px;
     }
 
     .btn-end-call:hover {
-      transform: scale(1.03);
-      box-shadow: 0 12px 35px rgba(255, 68, 68, 0.6);
+      transform: scale(1.02);
+      box-shadow: 0 8px 20px rgba(255, 68, 68, 0.6);
     }
 
     .call-overlay.minimized .btn-end-call {
-      padding: 10px 20px;
-      font-size: 0.9rem;
+      padding: 6px 12px;
+      font-size: 0.8rem;
     }
 
     @media (max-width: 768px) {
       .header {
         flex-direction: column;
-        padding: 20px;
+        padding: 16px;
       }
 
       .header-title {
@@ -797,23 +851,22 @@
 
       th,
       td {
-        padding: 16px 14px;
+        padding: 12px 10px;
       }
 
       .grid {
         grid-template-columns: repeat(2, 1fr);
-        gap: 15px;
+        gap: 10px;
       }
 
       .stat-card p {
-        font-size: 2.5rem;
+        font-size: 1.8rem;
       }
 
+      /* Shrunk for mobile */
       .stat-card:first-child {
         grid-column: span 2;
       }
-
-      /* Speedometer spans full width on mobile */
     }
   </style>
 </head>
@@ -823,7 +876,7 @@
   <main class="app-container">
     <header class="header">
       <button class="btn" onclick="handleNavigation('/')">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
           stroke-linecap="round" stroke-linejoin="round">
           <line x1="19" y1="12" x2="5" y2="12"></line>
           <polyline points="12 19 5 12 12 5"></polyline>
@@ -849,7 +902,6 @@
         <h3>Hub Connection</h3>
         <div class="speedometer">
           <svg viewBox="0 0 100 55" class="speedo-svg">
-            <!-- Defs for Gradient -->
             <defs>
               <linearGradient id="speedoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
                 <stop offset="0%" stop-color="var(--primary)" />
@@ -892,7 +944,7 @@
       <div class="section-header">
         <h3 class="section-title">Connected Devices Lifecycle</h3>
         <button class="btn" onclick="manualRefresh()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
             stroke-linecap="round" stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.64-4.36" />
           </svg>
@@ -913,7 +965,7 @@
           <tbody id="device-table-body">
             <tr>
               <td colspan="4"
-                style="text-align: center; color: var(--text-muted); padding: 50px; font-weight: 700; white-space: normal; font-size: 1.1rem;">
+                style="text-align: center; color: var(--text-muted); padding: 40px; font-weight: 700; font-size:1rem; white-space: normal;">
                 Scanning network for connected gateways...
               </td>
             </tr>
@@ -928,11 +980,11 @@
 
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
-      <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
+      <h2 style="margin-top:0; color:#000; font-size:1.3rem;">📨 Hub Message</h2>
       <p id="operator-msg-text"
-        style="font-size: 1.25rem; font-weight: 800; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
+        style="font-size: 1.1rem; font-weight: 800; color: #000; white-space: pre-wrap; margin-bottom: 20px;"></p>
       <button onclick="closeOperatorMsg()"
-        style="padding: 16px 24px; background: #000; color: var(--warning); border:none; border-radius: 12px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 8px 25px rgba(0,0,0,0.4); transition: transform 0.2s;">
+        style="padding: 12px 20px; background: #000; color: var(--warning); border:none; border-radius: 10px; cursor: pointer; font-weight: 900; font-size:1rem; width:100%; box-shadow: 0 6px 15px rgba(0,0,0,0.4); transition: transform 0.2s;">
         Acknowledge Order
       </button>
     </div>
@@ -940,18 +992,18 @@
 
   <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
     <div class="active-call-card"
-      style="border-color: var(--primary); box-shadow: 0 0 80px rgba(0, 210, 255, 0.3); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
       <div
-        style="font-size: 60px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
+        style="font-size: 50px; margin-bottom: 20px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
         📞</div>
-      <h2 style="margin: 0 0 10px 0; color: var(--text-main); font-weight: 900; font-size: 1.8rem;">Incoming Call</h2>
-      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 1rem; font-weight: 600;">Command Hub is
+      <h2 style="margin: 0 0 8px 0; color: var(--text-main); font-weight: 900; font-size: 1.5rem;">Incoming Call</h2>
+      <p style="color: var(--text-muted); margin-bottom: 25px; font-size: 0.95rem; font-weight: 600;">Command Hub is
         dispatching audio...</p>
-      <div style="display: flex; gap: 15px; justify-content: center;">
+      <div style="display: flex; gap: 12px; justify-content: center;">
         <button onclick="acceptCall()"
-          style="background: var(--success); color: #000; border: none; padding: 16px 28px; border-radius: 30px; font-weight: 900; font-size: 1.05rem; cursor: pointer; flex: 1; box-shadow: 0 8px 25px rgba(0, 230, 118, 0.4); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
+          style="background: var(--success); color: #000; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
         <button onclick="rejectCall()"
-          style="background: var(--danger); color: #fff; border: none; padding: 16px 28px; border-radius: 30px; font-weight: 900; font-size: 1.05rem; cursor: pointer; flex: 1; box-shadow: 0 8px 25px rgba(255, 68, 68, 0.4); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+          style="background: var(--danger); color: #fff; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
       </div>
     </div>
   </div>
@@ -1086,7 +1138,7 @@
       if (ping >= 600) {
         DOM.gauge.style.stroke = "var(--danger)";
       } else {
-        DOM.gauge.style.stroke = "url(#speedoGrad)"; // Uses gradient for healthy pings
+        DOM.gauge.style.stroke = "url(#speedoGrad)";
       }
     }
 
@@ -1095,11 +1147,10 @@
       const deviceEntries = Object.entries(activeDevices);
 
       if (deviceEntries.length === 0) {
-        DOM.tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:50px; font-weight:700; font-size:1.1rem; white-space: normal;">No devices currently connected to the Hub.</td></tr>`;
+        DOM.tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:40px; font-weight:700; font-size:1rem; white-space: normal;">No devices currently connected to the Hub.</td></tr>`;
         return;
       }
 
-      // Sort devices alphabetically by name for consistency
       deviceEntries.sort((a, b) => (a[1].name || "").localeCompare(b[1].name || ""));
 
       deviceEntries.forEach(([deviceId, info]) => {
@@ -1221,7 +1272,6 @@
           DOM.hubStatusDot.className = "status-dot status-online";
           DOM.hubStatusDot.style.background = "";
 
-          // Simple counter animations for stats
           animateValue(DOM.scanners, parseInt(DOM.scanners.innerText) || 0, Object.keys(data.active_devices || {}).length, 600);
           animateValue(DOM.totReg, parseInt(DOM.totReg.innerText) || 0, data.global_stats?.total_registrations || 0, 600);
           animateValue(DOM.totScans, parseInt(DOM.totScans.innerText) || 0, data.global_stats?.total_scans || 0, 600);
@@ -1415,7 +1465,8 @@
     });
 
     document.addEventListener("DOMContentLoaded", () => {
-      document.querySelectorAll('.menu-card').forEach(card => {
+      document.querySelectorAll('.btn').forEach(card => {
+        if (card.getAttribute('onclick')) return;
         card.addEventListener('click', function (e) {
           if (peerConnection && peerConnection.connectionState === 'connected') {
             e.preventDefault();

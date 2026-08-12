@@ -274,20 +274,29 @@ GLOBAL_AUDIO_MIXER = {}
 MIXER_LOCK = threading.Lock()
 GLOBAL_MIC_SUBSCRIBERS = set()
 
-class GlobalMicStream:
+class GlobalAudioEngine:
     def __init__(self):
-        self.stream = None
+        self.in_stream = None
+        self.out_stream = None
         if SOUNDDEVICE_AVAILABLE:
             try:
-                self.stream = sd.RawInputStream(
+                self.in_stream = sd.RawInputStream(
                     samplerate=48000, channels=1, dtype='int16',
-                    blocksize=960, callback=self.callback
+                    blocksize=960, callback=self.in_callback
                 )
-                self.stream.start()
+                self.in_stream.start()
             except Exception as e:
                 logging.error(f"PC Microphone hook failed: {e}")
+            try:
+                self.out_stream = sd.RawOutputStream(
+                    samplerate=48000, channels=1, dtype='int16',
+                    blocksize=960, callback=self.out_callback
+                )
+                self.out_stream.start()
+            except Exception as e:
+                logging.error(f"PC Speaker hook failed: {e}")
 
-    def callback(self, indata, frames, time, status):
+    def in_callback(self, indata, frames, time_info, status):
         data = bytes(indata)
         for q in list(GLOBAL_MIC_SUBSCRIBERS):
             try:
@@ -296,7 +305,23 @@ class GlobalMicStream:
             except queue.Full:
                 pass
 
-global_mic = GlobalMicStream()
+    def out_callback(self, outdata, frames, time_info, status):
+        needed_bytes = frames * 2
+        mixed = np.zeros(frames, dtype=np.int32)
+        has_audio = False
+        with MIXER_LOCK:
+            for dev_id, buf in list(GLOBAL_AUDIO_MIXER.items()):
+                if len(buf) >= needed_bytes:
+                    chunk = buf[:needed_bytes]
+                    del buf[:needed_bytes]
+                    mixed += np.frombuffer(chunk, dtype=np.int16)
+                    has_audio = True
+        if has_audio:
+            outdata[:] = np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
+        else:
+            outdata[:] = b'\x00' * needed_bytes
+
+global_audio = GlobalAudioEngine()
 
 class WebRTCMicTrack(MediaStreamTrack):
     kind = "audio"
@@ -312,7 +337,7 @@ class WebRTCMicTrack(MediaStreamTrack):
         super().stop()
 
     async def recv(self):
-        if not global_mic.stream:
+        if not global_audio.in_stream:
             await asyncio.sleep(0.02)
             frame = av.AudioFrame(format='s16', layout='mono', samples=960)
             frame.sample_rate = 48000
@@ -321,11 +346,14 @@ class WebRTCMicTrack(MediaStreamTrack):
             self.pts += 960
             return frame
 
-        try:
-            data = self.q.get_nowait()
-        except queue.Empty:
-            await asyncio.sleep(0.02)
-            data = b'\x00' * 1920
+        def get_data():
+            try:
+                return self.q.get(timeout=0.02)
+            except queue.Empty:
+                return b'\x00' * 1920
+
+        loop = asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, get_data)
 
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -334,33 +362,6 @@ class WebRTCMicTrack(MediaStreamTrack):
         frame.time_base = fractions.Fraction(1, 48000)
         self.pts += 960
         return frame
-
-def _global_audio_playback_worker():
-    if not SOUNDDEVICE_AVAILABLE: return
-    try:
-        with sd.RawOutputStream(samplerate=48000, channels=1, dtype='int16', blocksize=960) as stream:
-            while not _global_shutdown_event.is_set():
-                mixed = np.zeros(960, dtype=np.int32)
-                has_audio = False
-                
-                with MIXER_LOCK:
-                    for dev_id, buf in list(GLOBAL_AUDIO_MIXER.items()):
-                        if len(buf) >= 1920:
-                            chunk = buf[:1920]
-                            del buf[:1920]
-                            arr = np.frombuffer(chunk, dtype=np.int16)
-                            mixed += arr
-                            has_audio = True
-
-                if not has_audio:
-                    stream.write(np.zeros(960, dtype=np.int16).tobytes())
-                else:
-                    mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-                    stream.write(mixed.tobytes())
-    except Exception as e:
-        logging.error(f"Global Hardware Mixer Error: {e}")
-
-threading.Thread(target=_global_audio_playback_worker, daemon=True).start()
 
 async def cleanup_call(device_id):
     if device_id in ACTIVE_CALLS_DATA:
@@ -379,7 +380,10 @@ async def cleanup_call(device_id):
             
     global app_window, GLOBAL_GROUP_CALL_ACTIVE
     if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
-        app_window.gui_queue.put(lambda: app_window.close_call_ui(device_id))
+        try:
+            app_window.gui_queue.put_nowait(lambda: app_window.close_call_ui(device_id))
+        except queue.Full:
+            pass
 
 async def signaling_handler(websocket, path=None):
     global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW
@@ -445,16 +449,16 @@ async def signaling_handler(websocket, path=None):
                                                 samples = np.frombuffer(data_bytes, dtype=np.int16)
                                                 try:
                                                     rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
-                                                    if rms < 150:
-                                                        vol_percent = 0
-                                                    else:
-                                                        vol_percent = min(100, int((rms / 4000.0) * 100)) 
+                                                    vol_percent = 0 if rms < 150 else min(100, int((rms / 4000.0) * 100))
                                                     
                                                     if app_window:
-                                                        if GLOBAL_GROUP_CALL_ACTIVE:
-                                                            app_window.gui_queue.put(lambda v=vol_percent: app_window.update_group_call_meter(v))
-                                                        else:
-                                                            app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                                        try:
+                                                            if GLOBAL_GROUP_CALL_ACTIVE:
+                                                                app_window.gui_queue.put_nowait(lambda v=vol_percent: app_window.update_group_call_meter(v))
+                                                            else:
+                                                                app_window.gui_queue.put_nowait(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                                        except queue.Full:
+                                                            pass
                                                 except Exception:
                                                     pass
                                     except Exception:
@@ -466,7 +470,10 @@ async def signaling_handler(websocket, path=None):
                         
                         global app_window
                         if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
-                            app_window.gui_queue.put(lambda: app_window.show_active_call_ui(device_id))
+                            try:
+                                app_window.gui_queue.put_nowait(lambda: app_window.show_active_call_ui(device_id))
+                            except queue.Full:
+                                pass
                         
                         @pc.on("connectionstatechange")
                         async def on_connectionstatechange():
