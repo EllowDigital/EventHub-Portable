@@ -1757,6 +1757,9 @@
       processCheckin(id, "id");
     }
 
+    // ==========================================
+    // MINIMIZABLE CALL UI LOGIC
+    // ==========================================
     let isCallMinimized = false;
 
     function toggleMinimizeCall() {
@@ -1773,14 +1776,23 @@
       }
     }
 
+    // ==========================================
+    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
+    // ==========================================
+
     let wsCall = null;
     let peerConnection = null;
     let localStream = null;
     let wsReconnectTimer = null;
     let ringInterval = null;
 
+    // FIX 1: Attach audio element to DOM for Mobile Safari policies
     const remoteAudio = new Audio();
     remoteAudio.autoplay = true;
+    document.addEventListener("DOMContentLoaded", () => {
+      remoteAudio.style.display = "none";
+      document.body.appendChild(remoteAudio);
+    });
 
     function playRingingTone() {
       initAudio();
@@ -1812,10 +1824,6 @@
       const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
-      if (window.location.hostname.includes("trycloudflare.com")) {
-        console.warn("⚠️ Cloudflare Tunnel Detected: Port 5002 for WebRTC audio may be blocked by Cloudflare unless explicitly routed.");
-      }
-
       try {
         wsCall = new WebSocket(wsUrl);
 
@@ -1835,26 +1843,18 @@
             }
             else if (data.type === 'client_muted') {
               if (localStream) {
-                localStream.getAudioTracks().forEach(track => {
-                  track.enabled = !data.muted;
-                });
+                localStream.getAudioTracks().forEach(track => { track.enabled = !data.muted; });
               }
             }
             else if (data.type === 'call_ended') {
               endCall(false);
             }
-          } catch (parseError) {
-            console.error("Failed to parse WebRTC data:", parseError);
-          }
+          } catch (parseError) { }
         };
 
         wsCall.onclose = (e) => {
           clearTimeout(wsReconnectTimer);
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
-        };
-
-        wsCall.onerror = (error) => {
-          console.error("Voice WebSocket Connection Error.", error);
         };
       } catch (e) {
         clearTimeout(wsReconnectTimer);
@@ -1867,7 +1867,15 @@
       document.getElementById("incoming-call-modal").style.display = "none";
 
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        // FIX 2: Hardware constraints for active Echo Cancellation & Noise Suppression on mobile
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
+          video: false
+        });
 
         document.getElementById("active-call-overlay").style.display = "flex";
 
@@ -1875,52 +1883,53 @@
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
 
-        peerConnection = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-        localStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream);
-        });
+        localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
 
         peerConnection.ontrack = (event) => {
           if (!remoteAudio.srcObject) {
             remoteAudio.srcObject = event.streams[0];
+            // FIX 3: Explicit play command to force mobile browsers to wake the speaker
+            remoteAudio.play().catch(e => console.warn("Audio play blocked by browser:", e));
           }
         };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
 
+        // FIX 4: ICE GATHERING TIMEOUT. 
+        // Wait up to 2 seconds for the Google STUN server to find your phone's Public IP before sending it to the PC.
+        await new Promise((resolve) => {
+          if (peerConnection.iceGatheringState === 'complete') {
+            resolve();
+          } else {
+            const timeout = setTimeout(resolve, 2000);
+            peerConnection.onicegatheringstatechange = () => {
+              if (peerConnection.iceGatheringState === 'complete') {
+                clearTimeout(timeout);
+                resolve();
+              }
+            };
+          }
+        });
+
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-          wsCall.send(JSON.stringify({
-            type: 'offer',
-            sdp: peerConnection.localDescription.sdp
-          }));
+          wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
         }
 
       } catch (err) {
-        alert("Microphone Access Denied! Voice calls require a secure connection and hardware permissions.");
+        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.");
         rejectCall();
       }
     }
 
-    function rejectCall() {
-      endCall(true);
-    }
+    function rejectCall() { endCall(true); }
 
     function endCall(sendPing = true) {
-      if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-        localStream = null;
-      }
-      if (remoteAudio.srcObject) {
-        remoteAudio.srcObject = null;
-      }
+      if (peerConnection) { peerConnection.close(); peerConnection = null; }
+      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+      if (remoteAudio.srcObject) { remoteAudio.pause(); remoteAudio.srcObject = null; }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";

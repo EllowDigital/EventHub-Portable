@@ -1311,6 +1311,9 @@
       window.requestAnimationFrame(step);
     }
 
+    // ==========================================
+    // MINIMIZABLE CALL UI LOGIC
+    // ==========================================
     let isCallMinimized = false;
 
     function toggleMinimizeCall() {
@@ -1327,14 +1330,23 @@
       }
     }
 
+    // ==========================================
+    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
+    // ==========================================
+
     let wsCall = null;
     let peerConnection = null;
     let localStream = null;
     let wsReconnectTimer = null;
     let ringInterval = null;
 
+    // FIX 1: Attach audio element to DOM for Mobile Safari policies
     const remoteAudio = new Audio();
     remoteAudio.autoplay = true;
+    document.addEventListener("DOMContentLoaded", () => {
+      remoteAudio.style.display = "none";
+      document.body.appendChild(remoteAudio);
+    });
 
     function playRingingTone() {
       initAudio();
@@ -1409,7 +1421,15 @@
       document.getElementById("incoming-call-modal").style.display = "none";
 
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        // FIX 2: Hardware constraints for active Echo Cancellation & Noise Suppression on mobile
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
+          video: false
+        });
 
         document.getElementById("active-call-overlay").style.display = "flex";
 
@@ -1422,18 +1442,38 @@
         localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
 
         peerConnection.ontrack = (event) => {
-          if (!remoteAudio.srcObject) { remoteAudio.srcObject = event.streams[0]; }
+          if (!remoteAudio.srcObject) {
+            remoteAudio.srcObject = event.streams[0];
+            // FIX 3: Explicit play command to force mobile browsers to wake the speaker
+            remoteAudio.play().catch(e => console.warn("Audio play blocked by browser:", e));
+          }
         };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
+
+        // FIX 4: ICE GATHERING TIMEOUT. 
+        // Wait up to 2 seconds for the Google STUN server to find your phone's Public IP before sending it to the PC.
+        await new Promise((resolve) => {
+          if (peerConnection.iceGatheringState === 'complete') {
+            resolve();
+          } else {
+            const timeout = setTimeout(resolve, 2000);
+            peerConnection.onicegatheringstatechange = () => {
+              if (peerConnection.iceGatheringState === 'complete') {
+                clearTimeout(timeout);
+                resolve();
+              }
+            };
+          }
+        });
 
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
           wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
         }
 
       } catch (err) {
-        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection or Localhost.");
+        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.");
         rejectCall();
       }
     }
@@ -1443,7 +1483,7 @@
     function endCall(sendPing = true) {
       if (peerConnection) { peerConnection.close(); peerConnection = null; }
       if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-      if (remoteAudio.srcObject) { remoteAudio.srcObject = null; }
+      if (remoteAudio.srcObject) { remoteAudio.pause(); remoteAudio.srcObject = null; }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
