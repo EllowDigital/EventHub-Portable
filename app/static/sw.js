@@ -90,7 +90,7 @@ self.addEventListener('fetch', event => {
         } catch (networkError) {
           const cachedResponse = await cache.match(req);
           if (cachedResponse) return cachedResponse;
-          
+
           // Fallback to primary hub index if target sub-page isn't cached
           const indexFallback = await cache.match('/');
           if (indexFallback) return indexFallback;
