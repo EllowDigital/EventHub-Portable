@@ -273,40 +273,116 @@ _ws_loop = None
 GLOBAL_AUDIO_MIXER = {}
 MIXER_LOCK = threading.Lock()
 GLOBAL_MIC_SUBSCRIBERS = set()
+AUDIO_WATCHDOG_INTERVAL_SEC = 5
 
 class GlobalAudioEngine:
+    """
+    Bridges the PC's physical mic/speakers to the WebRTC call.
+    NOTE: this used to fail 100% silently (bare 'except: pass' around every
+    sounddevice call) - if the PC's speaker device couldn't be opened, callers'
+    voices would vanish into GLOBAL_AUDIO_MIXER forever with zero error, zero log
+    line, and zero indication anywhere in the app that anything was wrong. All
+    failures are now logged to logs/server_hub.log and exposed via status_text()
+    for the GUI, and a watchdog retries periodically instead of giving up forever.
+    """
     def __init__(self):
         self.in_stream = None
         self.out_stream = None
         self.in_channels = 1
         self.out_channels = 1
-        if SOUNDDEVICE_AVAILABLE:
+        self.in_error = None
+        self.out_error = None
+        self.in_device_name = "default"
+        self.out_device_name = "default"
+
+        if not SOUNDDEVICE_AVAILABLE:
+            self.in_error = self.out_error = "'sounddevice' package not installed"
+            logging.error("[AUDIO] 'sounddevice' not installed - voice call audio will not work at all.")
+            return
+
+        try:
+            logging.info(f"[AUDIO] sounddevice sees these devices:\n{sd.query_devices()}")
+        except Exception as e:
+            logging.error(f"[AUDIO] Could not enumerate audio devices: {e}")
+
+        self._open_input()
+        self._open_output()
+        threading.Thread(target=self._watchdog_loop, daemon=True, name="AudioWatchdog").start()
+
+    def _open_input(self):
+        """(Re)open the mic capture stream - this is what lets the PC's own mic be heard by callers."""
+        try:
+            in_info = sd.query_devices(sd.default.device[0], 'input')
+            self.in_channels = min(2, in_info['max_input_channels']) or 1
+            self.in_device_name = in_info.get('name', 'default')
+        except Exception as e:
+            logging.warning(f"[AUDIO] Could not query default input device info (will still try to open it): {e}")
+        try:
+            self.in_stream = sd.RawInputStream(
+                samplerate=48000, channels=self.in_channels, dtype='int16',
+                blocksize=960, callback=self.in_callback
+            )
+            self.in_stream.start()
+            self.in_error = None
+            logging.info(f"[AUDIO] Mic input OPEN on '{self.in_device_name}' ({self.in_channels}ch). Your mic can be sent to callers.")
+        except Exception as e:
+            self.in_stream = None
+            self.in_error = str(e)
+            logging.error(f"[AUDIO] FAILED to open mic input ('{self.in_device_name}'): {e}. Callers will NOT hear you until this is fixed.")
+
+    def _open_output(self):
+        """(Re)open the speaker playback stream - this is what lets you hear callers' voices."""
+        try:
+            out_info = sd.query_devices(sd.default.device[1], 'output')
+            self.out_channels = min(2, out_info['max_output_channels']) or 1
+            self.out_device_name = out_info.get('name', 'default')
+        except Exception as e:
+            logging.warning(f"[AUDIO] Could not query default output device info (will still try to open it): {e}")
+        try:
+            self.out_stream = sd.RawOutputStream(
+                samplerate=48000, channels=self.out_channels, dtype='int16',
+                blocksize=960, callback=self.out_callback
+            )
+            self.out_stream.start()
+            self.out_error = None
+            logging.info(f"[AUDIO] Speaker output OPEN on '{self.out_device_name}' ({self.out_channels}ch). Incoming caller voice can be played.")
+        except Exception as e:
+            self.out_stream = None
+            self.out_error = str(e)
+            logging.error(f"[AUDIO] FAILED to open speaker output ('{self.out_device_name}'): {e}. You will NOT hear callers until this is fixed.")
+
+    def _watchdog_loop(self):
+        while not _global_shutdown_event.is_set():
+            time.sleep(AUDIO_WATCHDOG_INTERVAL_SEC)
             try:
-                in_info = sd.query_devices(sd.default.device[0], 'input')
-                self.in_channels = min(2, in_info['max_input_channels'])
-            except Exception:
-                pass
+                if self.in_stream is None:
+                    self._open_input()
+                elif not self.in_stream.active:
+                    logging.warning("[AUDIO] Mic input stream stopped unexpectedly - reopening.")
+                    self.in_stream = None
+                    self._open_input()
+            except Exception as e:
+                logging.error(f"[AUDIO] Watchdog input check failed: {e}")
             try:
-                out_info = sd.query_devices(sd.default.device[1], 'output')
-                self.out_channels = min(2, out_info['max_output_channels'])
-            except Exception:
-                pass
-            try:
-                self.in_stream = sd.RawInputStream(
-                    samplerate=48000, channels=self.in_channels, dtype='int16',
-                    blocksize=960, callback=self.in_callback
-                )
-                self.in_stream.start()
-            except Exception:
-                pass
-            try:
-                self.out_stream = sd.RawOutputStream(
-                    samplerate=48000, channels=self.out_channels, dtype='int16',
-                    blocksize=960, callback=self.out_callback
-                )
-                self.out_stream.start()
-            except Exception:
-                pass
+                if self.out_stream is None:
+                    self._open_output()
+                elif not self.out_stream.active:
+                    logging.warning("[AUDIO] Speaker output stream stopped unexpectedly - reopening.")
+                    self.out_stream = None
+                    self._open_output()
+            except Exception as e:
+                logging.error(f"[AUDIO] Watchdog output check failed: {e}")
+
+    def status_text(self):
+        if not SOUNDDEVICE_AVAILABLE:
+            return ("● VOICE AUDIO: NOT INSTALLED", "secondary")
+        if self.out_stream and self.in_stream:
+            return ("● VOICE AUDIO: LIVE", "success")
+        if self.out_stream and not self.in_stream:
+            return ("● VOICE AUDIO: MIC OFFLINE", "warning")
+        if self.in_stream and not self.out_stream:
+            return ("● VOICE AUDIO: SPEAKER OFFLINE", "danger")
+        return ("● VOICE AUDIO: OFFLINE", "danger")
 
     def in_callback(self, indata, frames, time_info, status):
         try:
@@ -317,8 +393,8 @@ class GlobalAudioEngine:
                 data = bytes(indata)
             for sub in list(GLOBAL_MIC_SUBSCRIBERS):
                 sub.add_data(data)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"[AUDIO] in_callback error: {e}")
 
     def out_callback(self, outdata, frames, time_info, status):
         try:
@@ -342,7 +418,8 @@ class GlobalAudioEngine:
                 outdata[:] = stereo.tobytes()
             else:
                 outdata[:] = mixed.tobytes()
-        except Exception:
+        except Exception as e:
+            logging.error(f"[AUDIO] out_callback error: {e}")
             outdata[:] = b'\x00' * (frames * 2 * self.out_channels)
 
 global_audio = GlobalAudioEngine()
@@ -400,8 +477,8 @@ async def cleanup_call(device_id):
         try:
             if pc: await pc.close()
             if mic_track: mic_track.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"[VOICE] Error tearing down call for {device_id}: {e}")
             
     with MIXER_LOCK:
         if device_id in GLOBAL_AUDIO_MIXER:
@@ -416,6 +493,7 @@ async def cleanup_call(device_id):
 
 async def signaling_handler(websocket, path=None):
     global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW
+    device_id = "Unknown"
     try:
         if path is None:
             try:
@@ -430,14 +508,16 @@ async def signaling_handler(websocket, path=None):
             device_id = "Unknown"
             
         CONNECTED_WS[device_id] = websocket
+        logging.info(f"[VOICE] Device connected to voice signaling: {device_id}")
         
         if GLOBAL_GROUP_CALL_ACTIVE:
             try:
                 await websocket.send(json.dumps({"type": "incoming_call"}))
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error(f"[VOICE] Could not send incoming_call ping to {device_id}: {e}")
         
         async for message in websocket:
+            msg_type = None
             try:
                 data = json.loads(message)
                 msg_type = data.get("type")
@@ -452,8 +532,8 @@ async def signaling_handler(websocket, path=None):
                             try:
                                 mic_track = WebRTCMicTrack()
                                 pc.addTrack(mic_track)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logging.error(f"[VOICE] Could not create/attach mic track for {device_id}: {e}")
 
                         resampler = av.AudioResampler(format='s16', layout='mono', rate=48000)
 
@@ -491,14 +571,15 @@ async def signaling_handler(websocket, path=None):
                                                                 pass
                                                     except Exception:
                                                         pass
-                                            except av.AVError:
-                                                pass
+                                            except av.AVError as e:
+                                                logging.warning(f"[VOICE] Audio decode hiccup from {device_id}: {e}")
                                             except asyncio.CancelledError:
                                                 break
-                                            except Exception:
+                                            except Exception as e:
+                                                logging.error(f"[VOICE] Error reading incoming audio frame from {device_id}: {e}")
                                                 await asyncio.sleep(0.1)
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logging.error(f"[VOICE] process_incoming_audio fatal error for {device_id}: {e}")
 
                                 asyncio.create_task(process_incoming_audio())
                             
@@ -531,16 +612,21 @@ async def signaling_handler(websocket, path=None):
                         await websocket.send(json.dumps({"type": "client_muted", "muted": GROUP_CALL_WINDOW['spk_muted']}))
                     
                 elif msg_type == "candidate":
+                    # No-op by design: every client page waits for iceGatheringState
+                    # 'complete' before sending its offer (see "FIX 4" in the HTML),
+                    # so no separate trickle candidates are ever sent here today. If
+                    # trickle ICE is ever added client-side, this needs to call
+                    # pc.addIceCandidate(...) or those candidates will be dropped.
                     pass 
                     
                 elif msg_type == "call_ended":
                     await cleanup_call(device_id)
                         
-            except Exception:
-                pass
+            except Exception as e:
+                logging.error(f"[VOICE] Error handling '{msg_type}' message from {device_id}: {e}")
                 
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"[VOICE] signaling_handler connection error for {device_id}: {e}")
     finally:
         if device_id in CONNECTED_WS:
             del CONNECTED_WS[device_id]
@@ -556,21 +642,23 @@ async def _run_webrtc_server():
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
 
+        logging.info(f"[VOICE] Voice signaling server listening on 0.0.0.0:{WS_AUDIO_PORT} (ssl={'on' if ssl_context else 'off'})")
         async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
             await asyncio.Future()
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"[VOICE] Voice signaling server on port {WS_AUDIO_PORT} FAILED to start: {e}. Voice calling will not work at all until this is resolved (check whether the port is already in use by another instance).")
 
 def start_webrtc_server():
     global _ws_loop
     if not WEBRTC_SUPPORTED:
+        logging.warning("[VOICE] aiortc/av/websockets not available - voice calling is disabled.")
         return
     try:
         _ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_ws_loop)
         _ws_loop.run_until_complete(_run_webrtc_server())
-    except Exception:
-        pass
+    except Exception as e:
+        logging.error(f"[VOICE] Fatal error in voice server event loop: {e}")
 
 threading.Thread(target=start_webrtc_server, daemon=True).start()
 
@@ -2108,6 +2196,7 @@ class ServerHub(ttk.Window):
         self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
         self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
         self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
+        self.lbl_stat_audio = self._build_status_badge(bot_hdr, "● VOICE AUDIO: CHECKING", INFO)
 
         right_hdr = ttk.Frame(header_container, style="TFrame")
         right_hdr.pack(side=RIGHT, fill=Y)
@@ -2463,6 +2552,9 @@ class ServerHub(ttk.Window):
                 else:
                     self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
 
+            audio_text, audio_style = global_audio.status_text()
+            self.lbl_stat_audio.configure(text=audio_text, bootstyle=audio_style)
+
             with stats_lock:
                 snap = dict(STATS_CACHE)
             
@@ -2618,4 +2710,4 @@ if __name__ == "__main__":
         except Exception:
             pass
     app_window = ServerHub()
-    app_window.mainloop()
+    app_window.mainloop()
