@@ -354,11 +354,14 @@
       border: none !important;
     }
 
+    /* CSS PERFORMANCE OPTIMIZATION FOR ZOOM */
     #reader video {
       object-fit: cover;
       border-radius: var(--radius-lg);
       transform-origin: center center;
       transition: transform 0.15s ease-out;
+      will-change: transform;
+      transform: translateZ(0);
     }
 
     #reader__dashboard_section_csr button,
@@ -1152,7 +1155,6 @@
 
       <div class="scanner-box" id="scanner-box">
         <div id="reader"></div>
-
         <div class="viewfinder-corners" id="viewfinder-corners">
           <div></div>
         </div>
@@ -1172,6 +1174,7 @@
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
           <span>Lens Zoom</span>
+          <span id="auto-zoom-badge" class="auto-zoom-badge">Auto-Focusing</span>
           <span id="zoom-val-display">1.0x</span>
         </div>
         <div class="zoom-controls-row">
@@ -1183,9 +1186,7 @@
         </div>
       </div>
 
-      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
-        ⏸ Pause Scanner
-      </button>
+      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">⏸ Pause Scanner</button>
     </div>
 
     <div class="manual-wrapper" id="manual-view">
@@ -1254,7 +1255,6 @@
         <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()"
           title="Minimize / Maximize">🗕</button>
       </div>
-
       <div class="call-info">
         <div class="call-avatar" id="call-avatar">🎙️</div>
         <div class="call-text">
@@ -1262,7 +1262,6 @@
           <p class="call-subtitle">Command Hub Connected.</p>
         </div>
       </div>
-
       <div class="call-actions">
         <button onclick="endCall()" class="btn-end-call">❌ End Call</button>
       </div>
@@ -1328,14 +1327,16 @@
     let currentTrack = null;
     let nativeZoomSupported = false;
     let minZoom = 1; let maxZoom = 3; let zoomTarget = 1.0;
-    let zoomTimeout = null; let autoZoomInterval = null;
+
+    let zoomTimeout = null;
+    let autoZoomInterval = null;
+    let currentAppliedZoom = -1; // Added for caching state
 
     let isSyncing = false; let isFetching = false;
     let camerasList = [];
 
     let lastScannedId = ""; let lastScanTime = 0; const DEBOUNCE_MS = 4000;
 
-    // OPTIMIZATION: Reduced FPS from 30 to 15 to significantly improve UI lag and device battery usage
     const scanConfig = { fps: 15, qrbox: { width: 250, height: 250 }, formatsToSupport: [0], aspectRatio: 1.0, useBarCodeDetectorIfSupported: true };
 
     async function requestCameraPermissionNatively() {
@@ -1390,8 +1391,8 @@
           document.getElementById("viewfinder-corners").style.display = "block";
           setTimeout(initAdvancedCameraControls, 1200);
 
-          // OPTIMIZATION: StartAutoZoomSweep completely removed here. Re-applying camera hardware 
-          // constraints repeatedly was causing severe lag and stuttering on mobile devices.
+          startAutoZoomSweep(); // Restored Auto-Sweep functionality
+
         } catch (err) {
           document.getElementById("permission-overlay").style.display = "flex";
           btn.innerHTML = "▶ Resume Scanner"; btn.classList.add("paused");
@@ -1420,7 +1421,9 @@
 
         slider.replaceWith(slider.cloneNode(true));
         const newSlider = document.getElementById("zoom-slider");
-        newSlider.addEventListener("input", (e) => { adjustZoom(parseFloat(e.target.value) - zoomTarget); });
+        newSlider.addEventListener("input", (e) => {
+          adjustZoom(parseFloat(e.target.value) - zoomTarget);
+        });
         applyDebouncedZoom();
       } catch (e) { }
     }
@@ -1429,19 +1432,67 @@
       zoomTarget = Math.max(minZoom, Math.min(maxZoom, zoomTarget + delta));
       document.getElementById("zoom-slider").value = zoomTarget;
       document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
+      resetAutoZoomTimer();
       applyDebouncedZoom();
     }
 
+    // PERFORMANCE OPTIMIZATION: Non-blocking Zoom Application
     function applyDebouncedZoom() {
       clearTimeout(zoomTimeout);
       zoomTimeout = setTimeout(() => {
-        if (nativeZoomSupported && currentTrack) {
-          try { currentTrack.applyConstraints({ advanced: [{ zoom: zoomTarget }] }).catch(() => { }); } catch (e) { }
+        // Optimization: Do not re-apply hardware constraints if zoom hasn't changed.
+        if (currentAppliedZoom === zoomTarget) return;
+        currentAppliedZoom = zoomTarget;
+
+        const applyZoomLogic = () => {
+          if (nativeZoomSupported && currentTrack) {
+            try { currentTrack.applyConstraints({ advanced: [{ zoom: zoomTarget }] }).catch(() => { }); } catch (e) { }
+          } else {
+            const videoEl = document.querySelector("#reader video");
+            if (videoEl) videoEl.style.transform = `scale(${zoomTarget}) translateZ(0)`;
+          }
+        };
+
+        // Optimization: Yield to the browser's idle time so applying hardware constraints 
+        // does not drop UI frames or interrupt the camera decoding loop.
+        if (window.requestIdleCallback) {
+          window.requestIdleCallback(applyZoomLogic, { timeout: 250 });
         } else {
-          const videoEl = document.querySelector("#reader video");
-          if (videoEl) videoEl.style.transform = `scale(${zoomTarget})`;
+          window.requestAnimationFrame(applyZoomLogic);
         }
       }, 100);
+    }
+
+    // PERFORMANCE OPTIMIZATION: Animation Frame synchronized UI updates
+    function startAutoZoomSweep() {
+      let toggle = false;
+      autoZoomInterval = setInterval(() => {
+        if (!isCameraActive || isProcessing) return;
+
+        // Optimization: Wrap UI DOM adjustments inside requestAnimationFrame
+        requestAnimationFrame(() => {
+          const badge = document.getElementById("auto-zoom-badge");
+          badge.style.opacity = 1;
+
+          let newZoom = toggle ? minZoom : minZoom + (maxZoom - minZoom) * 0.2;
+          zoomTarget = Math.max(minZoom, Math.min(maxZoom, newZoom));
+
+          document.getElementById("zoom-slider").value = zoomTarget;
+          document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
+
+          applyDebouncedZoom();
+          toggle = !toggle;
+
+          setTimeout(() => {
+            requestAnimationFrame(() => badge.style.opacity = 0);
+          }, 800);
+        });
+      }, 5000);
+    }
+
+    function resetAutoZoomTimer() {
+      clearInterval(autoZoomInterval);
+      setTimeout(startAutoZoomSweep, 10000);
     }
 
     const scannerBox = document.getElementById("scanner-box");
@@ -1456,6 +1507,7 @@
       if (html5QrCode && isCameraActive) {
         isCameraTransitioning = true;
         try {
+          clearInterval(autoZoomInterval);
           if (html5QrCode.getState() === 2) await html5QrCode.stop();
           isCameraActive = false;
           const btn = document.getElementById("camera-toggle-btn");
@@ -1516,7 +1568,6 @@
 
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Scanner"; }
 
-    // BUG FIX: Inject '.show' class after changing to flex so CSS opacity transitions properly triggers.
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
       if (!name) {
@@ -1632,7 +1683,6 @@
           try {
             const data = await response.json();
 
-            // BUG FIX: Strictly checks incoming server renamed labels and updates DOM reliably.
             if (data.canonical_name && data.canonical_name !== "Unknown Device") {
               const currentLocalName = localStorage.getItem("hub_device_name");
               if (data.canonical_name !== currentLocalName) {
