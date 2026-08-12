@@ -184,7 +184,6 @@
     .app-container {
       width: 100%;
       max-width: 750px;
-      /* Slightly wider for form columns */
       padding: 15px 15px 40px 15px;
       display: flex;
       flex-direction: column;
@@ -451,6 +450,7 @@
       cursor: not-allowed;
     }
 
+    /* Error State styles */
     .input-group input.err,
     .input-group select.err {
       border-color: var(--danger);
@@ -909,8 +909,6 @@
         font-size: 1rem;
         padding: 14px;
       }
-
-      /* Slightly larger touch targets on mobile */
     }
   </style>
 </head>
@@ -1150,16 +1148,15 @@
   </div>
 
   <script>
-    // --- Preloader Logic ---
+    // --- Preloader & Startup Logic ---
     window.addEventListener("load", () => {
       const preloader = document.getElementById("preloader");
       preloader.classList.add("fade-out");
-      setTimeout(() => {
-        preloader.style.display = "none";
-      }, 500);
+      setTimeout(() => { preloader.style.display = "none"; }, 500);
 
       initDeviceName();
       updateOfflineBadge();
+      setupLiveValidation();
       connectCallServer();
       setInterval(syncServerStatus, 3000);
       syncServerStatus();
@@ -1408,6 +1405,7 @@
       }
     }
 
+    // --- FORM LOGIC & LIVE VALIDATION ---
     const CAT_OPTS = [
       ["— Select Category —", ""], ["Tent", "TENT"], ["Caterers", "CATERING"],
       ["Decorator", "DECORATOR"], ["Flower Decoration", "FLOWER"], ["DJ", "DJ"],
@@ -1450,6 +1448,8 @@
     const fMobile = document.getElementById("f-mobile");
     fMobile.addEventListener("input", (e) => {
       e.target.value = e.target.value.replace(/\D/g, "");
+      clearFieldErr("mobile"); // Clear red validation error on typing
+
       const val = e.target.value;
       const errDiv = document.getElementById("e-mobile");
       clearTimeout(mobileCheckTimer);
@@ -1483,6 +1483,8 @@
     const fPincode = document.getElementById("f-pincode");
     fPincode.addEventListener("input", (e) => {
       e.target.value = e.target.value.replace(/\D/g, "");
+      clearFieldErr("pincode"); // Clear red validation error on typing
+
       const val = e.target.value;
       const errDiv = document.getElementById("e-pincode");
       clearTimeout(pincodeCheckTimer);
@@ -1498,6 +1500,8 @@
               if (data && data.status === "success") {
                 document.getElementById("f-state").value = data.state;
                 document.getElementById("f-city").value = data.district;
+                clearFieldErr("state"); // Auto clear dependencies
+                clearFieldErr("city");
                 errDiv.textContent = "";
                 errDiv.className = "err-msg";
               } else {
@@ -1521,16 +1525,20 @@
     });
 
     function setFieldErr(key, msg) {
-      document.getElementById("f-" + key).classList.add("err");
+      const f = document.getElementById("f-" + key);
+      if (f) f.classList.add("err");
       const el = document.getElementById("e-" + key);
-      el.textContent = "⚠ " + msg;
-      el.className = "err-msg";
+      if (el) {
+        el.textContent = "⚠ " + msg;
+        el.className = "err-msg";
+      }
     }
 
     function clearFieldErr(key) {
-      document.getElementById("f-" + key).classList.remove("err");
+      const f = document.getElementById("f-" + key);
+      if (f) f.classList.remove("err");
       const el = document.getElementById("e-" + key);
-      if (!el.classList.contains("msg-success") && !el.classList.contains("msg-warning")) {
+      if (el && !el.classList.contains("msg-success") && !el.classList.contains("msg-warning")) {
         el.textContent = "";
         el.className = "err-msg";
       }
@@ -1539,6 +1547,30 @@
     function clearAllErrors() {
       ["name", "mobile", "email", "gender", "bizname", "cat", "othercat", "address", "city", "state", "pincode"].forEach(clearFieldErr);
       document.getElementById("e-days").textContent = "";
+    }
+
+    // --- LIVE VALIDATION SETUP ---
+    function setupLiveValidation() {
+      const textFields = ["name", "email", "bizname", "othercat", "address", "city", "state"];
+      textFields.forEach(k => {
+        const el = document.getElementById("f-" + k);
+        if (el) el.addEventListener("input", () => clearFieldErr(k));
+      });
+
+      const selectFields = ["gender", "type", "cat"];
+      selectFields.forEach(k => {
+        const el = document.getElementById("f-" + k);
+        if (el) el.addEventListener("change", () => clearFieldErr(k));
+      });
+
+      for (let i = 1; i <= 3; i++) {
+        const dayEl = document.getElementById(`day-${i}`);
+        if (dayEl) {
+          dayEl.addEventListener("change", () => {
+            document.getElementById("e-days").textContent = "";
+          });
+        }
+      }
     }
 
     function validate() {
@@ -1644,6 +1676,8 @@
       document.getElementById("e-pincode").className = "err-msg";
       document.getElementById("e-pincode").textContent = "";
 
+      clearAllErrors(); // Clean slate
+
       const btn = document.getElementById("submit-btn");
       btn.disabled = false;
       btn.textContent = "Register Attendee";
@@ -1706,6 +1740,9 @@
         });
     }
 
+    // ==========================================
+    // MINIMIZABLE CALL UI LOGIC
+    // ==========================================
     let isCallMinimized = false;
 
     function toggleMinimizeCall() {
@@ -1722,6 +1759,9 @@
       }
     }
 
+    // ==========================================
+    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
+    // ==========================================
     let wsCall = null;
     let peerConnection = null;
     let localStream = null;
