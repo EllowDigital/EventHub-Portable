@@ -291,7 +291,7 @@ class GlobalMicStream:
         data = bytes(indata)
         for q in list(GLOBAL_MIC_SUBSCRIBERS):
             try:
-                if q.qsize() < 10:
+                if q.qsize() < 30:
                     q.put_nowait(data)
             except queue.Full:
                 pass
@@ -302,7 +302,7 @@ class WebRTCMicTrack(MediaStreamTrack):
     kind = "audio"
     def __init__(self):
         super().__init__()
-        self.q = queue.Queue(maxsize=10)
+        self.q = queue.Queue(maxsize=30)
         GLOBAL_MIC_SUBSCRIBERS.add(self.q)
         self.pts = 0
 
@@ -321,7 +321,12 @@ class WebRTCMicTrack(MediaStreamTrack):
             self.pts += 960
             return frame
 
-        data = await asyncio.get_event_loop().run_in_executor(None, self.q.get)
+        try:
+            data = self.q.get_nowait()
+        except queue.Empty:
+            await asyncio.sleep(0.02)
+            data = b'\x00' * 1920
+
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
         frame.planes[0].update(data)
@@ -337,15 +342,14 @@ def _global_audio_playback_worker():
             while not _global_shutdown_event.is_set():
                 mixed = np.zeros(960, dtype=np.int32)
                 has_audio = False
+                
                 with MIXER_LOCK:
-                    for dev_id, q in list(GLOBAL_AUDIO_MIXER.items()):
-                        if len(q) > 0:
-                            frame = q.popleft()
-                            if len(frame) < 960:
-                                frame = np.pad(frame, (0, 960 - len(frame)))
-                            elif len(frame) > 960:
-                                frame = frame[:960]
-                            mixed += frame
+                    for dev_id, buf in list(GLOBAL_AUDIO_MIXER.items()):
+                        if len(buf) >= 1920:
+                            chunk = buf[:1920]
+                            del buf[:1920]
+                            arr = np.frombuffer(chunk, dtype=np.int16)
+                            mixed += arr
                             has_audio = True
 
                 if not has_audio:
@@ -426,17 +430,19 @@ async def signaling_handler(websocket, path=None):
                                     global app_window, GLOBAL_GROUP_CALL_ACTIVE
                                     with MIXER_LOCK:
                                         if device_id not in GLOBAL_AUDIO_MIXER:
-                                            GLOBAL_AUDIO_MIXER[device_id] = collections.deque(maxlen=10)
+                                            GLOBAL_AUDIO_MIXER[device_id] = bytearray()
                                     try:
                                         while True:
                                             frame = await track.recv()
                                             frames = resampler.resample(frame)
                                             for f in frames:
                                                 data_bytes = f.planes[0].to_bytes()
-                                                samples = np.frombuffer(data_bytes, dtype=np.int16)
                                                 with MIXER_LOCK:
                                                     if device_id in GLOBAL_AUDIO_MIXER:
-                                                        GLOBAL_AUDIO_MIXER[device_id].append(samples)
+                                                        GLOBAL_AUDIO_MIXER[device_id].extend(data_bytes)
+                                                        if len(GLOBAL_AUDIO_MIXER[device_id]) > 96000:
+                                                            del GLOBAL_AUDIO_MIXER[device_id][:-96000]
+                                                samples = np.frombuffer(data_bytes, dtype=np.int16)
                                                 try:
                                                     rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
                                                     if rms < 150:
