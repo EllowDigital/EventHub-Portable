@@ -26,6 +26,19 @@ from datetime import datetime
 import tkinter as tk
 
 # ==============================================================================
+# BANNER SLIDESHOW IMAGES (EDIT THIS LIST)
+# ==============================================================================
+# Add or remove image filenames here. 
+# Ensure these files are placed inside the folder: app/assets/main-banner's/
+BANNER_IMAGES = [
+    "eventhub-banner.png",
+    "eventhub-banner0.png",
+    # "eventhub-banner1.png",
+    # "eventhub-banner2.png",
+    "tdeup2025-team.png"
+]
+
+# ==============================================================================
 # AUDIO & TTS IMPORTS
 # ==============================================================================
 try:
@@ -86,6 +99,10 @@ except ImportError:
 # ==============================================================================
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.join(ROOT_DIR, "app")
+ASSETS_DIR = os.path.join(APP_DIR, "assets")
+BANNER_DIR = os.path.join(ASSETS_DIR, "main-banner's")
+ICON_PATH = os.path.join(ASSETS_DIR, "EventHub.ico")
+
 REQUIREMENTS_FILE = os.path.join(ROOT_DIR, "requirements.txt")
 CONFIG_DIR = os.path.join(APP_DIR, "config")
 SCHEMA_CONFIG = os.path.join(CONFIG_DIR, "schema.json")
@@ -184,6 +201,13 @@ class LauncherApp(ttk.Window):
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
         self.minsize(1100, 780)
 
+        # Set custom window icon if it exists
+        if os.path.exists(ICON_PATH):
+            try:
+                self.iconbitmap(ICON_PATH)
+            except Exception:
+                pass
+
         inject_cloudflared_path()
 
         self.gui_queue = queue.Queue()
@@ -191,8 +215,13 @@ class LauncherApp(ttk.Window):
         self.tool_widgets = {}   
         self.health_widgets = {}
         self.cached_cf_path = None
-        self.team_img_original = None
         self.sound_enabled = True
+        
+        # --- SLIDESHOW VARIABLES ---
+        self.slideshow_images = []
+        self.current_image_original = None
+        self.current_image_index = 0
+        self.slideshow_interval = 4000  # Change image every 4000 ms (4 seconds)
 
         self._configure_custom_styles()
         self.build_ui()
@@ -363,17 +392,28 @@ class LauncherApp(ttk.Window):
         self.lbl_team_photo = ttk.Label(self.team_card, background=self.CARD_BG, anchor=CENTER)
         self.lbl_team_photo.pack(fill=BOTH, expand=True)
 
-        team_img_path = os.path.join(ROOT_DIR, "team.png")
-        try:
-            if os.path.exists(team_img_path):
-                self.team_img_original = Image.open(team_img_path)
-                self.team_card.bind("<Configure>", self._resize_team_banner)
-            else:
-                self.team_card.configure(height=100) 
-                self.lbl_team_photo.configure(text="📸 Place 'team.png' in the root folder.", font="-size 10 -slant italic", foreground="gray")
-        except Exception as e:
-            self.team_card.configure(height=100)
-            self.lbl_team_photo.configure(text=f"Image Error: {e}", foreground="#FF6B6B")
+        # --- LOAD SLIDESHOW IMAGES FROM THE GLOBAL BANNER_IMAGES LIST ---
+        for img_name in BANNER_IMAGES:
+            img_path = os.path.join(BANNER_DIR, img_name)
+            if os.path.exists(img_path):
+                try:
+                    self.slideshow_images.append(Image.open(img_path))
+                except Exception as e:
+                    self.log(f"Could not open image '{img_name}': {e}", "WARNING")
+
+        if self.slideshow_images:
+            self.current_image_original = self.slideshow_images[0]
+            self.team_card.bind("<Configure>", self._resize_team_banner)
+            if len(self.slideshow_images) > 1:
+                self.after(self.slideshow_interval, self._next_slide)
+        else:
+            self.team_card.configure(height=100) 
+            self.lbl_team_photo.configure(
+                text=f"📸 Place images in:\n{BANNER_DIR}", 
+                font="-size 10 -slant italic", 
+                foreground="gray",
+                justify=CENTER
+            )
 
         log_wrapper = ttk.Frame(right_col)
         log_wrapper.grid(row=1, column=0, sticky=NSEW)
@@ -398,25 +438,54 @@ class LauncherApp(ttk.Window):
         self.log_box.text.tag_config("ERROR", foreground="#FF6B6B", font=("Consolas", 11, "bold"))
         self.log_box.text.tag_config("TOOL", foreground="#5DADE2") 
 
-    def _resize_team_banner(self, event):
-        if not self.team_img_original or event.width <= 10: return
-        if hasattr(self, '_last_banner_w') and abs(self._last_banner_w - event.width) < 15: return
-        self._last_banner_w = event.width
-
-        try:
-            original_w, original_h = self.team_img_original.size
-            tw = event.width - 4
-            th = int(tw * (original_h / original_w))
+    def _next_slide(self):
+        """Advances the slideshow to the next image in the queue."""
+        if not self.slideshow_images: return
+        
+        self.current_image_index = (self.current_image_index + 1) % len(self.slideshow_images)
+        self.current_image_original = self.slideshow_images[self.current_image_index]
+        
+        # Apply to the last known width
+        w = getattr(self, '_last_banner_w', self.team_card.winfo_width())
+        if w > 10:
+            self._apply_image_to_banner(w)
             
-            max_height = 320
-            if th > max_height: th = max_height
-                
-            self.team_card.configure(height=th + 4)
-            img = ImageOps.fit(self.team_img_original, (tw, th), Image.Resampling.LANCZOS)
+        self.after(self.slideshow_interval, self._next_slide)
+
+    def _resize_team_banner(self, event):
+        """Handles resizing events effectively without spamming recalculations."""
+        if not self.current_image_original or event.width <= 10: return
+        if hasattr(self, '_last_banner_w') and abs(self._last_banner_w - event.width) < 15: return
+        
+        self._last_banner_w = event.width
+        self._apply_image_to_banner(event.width)
+
+    def _apply_image_to_banner(self, width):
+        """Processes and dynamically applies the loaded original image to perfectly fit the banner label without cropping."""
+        if not self.current_image_original or width <= 10: return
+        try:
+            original_w, original_h = self.current_image_original.size
+            
+            # Maximum allowed dimensions
+            max_w = width - 4
+            max_h = 320
+            
+            # Calculate the scaling ratio to keep aspect ratio perfectly without cropping
+            ratio = min(max_w / original_w, max_h / original_h)
+            new_w = int(original_w * ratio)
+            new_h = int(original_h * ratio)
+            
+            # Set container height to exactly match the scaled image height
+            self.team_card.configure(height=new_h + 4)
+            
+            # Use basic resize (instead of ImageOps.fit) so it doesn't crop edges
+            img = self.current_image_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
             photo = ImageTk.PhotoImage(img)
             self.lbl_team_photo.configure(image=photo)
             self.lbl_team_photo.image = photo 
-        except Exception: pass
+        except Exception as e: 
+            pass
 
     def _build_health_card(self, parent, column, key, title, initial_val):
         card = ttk.Frame(parent, style="Card.TFrame", padding=(16, 12))
@@ -794,6 +863,9 @@ class LauncherApp(ttk.Window):
         try:
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            # Passing a unique tool ID that the child script can optionally read to split its taskbar icon
+            env["EVENTHUB_TOOL_ID"] = f"EventHub.Tool.{key}" 
+            
             proc = subprocess.Popen(
                 [sys.executable, script_path], 
                 cwd=APP_DIR,
@@ -895,6 +967,14 @@ class LauncherApp(ttk.Window):
         self.destroy()
 
 if __name__ == "__main__":
+    # PREVENT TASKBAR MERGING: Give the Launcher its own unique Application ID
+    if os.name == 'nt':
+        try:
+            my_app_id = 'EventHub.Portable.CentralLauncher.1.0'
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
+        except Exception:
+            pass
+            
     app = LauncherApp()
     app.protocol("WM_DELETE_WINDOW", app.on_close)
     app.mainloop()
