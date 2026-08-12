@@ -17,8 +17,9 @@
 
   <style>
     :root {
-      --bg-pure-black: #0b0d14;
-      --surface: #161a26;
+      --bg-pure-black: #050608;
+      --surface: #10131a;
+      --surface-light: #1a1e29;
       --primary: #00d2ff;
       --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
@@ -30,17 +31,19 @@
       --text-muted: #8b93a5;
       --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
       --radius-sm: 8px;
-      --radius-md: 12px;
-      --radius-lg: 20px;
-      --transition: all 0.3s ease;
+      --radius-md: 14px;
+      --radius-lg: 24px;
+      --transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       --glass-border: rgba(255, 255, 255, 0.08);
-      --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      --glass-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
     }
 
     body {
       font-family: var(--font-ui);
       background-color: var(--bg-pure-black);
-      background-image: radial-gradient(circle at top center, #111520, var(--bg-pure-black) 80%);
+      background-image:
+        radial-gradient(circle at 50% -20%, rgba(0, 210, 255, 0.15), transparent 60%),
+        radial-gradient(circle at 50% 120%, rgba(0, 230, 118, 0.05), transparent 60%);
       color: var(--text-main);
       margin: 0;
       padding: 0;
@@ -54,16 +57,28 @@
 
     .app-container {
       width: 100%;
-      max-width: 1000px;
-      padding: 20px;
+      max-width: 1100px;
+      padding: 30px 20px;
       box-sizing: border-box;
-      animation: fadeIn 0.5s ease-out;
     }
 
-    @keyframes fadeIn {
+    /* --- ENHANCED ANIMATIONS --- */
+    @keyframes slideUpFade {
       from {
         opacity: 0;
-        transform: translateY(15px);
+        transform: translateY(40px) scale(0.95);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes fadeInDown {
+      from {
+        opacity: 0;
+        transform: translateY(-20px);
       }
 
       to {
@@ -72,60 +87,17 @@
       }
     }
 
-    @keyframes popIn {
+    @keyframes pulseGlow {
       0% {
-        transform: scale(0.9);
-        opacity: 0;
-      }
-
-      100% {
-        transform: scale(1);
-        opacity: 1;
-      }
-    }
-
-    @keyframes ringShake {
-      0% {
-        transform: rotate(-15deg);
+        box-shadow: 0 0 15px var(--glow-color, rgba(0, 210, 255, 0.2));
       }
 
       50% {
-        transform: rotate(15deg);
+        box-shadow: 0 0 30px var(--glow-color, rgba(0, 210, 255, 0.5));
       }
 
       100% {
-        transform: rotate(-15deg);
-      }
-    }
-
-    @keyframes pulseMic {
-      0% {
-        transform: scale(1);
-        opacity: 1;
-      }
-
-      50% {
-        transform: scale(1.15);
-        opacity: 0.7;
-      }
-
-      100% {
-        transform: scale(1);
-        opacity: 1;
-      }
-    }
-
-    @keyframes pulseBg {
-      0% {
-        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4);
-      }
-
-      70% {
-        box-shadow: 0 0 0 10px rgba(0, 230, 118, 0);
-      }
-
-      100% {
-        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0);
+        box-shadow: 0 0 15px var(--glow-color, rgba(0, 210, 255, 0.2));
       }
     }
 
@@ -133,19 +105,20 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 30px;
+      margin-bottom: 40px;
       padding: 16px 24px;
       position: sticky;
-      top: 15px;
+      top: 20px;
       z-index: 100;
-      background: rgba(22, 26, 38, 0.85);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
+      background: rgba(16, 19, 26, 0.7);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       border-radius: var(--radius-lg);
       border: 1px solid var(--glass-border);
       box-shadow: var(--glass-shadow);
       flex-wrap: wrap;
       gap: 15px;
+      animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .btn {
@@ -155,60 +128,68 @@
       gap: 8px;
       font-weight: 700;
       font-size: 0.9rem;
-      padding: 10px 18px;
-      border-radius: var(--radius-sm);
+      padding: 12px 20px;
+      border-radius: var(--radius-md);
       cursor: pointer;
       transition: var(--transition);
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--glass-border);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+      border: 1px solid rgba(255, 255, 255, 0.1);
       color: var(--text-main);
       text-decoration: none;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     }
 
     .btn:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: rgba(255, 255, 255, 0.2);
+      background: linear-gradient(145deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
+      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.4);
     }
 
     .btn:active {
-      transform: scale(0.96);
+      transform: scale(0.95);
     }
 
     .header-title {
       margin: 0;
-      font-size: 1.25rem;
+      font-size: 1.35rem;
       display: flex;
       align-items: center;
       gap: 12px;
-      font-weight: 800;
+      font-weight: 900;
       letter-spacing: 0.5px;
+      background: linear-gradient(to right, #fff, #8b93a5);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
 
     .status-wrapper {
       display: flex;
       align-items: center;
-      gap: 10px;
-      background: rgba(0, 0, 0, 0.4);
-      padding: 8px 16px;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.5);
+      padding: 10px 20px;
       border-radius: 30px;
       border: 1px solid var(--glass-border);
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
     }
 
     .status-text {
       font-size: 0.85rem;
-      font-weight: 700;
+      font-weight: 800;
+      letter-spacing: 1px;
     }
 
     .status-dot {
-      width: 10px;
-      height: 10px;
+      width: 12px;
+      height: 12px;
       border-radius: 50%;
       transition: background 0.3s, box-shadow 0.3s;
     }
 
     .status-online {
       background: var(--success);
-      box-shadow: 0 0 10px var(--success);
+      box-shadow: 0 0 12px var(--success);
     }
 
     .status-offline {
@@ -219,85 +200,146 @@
     .banner {
       width: 100%;
       text-align: center;
-      padding: 14px;
+      padding: 16px;
       font-size: 0.95rem;
-      font-weight: 700;
+      font-weight: 800;
       border-radius: var(--radius-md);
-      margin-bottom: 24px;
+      margin-bottom: 30px;
       display: none;
-      animation: fadeIn 0.3s ease;
+      animation: fadeInDown 0.4s ease;
+      letter-spacing: 0.5px;
     }
 
     .banner.warning {
-      background: rgba(255, 187, 51, 0.15);
+      background: rgba(255, 187, 51, 0.1);
       color: var(--warning);
       border: 1px solid rgba(255, 187, 51, 0.3);
+      box-shadow: 0 4px 20px rgba(255, 187, 51, 0.1);
     }
 
     .banner.danger {
-      background: rgba(255, 68, 68, 0.15);
+      background: rgba(255, 68, 68, 0.1);
       color: var(--danger);
       border: 1px solid rgba(255, 68, 68, 0.3);
+      box-shadow: 0 4px 20px rgba(255, 68, 68, 0.1);
     }
 
+    /* --- IMPROVED GRID & CARDS --- */
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 20px;
-      margin-bottom: 40px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 24px;
+      margin-bottom: 50px;
     }
 
     .stat-card {
-      background: var(--surface);
+      position: relative;
+      background: linear-gradient(160deg, var(--surface-light) 0%, var(--surface) 100%);
       border-radius: var(--radius-lg);
-      padding: 24px 20px;
+      padding: 30px 20px;
       text-align: center;
-      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
       border: 1px solid var(--glass-border);
       transition: var(--transition);
       display: flex;
       flex-direction: column;
       justify-content: center;
       align-items: center;
+      overflow: hidden;
+      animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    }
+
+    /* Staggered entrance for grid items */
+    .stat-card:nth-child(1) {
+      animation-delay: 0.1s;
+    }
+
+    .stat-card:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .stat-card:nth-child(3) {
+      animation-delay: 0.3s;
+    }
+
+    .stat-card:nth-child(4) {
+      animation-delay: 0.4s;
+    }
+
+    .stat-card:nth-child(5) {
+      animation-delay: 0.5s;
+    }
+
+    .stat-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      background: var(--card-color, var(--text-muted));
+      opacity: 0.8;
+      transition: opacity 0.3s;
     }
 
     .stat-card:hover {
-      transform: translateY(-4px);
-      border-color: rgba(255, 255, 255, 0.15);
+      transform: translateY(-8px) scale(1.02);
+      border-color: var(--card-color, rgba(255, 255, 255, 0.3));
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6), 0 0 20px rgba(var(--card-color-rgb), 0.15);
+    }
+
+    .stat-card:hover::before {
+      opacity: 1;
+    }
+
+    .card-primary {
+      --card-color: var(--primary);
+      --card-color-rgb: 0, 210, 255;
+    }
+
+    .card-success {
+      --card-color: var(--success);
+      --card-color-rgb: 0, 230, 118;
+    }
+
+    .card-purple {
+      --card-color: var(--purple);
+      --card-color-rgb: 199, 146, 234;
+    }
+
+    .card-warning {
+      --card-color: var(--warning);
+      --card-color-rgb: 255, 187, 51;
     }
 
     .stat-card h3 {
-      margin: 0 0 10px 0;
+      margin: 0 0 12px 0;
       color: var(--text-muted);
       font-size: 0.85rem;
       text-transform: uppercase;
-      letter-spacing: 1px;
-      font-weight: 700;
+      letter-spacing: 1.5px;
+      font-weight: 800;
+      z-index: 2;
     }
 
     .stat-card p {
       margin: 0;
-      font-size: 3rem;
+      font-size: 3.5rem;
       font-weight: 900;
-      line-height: 1.1;
+      line-height: 1;
+      z-index: 2;
+      background: linear-gradient(135deg, #ffffff 0%, var(--card-color, #8b93a5) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
     }
 
-    .card-primary p {
-      color: var(--primary);
-    }
-
-    .card-success p {
-      color: var(--success);
-    }
-
-    .card-purple p {
-      color: var(--purple);
-    }
-
+    /* Speedometer Enhancements */
     .speedometer {
       position: relative;
-      width: 140px;
+      width: 150px;
       aspect-ratio: 2 / 1.15;
+      margin-top: 10px;
     }
 
     .speedo-svg {
@@ -320,39 +362,45 @@
       stroke-linecap: round;
       stroke-dasharray: 125.6;
       stroke-dashoffset: 125.6;
-      transition: stroke-dashoffset 0.8s ease, stroke 0.5s;
+      transition: stroke-dashoffset 1s cubic-bezier(0.175, 0.885, 0.32, 1.275), stroke 0.5s;
     }
 
     .speedo-text {
       position: absolute;
-      bottom: -5px;
+      bottom: -10px;
       width: 100%;
       text-align: center;
     }
 
     .speedo-text .val {
-      font-size: 2rem;
+      font-size: 2.2rem;
       font-weight: 900;
+      color: var(--text-main);
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
     }
 
     .speedo-text .lbl {
       font-size: 0.75rem;
       color: var(--text-muted);
-      font-weight: 600;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
 
+    /* --- IMPROVED TABLE --- */
     .section-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 15px;
+      margin-bottom: 20px;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 15px;
+      animation: slideUpFade 0.6s 0.6s both;
     }
 
     .section-title {
-      font-size: 1.15rem;
-      font-weight: 800;
+      font-size: 1.3rem;
+      font-weight: 900;
       margin: 0;
       color: var(--text-main);
     }
@@ -363,38 +411,39 @@
       background: var(--surface);
       border-radius: var(--radius-lg);
       border: 1px solid var(--glass-border);
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+      animation: slideUpFade 0.6s 0.7s both;
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 700px;
+      min-width: 750px;
       text-align: left;
     }
 
     th,
     td {
-      padding: 18px 20px;
+      padding: 20px 24px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      white-space: nowrap;
     }
 
     th {
-      color: var(--text-muted);
+      color: #fff;
       font-size: 0.8rem;
       text-transform: uppercase;
-      background: rgba(0, 0, 0, 0.2);
-      letter-spacing: 1px;
-      font-weight: 700;
+      background: rgba(255, 255, 255, 0.03);
+      letter-spacing: 1.5px;
+      font-weight: 800;
+      backdrop-filter: blur(10px);
     }
 
     tbody tr {
-      transition: background 0.2s;
+      transition: background 0.3s;
     }
 
     tbody tr:hover {
-      background: rgba(255, 255, 255, 0.03);
+      background: rgba(255, 255, 255, 0.04);
     }
 
     tr:last-child td {
@@ -402,63 +451,108 @@
     }
 
     .node-ident {
-      font-size: 1.05rem;
-      font-weight: 700;
+      font-size: 1.1rem;
+      font-weight: 800;
       color: var(--text-main);
+      margin-bottom: 4px;
     }
 
     .node-ip {
       font-size: 0.85rem;
       color: var(--text-muted);
-      margin-top: 4px;
+      font-family: monospace;
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 6px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+
+    /* Status Pills */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .badge-success {
+      background: rgba(0, 230, 118, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(0, 230, 118, 0.3);
+    }
+
+    .badge-warning {
+      background: rgba(255, 187, 51, 0.15);
+      color: var(--warning);
+      border: 1px solid rgba(255, 187, 51, 0.3);
+    }
+
+    .badge-danger {
+      background: rgba(255, 68, 68, 0.15);
+      color: var(--danger);
+      border: 1px solid rgba(255, 68, 68, 0.3);
+    }
+
+    .badge-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .badge-success .badge-dot {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .badge-warning .badge-dot {
+      background: var(--warning);
+      box-shadow: 0 0 8px var(--warning);
+    }
+
+    .badge-danger .badge-dot {
+      background: var(--danger);
+      box-shadow: 0 0 8px var(--danger);
     }
 
     .latency-container {
-      width: 100px;
-      height: 6px;
-      background: rgba(0, 0, 0, 0.5);
+      width: 120px;
+      height: 8px;
+      background: rgba(0, 0, 0, 0.6);
       border-radius: 10px;
       overflow: hidden;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.5);
     }
 
     .latency-bar {
       height: 100%;
       border-radius: 10px;
-      transition: width 0.5s ease, background 0.5s ease;
+      transition: width 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.5s ease;
     }
 
     .latency-text {
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       color: var(--text-muted);
-      font-weight: 600;
-    }
-
-    .telemetry-cell {
-      font-size: 0.95rem;
-      font-weight: 600;
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
-
-    .telemetry-cell span {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .status-cell {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .status-cell span {
-      font-size: 0.9rem;
       font-weight: 700;
     }
 
+    .battery-text {
+      font-weight: 800;
+      font-size: 1rem;
+      color: var(--text-main);
+      background: rgba(0, 210, 255, 0.1);
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      padding: 6px 12px;
+      border-radius: 8px;
+      display: inline-block;
+    }
+
+    /* --- MISC UI ELEMENTS --- */
     #toast {
       position: fixed;
       bottom: -100px;
@@ -466,19 +560,20 @@
       transform: translateX(-50%);
       background: var(--success);
       color: #000;
-      padding: 15px 25px;
+      padding: 16px 28px;
       border-radius: var(--radius-md);
-      font-weight: 800;
+      font-weight: 900;
       font-size: 1rem;
       z-index: 200000;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-      transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.6);
+      transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
     #toast.show {
-      bottom: 30px;
+      bottom: 40px;
     }
 
+    /* WebRTC & Modals (Restored styling with slight modern tweaks) */
     #operator-msg-modal {
       display: none;
       position: fixed;
@@ -500,15 +595,15 @@
     .msg-modal-content {
       background: var(--warning);
       color: #000;
-      padding: 30px;
-      border-radius: 15px;
+      padding: 35px;
+      border-radius: var(--radius-lg);
       border: 3px solid #ff9100;
-      max-width: 400px;
+      max-width: 420px;
       width: 90%;
       text-align: center;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
+      box-shadow: 0 25px 80px rgba(0, 0, 0, 0.8);
       transform: scale(0.8);
-      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
     #operator-msg-modal.show .msg-modal-content {
@@ -519,8 +614,8 @@
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.92);
-      backdrop-filter: blur(15px);
-      -webkit-backdrop-filter: blur(15px);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
       z-index: 100000;
       display: flex;
       align-items: center;
@@ -542,12 +637,12 @@
 
     .active-call-card {
       background: var(--surface);
-      padding: 30px;
-      border-radius: 24px;
+      padding: 35px;
+      border-radius: 28px;
       border: 2px solid var(--success);
       text-align: center;
-      box-shadow: 0 0 60px rgba(0, 230, 118, 0.25);
-      max-width: 350px;
+      box-shadow: 0 0 80px rgba(0, 230, 118, 0.2);
+      max-width: 360px;
       width: 90%;
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       pointer-events: auto;
@@ -559,10 +654,11 @@
       width: 280px;
       max-width: calc(100vw - 50px);
       text-align: left;
-      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+      box-shadow: 0 15px 50px rgba(0, 0, 0, 0.9);
       display: flex;
       flex-direction: column;
       gap: 10px;
+      border-width: 1px;
     }
 
     .call-card-header {
@@ -581,7 +677,7 @@
       font-weight: 800;
       color: var(--success);
       background: rgba(0, 230, 118, 0.15);
-      padding: 4px 10px;
+      padding: 6px 12px;
       border-radius: 20px;
       border: 1px solid rgba(0, 230, 118, 0.4);
     }
@@ -595,8 +691,8 @@
       border: none;
       color: #fff;
       font-size: 1.1rem;
-      width: 35px;
-      height: 35px;
+      width: 38px;
+      height: 38px;
       border-radius: 50%;
       cursor: pointer;
       transition: 0.2s;
@@ -625,21 +721,23 @@
     }
 
     .call-avatar {
-      font-size: 60px;
+      font-size: 65px;
       animation: pulseMic 1.5s infinite;
       margin: 0;
+      filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.5));
     }
 
     .call-overlay.minimized .call-avatar {
       font-size: 30px;
       animation: none;
+      filter: none;
     }
 
     .call-title {
       margin: 0;
       color: var(--success);
       font-weight: 900;
-      font-size: 1.5rem;
+      font-size: 1.6rem;
     }
 
     .call-overlay.minimized .call-title {
@@ -650,7 +748,7 @@
       color: var(--text-muted);
       margin: 5px 0 0 0;
       font-size: 0.95rem;
-      font-weight: 500;
+      font-weight: 600;
     }
 
     .call-overlay.minimized .call-subtitle {
@@ -661,20 +759,21 @@
       background: var(--danger);
       color: #fff;
       border: none;
-      padding: 16px 40px;
+      padding: 18px 40px;
       border-radius: 30px;
       font-weight: 900;
-      font-size: 1.1rem;
+      font-size: 1.15rem;
       cursor: pointer;
       width: 100%;
       text-transform: uppercase;
-      box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3);
+      box-shadow: 0 8px 25px rgba(255, 68, 68, 0.4);
       transition: transform 0.2s;
+      letter-spacing: 1px;
     }
 
     .btn-end-call:hover {
-      transform: scale(1.02);
-      box-shadow: 0 8px 25px rgba(255, 68, 68, 0.5);
+      transform: scale(1.03);
+      box-shadow: 0 12px 35px rgba(255, 68, 68, 0.6);
     }
 
     .call-overlay.minimized .btn-end-call {
@@ -698,16 +797,23 @@
 
       th,
       td {
-        padding: 14px 12px;
+        padding: 16px 14px;
       }
 
       .grid {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 15px;
       }
 
       .stat-card p {
-        font-size: 2.2rem;
+        font-size: 2.5rem;
       }
+
+      .stat-card:first-child {
+        grid-column: span 2;
+      }
+
+      /* Speedometer spans full width on mobile */
     }
   </style>
 </head>
@@ -724,7 +830,7 @@
         </svg>
         Return to Hub
       </button>
-      <h2 class="header-title">Operations Status</h2>
+      <h2 class="header-title">Network Intelligence</h2>
       <div class="status-wrapper">
         <span id="hub-status-text" class="status-text" style="color: var(--text-muted);">CONNECTING...</span>
         <span id="hub-status-dot" class="status-dot status-offline"></span>
@@ -743,8 +849,16 @@
         <h3>Hub Connection</h3>
         <div class="speedometer">
           <svg viewBox="0 0 100 55" class="speedo-svg">
+            <!-- Defs for Gradient -->
+            <defs>
+              <linearGradient id="speedoGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="var(--primary)" />
+                <stop offset="100%" stop-color="var(--success)" />
+              </linearGradient>
+            </defs>
             <path class="speedo-track" d="M 10 50 A 40 40 0 0 1 90 50" />
-            <path id="speedo-gauge" class="speedo-fill" d="M 10 50 A 40 40 0 0 1 90 50" />
+            <path id="speedo-gauge" class="speedo-fill" d="M 10 50 A 40 40 0 0 1 90 50"
+              style="stroke: url(#speedoGrad);" />
           </svg>
           <div class="speedo-text">
             <div id="hub-latency" class="val">--</div>
@@ -768,7 +882,7 @@
         <p id="today-scans">0</p>
       </div>
 
-      <div class="stat-card">
+      <div class="stat-card card-warning">
         <h3>Registrations</h3>
         <p id="tot-reg">0</p>
       </div>
@@ -776,8 +890,14 @@
 
     <section>
       <div class="section-header">
-        <h3 class="section-title">Connected Devices</h3>
-        <button class="btn" onclick="manualRefresh()">↻ Refresh</button>
+        <h3 class="section-title">Connected Devices Lifecycle</h3>
+        <button class="btn" onclick="manualRefresh()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+            stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.64-4.36" />
+          </svg>
+          Refresh Data
+        </button>
       </div>
 
       <div class="table-container">
@@ -786,15 +906,15 @@
             <tr>
               <th>Status</th>
               <th>Device Details</th>
-              <th>Battery Level</th>
-              <th>Last Seen</th>
+              <th>Power Level</th>
+              <th>Network Health</th>
             </tr>
           </thead>
           <tbody id="device-table-body">
             <tr>
               <td colspan="4"
-                style="text-align: center; color: var(--text-muted); padding: 40px; font-weight: 600; white-space: normal;">
-                Scanning network for connected devices...
+                style="text-align: center; color: var(--text-muted); padding: 50px; font-weight: 700; white-space: normal; font-size: 1.1rem;">
+                Scanning network for connected gateways...
               </td>
             </tr>
           </tbody>
@@ -803,34 +923,35 @@
     </section>
   </main>
 
+  <!-- Modals & Toasts -->
   <div id="toast">Message</div>
 
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
       <p id="operator-msg-text"
-        style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
+        style="font-size: 1.25rem; font-weight: 800; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
       <button onclick="closeOperatorMsg()"
-        style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: transform 0.2s;">
-        Acknowledge Message
+        style="padding: 16px 24px; background: #000; color: var(--warning); border:none; border-radius: 12px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 8px 25px rgba(0,0,0,0.4); transition: transform 0.2s;">
+        Acknowledge Order
       </button>
     </div>
   </div>
 
   <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
     <div class="active-call-card"
-      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+      style="border-color: var(--primary); box-shadow: 0 0 80px rgba(0, 210, 255, 0.3); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
       <div
-        style="font-size: 55px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
+        style="font-size: 60px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
         📞</div>
-      <h2 style="margin: 0 0 10px 0; color: var(--text-main); font-weight: 900;">Incoming Call</h2>
-      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Command Hub is
+      <h2 style="margin: 0 0 10px 0; color: var(--text-main); font-weight: 900; font-size: 1.8rem;">Incoming Call</h2>
+      <p style="color: var(--text-muted); margin-bottom: 35px; font-size: 1rem; font-weight: 600;">Command Hub is
         dispatching audio...</p>
       <div style="display: flex; gap: 15px; justify-content: center;">
         <button onclick="acceptCall()"
-          style="background: var(--success); color: #000; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
+          style="background: var(--success); color: #000; border: none; padding: 16px 28px; border-radius: 30px; font-weight: 900; font-size: 1.05rem; cursor: pointer; flex: 1; box-shadow: 0 8px 25px rgba(0, 230, 118, 0.4); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
         <button onclick="rejectCall()"
-          style="background: var(--danger); color: #fff; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+          style="background: var(--danger); color: #fff; border: none; padding: 16px 28px; border-radius: 30px; font-weight: 900; font-size: 1.05rem; cursor: pointer; flex: 1; box-shadow: 0 8px 25px rgba(255, 68, 68, 0.4); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
       </div>
     </div>
   </div>
@@ -904,7 +1025,10 @@
     }
 
     function manualRefresh() {
-      if (!isFetching) fetchStats();
+      if (!isFetching) {
+        showToast("Refreshing Data...");
+        fetchStats();
+      }
     }
 
     function getDeviceId() {
@@ -959,10 +1083,11 @@
       const quality = Math.max(5, Math.min(100, 100 - (ping / 10)));
       DOM.gauge.style.strokeDashoffset = 125.6 - (125.6 * (quality / 100));
 
-      if (ping < 100) DOM.gauge.style.stroke = "var(--success)";
-      else if (ping < 300) DOM.gauge.style.stroke = "var(--primary)";
-      else if (ping < 600) DOM.gauge.style.stroke = "var(--warning)";
-      else DOM.gauge.style.stroke = "var(--danger)";
+      if (ping >= 600) {
+        DOM.gauge.style.stroke = "var(--danger)";
+      } else {
+        DOM.gauge.style.stroke = "url(#speedoGrad)"; // Uses gradient for healthy pings
+      }
     }
 
     function renderTable(activeDevices) {
@@ -970,19 +1095,23 @@
       const deviceEntries = Object.entries(activeDevices);
 
       if (deviceEntries.length === 0) {
-        DOM.tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:40px; font-weight:600; white-space: normal;">No devices currently connected to the Hub.</td></tr>`;
+        DOM.tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:50px; font-weight:700; font-size:1.1rem; white-space: normal;">No devices currently connected to the Hub.</td></tr>`;
         return;
       }
 
-      deviceEntries.forEach(([deviceId, info]) => {
-        const secondsAgo = Math.round(Date.now() / 1000 - info.last_seen);
+      // Sort devices alphabetically by name for consistency
+      deviceEntries.sort((a, b) => (a[1].name || "").localeCompare(b[1].name || ""));
 
-        let statusColor = "var(--success)";
+      deviceEntries.forEach(([deviceId, info]) => {
+        const secondsAgo = Math.max(0, Math.round(Date.now() / 1000 - info.last_seen));
+
+        let statusClass = "badge-success";
         let statusText = "Online";
+        let colorVar = "var(--success)";
         let healthScore = 100;
 
-        if (secondsAgo > 10) { statusColor = "var(--warning)"; statusText = "Lagging"; healthScore = 60; }
-        if (secondsAgo > 20) { statusColor = "var(--danger)"; statusText = "Dropping"; healthScore = 20; }
+        if (secondsAgo > 10) { statusClass = "badge-warning"; statusText = "Lagging"; colorVar = "var(--warning)"; healthScore = 60; }
+        if (secondsAgo > 20) { statusClass = "badge-danger"; statusText = "Dropping"; colorVar = "var(--danger)"; healthScore = 20; }
 
         const safeName = escapeHTML(info.name);
         const batt = escapeHTML(info.battery || 'N/A');
@@ -990,9 +1119,9 @@
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td>
-            <div class="status-cell">
-              <span class="status-dot" style="background:${statusColor}; box-shadow: 0 0 8px ${statusColor}"></span> 
-              <span style="color:${statusColor};">${statusText}</span>
+            <div class="badge ${statusClass}">
+              <span class="badge-dot"></span> 
+              ${statusText}
             </div>
           </td>
           <td>
@@ -1000,13 +1129,11 @@
             <div class="node-ip">${escapeHTML(info.ip)}</div>
           </td>
           <td>
-            <div class="telemetry-cell">
-              <span style="color: var(--success);">🔋 ${batt}</span>
-            </div>
+            <div class="battery-text">🔋 ${batt}</div>
           </td>
           <td>
-            <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${statusColor};"></div></div>
-            <span class="latency-text">${secondsAgo}s ago</span>
+            <div class="latency-container"><div class="latency-bar" style="width: ${healthScore}%; background: ${colorVar}; box-shadow: 0 0 10px ${colorVar};"></div></div>
+            <span class="latency-text">Heartbeat: ${secondsAgo === 0 ? "Just now" : secondsAgo + "s ago"}</span>
           </td>
         `;
         fragment.appendChild(tr);
@@ -1094,10 +1221,11 @@
           DOM.hubStatusDot.className = "status-dot status-online";
           DOM.hubStatusDot.style.background = "";
 
-          DOM.scanners.innerText = Object.keys(data.active_devices || {}).length;
-          DOM.totReg.innerText = data.global_stats?.total_registrations || 0;
-          DOM.totScans.innerText = data.global_stats?.total_scans || 0;
-          DOM.todayScans.innerText = data.global_stats?.today_scans || 0;
+          // Simple counter animations for stats
+          animateValue(DOM.scanners, parseInt(DOM.scanners.innerText) || 0, Object.keys(data.active_devices || {}).length, 600);
+          animateValue(DOM.totReg, parseInt(DOM.totReg.innerText) || 0, data.global_stats?.total_registrations || 0, 600);
+          animateValue(DOM.totScans, parseInt(DOM.totScans.innerText) || 0, data.global_stats?.total_scans || 0, 600);
+          animateValue(DOM.todayScans, parseInt(DOM.todayScans.innerText) || 0, data.global_stats?.today_scans || 0, 600);
 
           renderTable(data.active_devices || {});
         } else {
@@ -1112,6 +1240,25 @@
       } finally {
         isFetching = false;
       }
+    }
+
+    function animateValue(obj, start, end, duration) {
+      if (start === end) {
+        obj.innerHTML = end;
+        return;
+      }
+      let startTimestamp = null;
+      const step = (timestamp) => {
+        if (!startTimestamp) startTimestamp = timestamp;
+        const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+        obj.innerHTML = Math.floor(progress * (end - start) + start);
+        if (progress < 1) {
+          window.requestAnimationFrame(step);
+        } else {
+          obj.innerHTML = end;
+        }
+      };
+      window.requestAnimationFrame(step);
     }
 
     let isCallMinimized = false;
@@ -1169,10 +1316,6 @@
       const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
-      if (window.location.hostname.includes("trycloudflare.com")) {
-        console.warn("⚠️ Cloudflare Tunnel Detected: Port 5002 for WebRTC audio may be blocked by Cloudflare unless explicitly routed.");
-      }
-
       try {
         wsCall = new WebSocket(wsUrl);
 
@@ -1192,30 +1335,20 @@
             }
             else if (data.type === 'client_muted') {
               if (localStream) {
-                localStream.getAudioTracks().forEach(track => {
-                  track.enabled = !data.muted;
-                });
+                localStream.getAudioTracks().forEach(track => { track.enabled = !data.muted; });
               }
             }
             else if (data.type === 'call_ended') {
               endCall(false);
             }
-          } catch (parseError) {
-            console.error("Failed to parse WebRTC data:", parseError);
-          }
+          } catch (parseError) { }
         };
 
         wsCall.onclose = (e) => {
-          console.log(`Voice server disconnected (Code: ${e.code}). Retrying in 5s...`);
           clearTimeout(wsReconnectTimer);
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
         };
-
-        wsCall.onerror = (error) => {
-          console.error("Voice WebSocket Connection Error.", error);
-        };
       } catch (e) {
-        console.error("Failed to initialize WebSocket:", e);
         clearTimeout(wsReconnectTimer);
         wsReconnectTimer = setTimeout(connectCallServer, 5000);
       }
@@ -1234,53 +1367,33 @@
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
 
-        peerConnection = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-        localStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream);
-        });
+        localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
 
         peerConnection.ontrack = (event) => {
-          if (!remoteAudio.srcObject) {
-            remoteAudio.srcObject = event.streams[0];
-          }
+          if (!remoteAudio.srcObject) { remoteAudio.srcObject = event.streams[0]; }
         };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
 
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-          wsCall.send(JSON.stringify({
-            type: 'offer',
-            sdp: peerConnection.localDescription.sdp
-          }));
+          wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
         }
 
       } catch (err) {
-        console.error("WebRTC Error:", err);
         alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection or Localhost.");
         rejectCall();
       }
     }
 
-    function rejectCall() {
-      endCall(true);
-    }
+    function rejectCall() { endCall(true); }
 
     function endCall(sendPing = true) {
-      if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-        localStream = null;
-      }
-      if (remoteAudio.srcObject) {
-        remoteAudio.srcObject = null;
-      }
+      if (peerConnection) { peerConnection.close(); peerConnection = null; }
+      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+      if (remoteAudio.srcObject) { remoteAudio.srcObject = null; }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
@@ -1314,10 +1427,7 @@
     });
 
     document.addEventListener("click", initAudio, { once: true });
-
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") fetchStats();
-    });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") fetchStats(); });
 
     window.addEventListener("DOMContentLoaded", () => {
       fetchStats();
