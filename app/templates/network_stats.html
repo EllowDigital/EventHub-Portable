@@ -5,7 +5,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Live Operations Status - TDE UP 2026</title>
-  <link rel="manifest" href="/manifest.json">
+  
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-96x96.png') }}?v=2.6" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon/favicon.svg') }}?v=2.6" />
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon/favicon.ico') }}?v=2.6" />
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}?v=2.6" />
+  <meta name="apple-mobile-web-app-title" content="EventHub" />
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
+
   <style>
     :root {
       --bg-pure-black: #0b0d14;
@@ -75,7 +82,6 @@
       }
     }
 
-    /* WebRTC Animations */
     @keyframes ringShake {
       0% {
         transform: rotate(-15deg);
@@ -471,7 +477,6 @@
       bottom: 30px;
     }
 
-    /* --- ROBUST MESSAGE MODAL CSS --- */
     #operator-msg-modal {
       display: none;
       position: fixed;
@@ -508,7 +513,6 @@
       transform: scale(1);
     }
 
-    /* --- MINIMIZABLE CALL UI STYLES --- */
     .call-overlay {
       position: fixed;
       inset: 0;
@@ -799,7 +803,6 @@
 
   <div id="toast">Message</div>
 
-  <!-- Persistent Operator Message Modal (FULLY FIXED REPAINT BUG) -->
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
@@ -812,7 +815,6 @@
     </div>
   </div>
 
-  <!-- WebRTC Incoming Call Modal -->
   <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
     <div class="active-call-card"
       style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
@@ -831,7 +833,6 @@
     </div>
   </div>
 
-  <!-- Minimizable WebRTC Active Call Modal -->
   <div id="active-call-overlay" class="call-overlay" style="display: none;">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
@@ -1075,7 +1076,6 @@
             DOM.testBanner.style.display = "none";
           }
 
-          // Show incoming Hub messages safely with display block + show class
           if (statusData.message) {
             const msgBox = document.getElementById("operator-msg-modal");
             document.getElementById("operator-msg-text").innerText = statusData.message;
@@ -1112,9 +1112,6 @@
       }
     }
 
-    // ==========================================
-    // MINIMIZABLE CALL UI LOGIC
-    // ==========================================
     let isCallMinimized = false;
 
     function toggleMinimizeCall() {
@@ -1130,10 +1127,6 @@
         btn.innerHTML = "🗕";
       }
     }
-
-    // ==========================================
-    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
-    // ==========================================
 
     let wsCall = null;
     let peerConnection = null;
@@ -1217,7 +1210,7 @@
         };
 
         wsCall.onerror = (error) => {
-          console.error("Voice WebSocket Connection Error. If on HTTPS, ensure port 5002 has a trusted certificate.", error);
+          console.error("Voice WebSocket Connection Error.", error);
         };
       } catch (e) {
         console.error("Failed to initialize WebSocket:", e);
@@ -1294,17 +1287,28 @@
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
-        wsCall.send(json.stringify({ type: 'call_ended' }));
+        wsCall.send(JSON.stringify({ type: 'call_ended' }));
       }
     }
 
-    // Prevent accidental page close while on a call
     window.addEventListener("beforeunload", function (e) {
       if (peerConnection && peerConnection.connectionState === "connected") {
         const confirmationMessage = "Leaving this page will end your active voice call. Continue?";
         (e || window.event).returnValue = confirmationMessage;
         return confirmationMessage;
       }
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      document.querySelectorAll('.menu-card').forEach(card => {
+        card.addEventListener('click', function (e) {
+          if (peerConnection && peerConnection.connectionState === 'connected') {
+            e.preventDefault();
+            window.open(this.href, '_blank');
+            showToast("Call Active: Page safely opened in a new tab.");
+          }
+        });
+      });
     });
 
     document.addEventListener("click", initAudio, { once: true });
