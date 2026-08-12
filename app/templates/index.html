@@ -5,7 +5,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>TDE UP 2026 — Operations Hub</title>
-  <link rel="manifest" href="/manifest.json">
+  
+  <!-- Flask Static Favicons & Web Manifest -->
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon-96x96.png') }}?v=2.6" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v=2.6" />
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}?v=2.6" />
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=2.6" />
+  <meta name="apple-mobile-web-app-title" content="EventHub" />
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
+
   <style>
     :root {
       --bg-dark: #0b0d14;
@@ -1101,7 +1109,6 @@
       }
     }
 
-    // Prevent accidental page close while on a call
     window.addEventListener("beforeunload", function (e) {
       if (peerConnection && peerConnection.connectionState === "connected") {
         const confirmationMessage = "Leaving this page will end your active voice call. Continue?";
@@ -1110,7 +1117,6 @@
       }
     });
 
-    // Intercept menu clicks to open in a new tab if a call is active
     document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll('.menu-card').forEach(card => {
         card.addEventListener('click', function (e) {

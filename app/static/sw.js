@@ -1,4 +1,4 @@
-const CACHE_NAME = 'eventhub-v2.6.1';
+const CACHE_NAME = 'eventhub-v2.6';
 const URLS_TO_CACHE = [
   '/',
   '/scanner',
