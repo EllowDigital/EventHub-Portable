@@ -21,6 +21,7 @@ import asyncio
 import ssl
 import array
 import fractions
+import ctypes
 from datetime import datetime, timezone, timedelta
 import tkinter as tk
 from tkinter import simpledialog
@@ -40,7 +41,6 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- NATIVE AUDIO ROUTING ---
 try:
     import sounddevice as sd
     import soundfile as sf
@@ -82,7 +82,6 @@ except ImportError:
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-# Global app references for WebRTC GUI syncing
 app_window = None
 GLOBAL_GROUP_CALL_ACTIVE = False
 GROUP_CALL_WINDOW = None
@@ -143,18 +142,15 @@ def _telemetry_worker():
         last_io = psutil.net_io_counters()
     except Exception:
         last_io = None
-    
     while not _global_shutdown_event.is_set():
         try:
             cpu = int(psutil.cpu_percent(interval=None))
             ram = int(psutil.virtual_memory().percent)
             stats = psutil.net_if_stats()
             up_ifaces = [iface for iface, s in stats.items() if s.isup and iface != 'lo' and not iface.startswith('Loopback')]
-            
             eth_iface = next((i for i in up_ifaces if 'ethernet' in i.lower() or 'eth' in i.lower()), None)
             usb_iface = next((i for i in up_ifaces if 'usb' in i.lower()), None)
             wifi_iface = next((i for i in up_ifaces if 'wi-fi' in i.lower() or 'wireless' in i.lower() or 'wlan' in i.lower()), None)
-            
             if eth_iface:
                 active_iface, iface_type = eth_iface, "Ethernet"
             elif usb_iface:
@@ -165,13 +161,10 @@ def _telemetry_worker():
                 active_iface, iface_type = up_ifaces[0], "Network"
             else:
                 active_iface, iface_type = None, "Offline"
-
             dl_mbps = ul_mbps = total_mbps = dl_mb = ul_mb = 0.0
             link_speed = 0
-            
             current_io = psutil.net_io_counters()
             current_time = time.time()
-            
             if last_io and current_io:
                 elapsed = current_time - last_time
                 if elapsed > 0:
@@ -180,11 +173,9 @@ def _telemetry_worker():
                     total_mbps = dl_mbps + ul_mbps
                 dl_mb = current_io.bytes_recv / 1048576
                 ul_mb = current_io.bytes_sent / 1048576
-            
             last_io, last_time = current_io, current_time
             if active_iface and active_iface in stats:
                 link_speed = stats[active_iface].speed
-
             with _telemetry_lock:
                 TELEMETRY_DATA.update({
                     "cpu": cpu, "ram": ram, "net_type": iface_type,
@@ -275,10 +266,6 @@ STATS_CACHE = {
 }
 stats_lock = threading.Lock()
 
-
-# ==============================================================================
-# --- ENTERPRISE AUDIO ENGINE (NATIVE MIXER & SPLITTER) ---
-# ==============================================================================
 CONNECTED_WS = {}
 ACTIVE_CALLS_DATA = {}
 _ws_loop = None
@@ -288,10 +275,6 @@ MIXER_LOCK = threading.Lock()
 GLOBAL_MIC_SUBSCRIBERS = set()
 
 class GlobalMicStream:
-    """
-    Grabs the Server's physical microphone exactly ONCE.
-    Splits the raw audio byte stream directly to multiple connected WebRTC connections.
-    """
     def __init__(self):
         self.stream = None
         if SOUNDDEVICE_AVAILABLE:
@@ -308,7 +291,7 @@ class GlobalMicStream:
         data = bytes(indata)
         for q in list(GLOBAL_MIC_SUBSCRIBERS):
             try:
-                if q.qsize() < 10:  # Drop frames if network lags, keeps voice real-time
+                if q.qsize() < 10:
                     q.put_nowait(data)
             except queue.Full:
                 pass
@@ -329,7 +312,6 @@ class WebRTCMicTrack(MediaStreamTrack):
         super().stop()
 
     async def recv(self):
-        # Generate silence if no mic is hooked up
         if not global_mic.stream:
             await asyncio.sleep(0.02)
             frame = av.AudioFrame(format='s16', layout='mono', samples=960)
@@ -339,7 +321,6 @@ class WebRTCMicTrack(MediaStreamTrack):
             self.pts += 960
             return frame
 
-        # Fetch byte data from the global splitter and push it into the WebRTC wrapper
         data = await asyncio.get_event_loop().run_in_executor(None, self.q.get)
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -349,19 +330,13 @@ class WebRTCMicTrack(MediaStreamTrack):
         self.pts += 960
         return frame
 
-
 def _global_audio_playback_worker():
-    """
-    Dedicated unblocked hardware thread. Merges multiple incoming audio channels 
-    into a single stream perfectly, preventing 'Device Busy' crashes during Group Calls.
-    """
     if not SOUNDDEVICE_AVAILABLE: return
     try:
         with sd.RawOutputStream(samplerate=48000, channels=1, dtype='int16', blocksize=960) as stream:
             while not _global_shutdown_event.is_set():
                 with MIXER_LOCK:
                     channels = list(GLOBAL_AUDIO_MIXER.values())
-                    # Flush the channel data so stale audio doesn't echo
                     for k in list(GLOBAL_AUDIO_MIXER.keys()):
                         GLOBAL_AUDIO_MIXER[k] = np.zeros(960, dtype=np.int16)
 
@@ -369,7 +344,6 @@ def _global_audio_playback_worker():
                     stream.write(np.zeros(960, dtype=np.int16).tobytes())
                     continue
 
-                # Add all active channels together, hard-clip at 16-bit bounds to stop crackling
                 mixed = np.zeros(960, dtype=np.int32)
                 for frame in channels:
                     mixed += frame
@@ -380,7 +354,6 @@ def _global_audio_playback_worker():
         logging.error(f"Global Hardware Mixer Error: {e}")
 
 threading.Thread(target=_global_audio_playback_worker, daemon=True).start()
-
 
 async def cleanup_call(device_id):
     if device_id in ACTIVE_CALLS_DATA:
@@ -401,7 +374,6 @@ async def cleanup_call(device_id):
     if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
         app_window.gui_queue.put(lambda: app_window.close_call_ui(device_id))
 
-
 async def signaling_handler(websocket, path=None):
     global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW
     try:
@@ -419,7 +391,6 @@ async def signaling_handler(websocket, path=None):
             
         CONNECTED_WS[device_id] = websocket
         
-        # Late-Join Group Call Detection
         if GLOBAL_GROUP_CALL_ACTIVE:
             try:
                 await websocket.send(json.dumps({"type": "incoming_call"}))
@@ -443,7 +414,6 @@ async def signaling_handler(websocket, path=None):
                             except Exception as e:
                                 logging.error(f"Failed to attach Native Mic to WebRTC: {e}")
 
-                        # Standardize any incoming format instantly to 48kHz Mono 16-bit
                         resampler = av.AudioResampler(format='s16', layout='mono', rate=48000)
 
                         @pc.on("track")
@@ -458,18 +428,13 @@ async def signaling_handler(websocket, path=None):
                                             for f in frames:
                                                 data_bytes = f.planes[0].to_bytes()
                                                 samples = np.frombuffer(data_bytes, dtype=np.int16)
-                                                
-                                                # Inject this device's audio into the master output mix
                                                 with MIXER_LOCK:
                                                     GLOBAL_AUDIO_MIXER[device_id] = samples
-                                                
-                                                # Beautiful RMS Volume Analysis for lively UI meter
                                                 try:
                                                     rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
-                                                    if rms < 150: # Intelligent Noise Floor Gate
+                                                    if rms < 150:
                                                         vol_percent = 0
                                                     else:
-                                                        # Curve so normal speaking bounces happily
                                                         vol_percent = min(100, int((rms / 4000.0) * 100)) 
                                                     
                                                     if app_window:
@@ -479,7 +444,6 @@ async def signaling_handler(websocket, path=None):
                                                             app_window.gui_queue.put(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
                                                 except Exception:
                                                     pass
-                                                    
                                     except Exception:
                                         pass
 
@@ -554,8 +518,6 @@ def start_webrtc_server():
         logging.error(f"WebRTC Server failed to boot loop: {e}")
 
 threading.Thread(target=start_webrtc_server, daemon=True).start()
-
-# ==============================================================================
 
 def get_cached_sessions():
     global DB_SESSIONS_CACHE, _db_cache_last_failure
@@ -1413,6 +1375,14 @@ class ServerHub(ttk.Window):
         ww, wh = max(1024, min(1600, int(sw * 0.90))), max(600, min(900, int(sh * 0.90)))
         self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
         self.minsize(1024, 600)
+        
+        icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except tk.TclError:
+                pass
+
         self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
@@ -1435,7 +1405,6 @@ class ServerHub(ttk.Window):
         self._meter_cache = {}
         self._context_device_id = None
         
-        # Track active Call GUI popups
         self.active_call_windows = {}
 
         global gui_log_callback
@@ -1520,7 +1489,6 @@ class ServerHub(ttk.Window):
             meter = GROUP_CALL_WINDOW['meter']
             if meter.winfo_exists():
                 curr = meter['value']
-                # Fast attack, slow release smoothing
                 val = volume if volume > curr else curr - ((curr - volume) * 0.15)
                 meter.configure(value=val)
                 if val > 75:
@@ -1612,7 +1580,6 @@ class ServerHub(ttk.Window):
             meter = self.active_call_windows[device_id]['meter']
             if meter.winfo_exists():
                 curr = meter['value']
-                # Fast attack, slow release smoothing
                 val = volume if volume > curr else curr - ((curr - volume) * 0.15)
                 meter.configure(value=val)
                 if val > 75:
@@ -2148,7 +2115,6 @@ class ServerHub(ttk.Window):
         self.btn_broadcast = ttk.Button(devices_header_row, text="📢 Broadcast to All", bootstyle="warning-outline", command=self._prompt_broadcast_message)
         self.btn_broadcast.pack(side=RIGHT, padx=(10, 0))
         
-        # --- NEW: Group Call Button ---
         self.btn_group_call = ttk.Button(devices_header_row, text="📞 Group Call All", bootstyle="success-outline", command=self._prompt_group_call)
         self.btn_group_call.pack(side=RIGHT, padx=(10, 0))
         
@@ -2594,5 +2560,11 @@ class ServerHub(ttk.Window):
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
 
 if __name__ == "__main__":
+    if os.name == 'nt':
+        try:
+            my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.hub")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
+        except Exception:
+            pass
     app_window = ServerHub()
     app_window.mainloop()
