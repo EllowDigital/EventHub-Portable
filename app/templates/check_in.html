@@ -900,7 +900,6 @@
       box-shadow: 0 2px 5px rgba(0, 210, 255, 0.3);
     }
 
-    /* --- ROBUST MESSAGE MODAL CSS --- */
     #operator-msg-modal {
       display: none;
       position: fixed;
@@ -911,7 +910,6 @@
       align-items: center;
       justify-content: center;
       z-index: 999999;
-      /* Supreme Z-index */
       opacity: 0;
       transition: opacity 0.3s ease;
     }
@@ -938,7 +936,6 @@
       transform: scale(1);
     }
 
-    /* --- MINIMIZABLE CALL UI STYLES --- */
     .call-overlay {
       position: fixed;
       inset: 0;
@@ -1175,7 +1172,6 @@
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
           <span>Lens Zoom</span>
-          <span id="auto-zoom-badge" class="auto-zoom-badge">Auto-Focusing</span>
           <span id="zoom-val-display">1.0x</span>
         </div>
         <div class="zoom-controls-row">
@@ -1221,7 +1217,6 @@
     </div>
   </div>
 
-  <!-- Persistent Operator Message Modal (FULLY FIXED REPAINT BUG) -->
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
@@ -1234,7 +1229,6 @@
     </div>
   </div>
 
-  <!-- WebRTC Incoming Call Modal -->
   <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
     <div class="active-call-card"
       style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
@@ -1253,7 +1247,6 @@
     </div>
   </div>
 
-  <!-- NEW Minimizable WebRTC Active Call Modal -->
   <div id="active-call-overlay" class="call-overlay" style="display: none;">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
@@ -1342,7 +1335,8 @@
 
     let lastScannedId = ""; let lastScanTime = 0; const DEBOUNCE_MS = 4000;
 
-    const scanConfig = { fps: 30, qrbox: { width: 250, height: 250 }, formatsToSupport: [0], aspectRatio: 1.0, useBarCodeDetectorIfSupported: true };
+    // OPTIMIZATION: Reduced FPS from 30 to 15 to significantly improve UI lag and device battery usage
+    const scanConfig = { fps: 15, qrbox: { width: 250, height: 250 }, formatsToSupport: [0], aspectRatio: 1.0, useBarCodeDetectorIfSupported: true };
 
     async function requestCameraPermissionNatively() {
       try {
@@ -1395,7 +1389,9 @@
           document.getElementById("scan-overlay").style.display = "block";
           document.getElementById("viewfinder-corners").style.display = "block";
           setTimeout(initAdvancedCameraControls, 1200);
-          startAutoZoomSweep();
+
+          // OPTIMIZATION: StartAutoZoomSweep completely removed here. Re-applying camera hardware 
+          // constraints repeatedly was causing severe lag and stuttering on mobile devices.
         } catch (err) {
           document.getElementById("permission-overlay").style.display = "flex";
           btn.innerHTML = "▶ Resume Scanner"; btn.classList.add("paused");
@@ -1433,7 +1429,6 @@
       zoomTarget = Math.max(minZoom, Math.min(maxZoom, zoomTarget + delta));
       document.getElementById("zoom-slider").value = zoomTarget;
       document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
-      resetAutoZoomTimer();
       applyDebouncedZoom();
     }
 
@@ -1456,33 +1451,11 @@
       if (e.deltaY < 0) adjustZoom(0.1); else adjustZoom(-0.1);
     }, { passive: false });
 
-    function startAutoZoomSweep() {
-      let toggle = false;
-      autoZoomInterval = setInterval(() => {
-        if (!isCameraActive || isProcessing) return;
-        const badge = document.getElementById("auto-zoom-badge");
-        badge.style.opacity = 1;
-        let newZoom = toggle ? minZoom : minZoom + (maxZoom - minZoom) * 0.2;
-        zoomTarget = Math.max(minZoom, Math.min(maxZoom, newZoom));
-        document.getElementById("zoom-slider").value = zoomTarget;
-        document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
-        applyDebouncedZoom();
-        toggle = !toggle;
-        setTimeout(() => { badge.style.opacity = 0; }, 800);
-      }, 5000);
-    }
-
-    function resetAutoZoomTimer() {
-      clearInterval(autoZoomInterval);
-      setTimeout(startAutoZoomSweep, 10000);
-    }
-
     async function stopHardware() {
       if (isCameraTransitioning) return;
       if (html5QrCode && isCameraActive) {
         isCameraTransitioning = true;
         try {
-          clearInterval(autoZoomInterval);
           if (html5QrCode.getState() === 2) await html5QrCode.stop();
           isCameraActive = false;
           const btn = document.getElementById("camera-toggle-btn");
@@ -1543,10 +1516,16 @@
 
     function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Scanner"; }
 
+    // BUG FIX: Inject '.show' class after changing to flex so CSS opacity transitions properly triggers.
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
-      if (!name) document.getElementById("device-modal").style.display = "flex";
-      else document.getElementById("display-device-name").textContent = name;
+      if (!name) {
+        const modal = document.getElementById("device-modal");
+        modal.style.display = "flex";
+        setTimeout(() => modal.classList.add("show"), 10);
+      } else {
+        document.getElementById("display-device-name").textContent = name;
+      }
     }
 
     function saveDeviceName() {
@@ -1554,14 +1533,20 @@
       if (val) {
         localStorage.setItem("hub_device_name", val);
         document.getElementById("display-device-name").textContent = val;
-        document.getElementById("device-modal").style.display = "none";
+
+        const modal = document.getElementById("device-modal");
+        modal.classList.remove("show");
+        setTimeout(() => modal.style.display = "none", 300);
+
         syncServerStatus();
       }
     }
 
     function promptDeviceName() {
       document.getElementById("device-name-input").value = getDeviceName();
-      document.getElementById("device-modal").style.display = "flex";
+      const modal = document.getElementById("device-modal");
+      modal.style.display = "flex";
+      setTimeout(() => modal.classList.add("show"), 10);
     }
 
     function getOfflineQueue() { return JSON.parse(localStorage.getItem("offline_scans") || "[]"); }
@@ -1647,9 +1632,13 @@
           try {
             const data = await response.json();
 
-            if (data.canonical_name && data.canonical_name !== getDeviceName() && data.canonical_name !== "Unknown Device") {
-              localStorage.setItem("hub_device_name", data.canonical_name);
-              document.getElementById("display-device-name").textContent = data.canonical_name;
+            // BUG FIX: Strictly checks incoming server renamed labels and updates DOM reliably.
+            if (data.canonical_name && data.canonical_name !== "Unknown Device") {
+              const currentLocalName = localStorage.getItem("hub_device_name");
+              if (data.canonical_name !== currentLocalName) {
+                localStorage.setItem("hub_device_name", data.canonical_name);
+                document.getElementById("display-device-name").textContent = data.canonical_name;
+              }
             }
 
             if (data.test_mode) { testBanner.style.display = "block"; testDate.textContent = escapeHTML(data.test_date) || "Unknown"; }
@@ -1673,7 +1662,7 @@
 
     function processCheckin(identifier, type = "id") {
       if (isProcessing) return;
-      isProcessing = true; clearInterval(autoZoomInterval);
+      isProcessing = true;
 
       const payload = {
         attendee_id: identifier, search_type: type, device_name: getDeviceName(), device_id: getDeviceId(), offline_scan_time: new Date().toISOString(),
@@ -1704,7 +1693,7 @@
       else card.className = "res-error show";
 
       playAudioTone(type); clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => { card.classList.remove("show"); isProcessing = false; resetAutoZoomTimer(); }, 3500);
+      toastTimeout = setTimeout(() => { card.classList.remove("show"); isProcessing = false; }, 3500);
     }
 
     function onScanSuccess(decoded) {
@@ -1718,9 +1707,6 @@
       processCheckin(id, "id");
     }
 
-    // ==========================================
-    // MINIMIZABLE CALL UI LOGIC
-    // ==========================================
     let isCallMinimized = false;
 
     function toggleMinimizeCall() {
@@ -1736,10 +1722,6 @@
         btn.innerHTML = "🗕";
       }
     }
-
-    // ==========================================
-    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
-    // ==========================================
 
     let wsCall = null;
     let peerConnection = null;
@@ -1901,7 +1883,6 @@
       }
     }
 
-    // Intercept Back button if on a call
     document.getElementById('nav-hub-btn').addEventListener('click', function (e) {
       if (peerConnection && peerConnection.connectionState === 'connected') {
         e.preventDefault();
