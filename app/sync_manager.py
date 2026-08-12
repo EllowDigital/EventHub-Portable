@@ -7,8 +7,8 @@ import threading
 import queue
 from datetime import datetime, timezone
 import tkinter as tk
+import ctypes
 
-# PyMySQL provides a pure-Python MySQL driver.
 import pymysql
 pymysql.install_as_MySQLdb()
 
@@ -18,8 +18,6 @@ import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 from ttkbootstrap.dialogs import Messagebox
 from ttkbootstrap.widgets.tooltip import ToolTip
-
-# Safely track changes merged from the cloud
 from sqlalchemy.orm.attributes import flag_modified
 
 try:
@@ -27,18 +25,11 @@ try:
 except ModuleNotFoundError:
     from schema import Attendee, OfflineKioskAttendee, get_database_sessions
 
-
-# ==============================================================================
-# 24/7 STABILITY: GLOBAL CRASH HANDLER
-# ==============================================================================
 def global_exception_handler(exc_type, exc_value, exc_traceback):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc_type, exc_value, exc_traceback))
 
 tk.Tk.report_callback_exception = global_exception_handler
 
-# ==============================================================================
-# PATHS & CONFIG
-# ==============================================================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
 SECRETS_PATH = os.path.join(CONFIG_DIR, 'secrets.json')
@@ -62,12 +53,7 @@ PUSH_BATCH_RETRIES = 3
 PULL_PAGE_RETRIES = 3
 PULL_COMMIT_BATCH_SIZE = 250
 
-
-# ==============================================================================
-# SMOOTH UI ANIMATION ENGINE (LERP)
-# ==============================================================================
 class AnimatedMeter:
-    """Provides smooth 60 FPS transitions for ttk.Meter widgets"""
     def __init__(self, meter_widget):
         self.meter = meter_widget
         self.current_val = 0.0
@@ -84,16 +70,11 @@ class AnimatedMeter:
             self.current_val = self.target_val
         self.meter.configure(amountused=int(round(self.current_val)))
 
-
-# ==============================================================================
-# CANONICAL CHECK-IN DAY HANDLING
-# ==============================================================================
 def _build_portal_key_map():
     mapping = {}
     for iso_day in EVENT_DAYS:
         dt = datetime.strptime(iso_day, "%Y-%m-%d")
         portal_key = f"{dt.day} {dt.strftime('%B')}" 
-        
         mapping[iso_day.lower()] = portal_key
         mapping[iso_day] = portal_key
         mapping[portal_key.lower()] = portal_key
@@ -149,9 +130,6 @@ def _merge_checkin_history(local_history, cloud_history):
                 merged[day] = entry
     return merged
 
-# ==============================================================================
-# RETRY HELPER 
-# ==============================================================================
 def _with_retries(fn, attempts=3, base_delay=1.5, on_retry=None):
     last_exc = None
     for attempt in range(1, attempts + 1):
@@ -165,11 +143,7 @@ def _with_retries(fn, attempts=3, base_delay=1.5, on_retry=None):
                 time.sleep(base_delay * attempt)
     raise last_exc
 
-# ==============================================================================
-# ROBUST THREAD-SAFE LOGGING HANDLER
-# ==============================================================================
 class TkinterLogHandler(logging.Handler):
-    """Pipes background thread logs safely into the Tkinter main loop via Queue"""
     def __init__(self, gui_queue, treeview):
         super().__init__()
         self.gui_queue = gui_queue
@@ -179,11 +153,9 @@ class TkinterLogHandler(logging.Handler):
         try: msg = self.format(record)
         except Exception: msg = record.getMessage()
         time_str = datetime.fromtimestamp(record.created).strftime('%H:%M:%S')
-
         tag = 'info'
         if record.levelno >= logging.ERROR: tag = 'error'
         elif record.levelno >= logging.WARNING: tag = 'warning'
-
         self.gui_queue.put(lambda: self._insert_log(time_str, record.levelname, msg, tag))
 
     def _insert_log(self, time_str, level, msg, tag):
@@ -204,12 +176,9 @@ def load_supabase_client() -> Client:
         with open(SECRETS_PATH, 'r') as f: secrets = json.load(f)
     except json.JSONDecodeError as e:
         raise ValueError(f"config/secrets.json is not valid JSON: {e}")
-
     url = secrets.get("SUPABASE_URL")
     key = secrets.get("SUPABASE_KEY")
     if not url or not key: raise ValueError("SUPABASE_URL / SUPABASE_KEY are empty.")
-    
-    # FIX: Use ClientOptions object instead of a raw dictionary
     opts = ClientOptions(postgrest_client_timeout=15, schema='public')
     return create_client(url, key, options=opts)
 
@@ -218,9 +187,6 @@ class SyncState(enum.Enum):
     SYNCING = "SYNCING"
     ERROR = "ERROR"
 
-# ==============================================================================
-# HELPERS
-# ==============================================================================
 def _format_day_label(iso_date):
     try:
         dt = datetime.strptime(iso_date, "%Y-%m-%d")
@@ -259,9 +225,6 @@ def _compute_sync_health(stats):
     healthy = max(total - problem, 0)
     return round((healthy / total) * 100)
 
-# ==============================================================================
-# CORE SYNC MANAGER
-# ==============================================================================
 class SyncManager:
     def __init__(self):
         self.SessionMySQL = None
@@ -353,10 +316,8 @@ class SyncManager:
         local_record.state = cloud_data.get('state') or local_record.state
         local_record.pincode = cloud_data.get('pincode') or local_record.pincode
         local_record.photo_url = cloud_data.get('photo_url') or local_record.photo_url
-        
         local_record.needs_sheet_sync = cloud_data.get('needs_sheet_sync', local_record.needs_sheet_sync)
         if hasattr(local_record, 'needs_local_sync'): local_record.needs_local_sync = False
-            
         local_record.updated_at = cloud_updated_at
         local_record.needs_cloud_sync = False
 
@@ -396,12 +357,10 @@ class SyncManager:
             att_dicts = [{c.name: getattr(m, c.name) for c in m.__table__.columns} for m in mysql_attendees]
             sqlite_session.query(Attendee).delete()
             if att_dicts: sqlite_session.bulk_insert_mappings(Attendee, att_dicts)
-
             mysql_kiosk = mysql_session.query(OfflineKioskAttendee).all()
             kiosk_dicts = [{c.name: getattr(m, c.name) for c in m.__table__.columns} for m in mysql_kiosk]
             sqlite_session.query(OfflineKioskAttendee).delete()
             if kiosk_dicts: sqlite_session.bulk_insert_mappings(OfflineKioskAttendee, kiosk_dicts)
-
             sqlite_session.commit()
             logging.info(f"Mirror complete: {len(att_dicts)} + {len(kiosk_dicts)} records backed up.")
         except Exception as e:
@@ -426,29 +385,24 @@ class SyncManager:
             self.state = SyncState.ERROR
             self.last_error = msg
             return False
-
         session = self.SessionMySQL()
         try:
             pending = (session.query(Attendee).filter_by(needs_cloud_sync=True).all() +
                        session.query(OfflineKioskAttendee).filter_by(needs_cloud_sync=True).all())
-
             if not pending:
                 logging.info("No records require pushing.")
                 self.state = SyncState.IDLE
                 self.last_error = None
                 self._record_sync_success()
                 return True
-
             pushable = [r for r in pending if str(r.id) not in self.conflicts]
             blocked_count = len(pending) - len(pushable)
             if blocked_count: logging.warning(f"{blocked_count} record(s) skipped — resolve their conflicts first.")
-
             if not pushable:
                 self.state = SyncState.IDLE
                 self.last_error = None
                 self._record_sync_success()
                 return True
-
             snapshot = {r.id: (r.updated_at, self._build_push_payload(r), isinstance(r, OfflineKioskAttendee)) for r in pushable}
         except Exception as e:
             session.rollback()
@@ -458,23 +412,19 @@ class SyncManager:
             return False
         finally:
             session.close()
-
         try: supabase = load_supabase_client()
         except Exception as e:
             msg = f"Could not reach Supabase: {e}"
             logging.error(msg)
             self.state = SyncState.ERROR; self.last_error = msg
             return False
-
         payloads = [p for (_, p, _) in snapshot.values()]
         pushed_ids, failed_ids = self._upsert_with_fallback(supabase, payloads)
-
         if not pushed_ids and failed_ids:
             msg = f"Cloud rejected all {len(failed_ids)} record(s)."
             logging.error(msg)
             self.state = SyncState.ERROR; self.last_error = msg
             return False
-
         session = self.SessionMySQL()
         cleared, changed_again = 0, 0
         try:
@@ -495,12 +445,10 @@ class SyncManager:
             self.state = SyncState.ERROR; self.last_error = msg
             return False
         finally: session.close()
-
         summary = f"Pushed {cleared} record(s)."
         if changed_again: summary += f" {changed_again} changed mid-sync."
         if failed_ids: logging.warning(summary + f" {len(failed_ids)} failed.")
         else: logging.info(summary)
-
         self.mirror_mysql_to_sqlite()
         self.state = SyncState.IDLE; self.last_error = None
         self._record_sync_success()
@@ -514,7 +462,6 @@ class SyncManager:
             if response.data: return [p["id"] for p in payloads], []
         except Exception as e:
             logging.warning(f"Batch push failed ({e}); isolating record-by-record.")
-
         pushed_ids, failed_ids = [], []
         for payload in payloads:
             try:
@@ -542,21 +489,18 @@ class SyncManager:
             logging.error(msg)
             self.state = SyncState.ERROR; self.last_error = msg
             return False
-
         try: supabase = load_supabase_client()
         except Exception as e:
             msg = f"Could not reach Supabase: {e}"
             logging.error(msg)
             self.state = SyncState.ERROR; self.last_error = msg
             return False
-
         try: cloud_records = self._fetch_all_cloud_records(supabase)
         except Exception as e:
             msg = f"Could not fetch data: {e}"
             logging.error(msg)
             self.state = SyncState.ERROR; self.last_error = msg
             return False
-
         self.conflicts = {}
         if not cloud_records:
             logging.info("Cloud has no records yet.")
@@ -564,10 +508,8 @@ class SyncManager:
             self.state = SyncState.IDLE; self.last_error = None
             self._record_sync_success()
             return True
-
         pulled = conflicts_found = skipped_errors = 0
         pulled_ids_to_clear = []
-
         for batch_start in range(0, len(cloud_records), PULL_COMMIT_BATCH_SIZE):
             batch = cloud_records[batch_start: batch_start + PULL_COMMIT_BATCH_SIZE]
             session = self.SessionMySQL()
@@ -588,7 +530,6 @@ class SyncManager:
                 session.rollback()
                 logging.error(f"Batch of {len(batch)} failed to commit: {e}")
             finally: session.close()
-
         if pulled_ids_to_clear:
             try:
                 for i in range(0, len(pulled_ids_to_clear), 200):
@@ -597,14 +538,12 @@ class SyncManager:
                 logging.info(f"Cleared 'needs_local_sync' flag on cloud for {len(pulled_ids_to_clear)} records.")
             except Exception as e:
                 logging.error(f"Failed to clear 'needs_local_sync' on cloud: {e}")
-
         self._save_conflicts()
         parts = [f"{pulled} updated"]
         if conflicts_found: parts.append(f"{conflicts_found} conflict(s) need review")
         if skipped_errors: parts.append(f"{skipped_errors} skipped due to errors")
         log_fn = logging.warning if (conflicts_found or skipped_errors) else logging.info
         log_fn("Pull complete: " + ", ".join(parts) + ".")
-
         self.mirror_mysql_to_sqlite()
         self.state = SyncState.IDLE; self.last_error = None
         self._record_sync_success()
@@ -633,18 +572,14 @@ class SyncManager:
     def _apply_one_cloud_record(self, session, cloud_data):
         cloud_id = cloud_data.get('id')
         if not cloud_id: raise ValueError("cloud record is missing its 'id' field")
-
         local_record = session.query(Attendee).filter_by(id=cloud_id).with_for_update().first()
         if not local_record:
             local_record = session.query(OfflineKioskAttendee).filter_by(id=cloud_id).with_for_update().first()
-
         cloud_updated_at = self._parse_cloud_timestamp(cloud_data.get('updated_at'))
         cloud_created_at = self._parse_cloud_timestamp(cloud_data.get('created_at'))
-
         if local_record:
             local_record.checkin_history = _merge_checkin_history(local_record.checkin_history, cloud_data.get('checkin_history', {}))
             flag_modified(local_record, "checkin_history")
-
             if local_record.needs_cloud_sync:
                 local_updated = local_record.updated_at
                 if local_updated and cloud_updated_at > local_updated:
@@ -659,13 +594,11 @@ class SyncManager:
                         }
                         return "conflict"
                 return "skipped" 
-
             if not local_record.updated_at or cloud_updated_at > local_record.updated_at:
                 self._apply_cloud_fields(local_record, cloud_data, cloud_updated_at)
                 if not local_record.created_at: local_record.created_at = cloud_created_at
                 return "pulled"
             return "skipped"
-
         new_attendee = Attendee(
             id=cloud_id, attendee_id=cloud_data.get('attendee_id') or str(cloud_id),
             full_name=cloud_data.get('full_name') or 'Unknown', mobile=cloud_data.get('mobile') or '0000000000',
@@ -703,16 +636,13 @@ class SyncManager:
         conflict = self.conflicts.get(conflict_id)
         if not conflict: return False
         if not self.SessionMySQL: return False
-
         session = self.SessionMySQL()
         try:
             record = session.query(Attendee).filter_by(id=conflict_id).with_for_update().first()
             if not record: record = session.query(OfflineKioskAttendee).filter_by(id=conflict_id).with_for_update().first()
-
             if not record:
                 del self.conflicts[conflict_id]; self._save_conflicts()
                 return True
-
             if keep == "cloud":
                 self._apply_cloud_fields(record, conflict["cloud_snapshot"], conflict["cloud_updated_at"])
                 logging.info(f"Conflict resolved for {record.attendee_id}: kept CLOUD version.")
@@ -720,7 +650,6 @@ class SyncManager:
                 record.needs_cloud_sync = True
                 logging.info(f"Conflict resolved for {record.attendee_id}: kept LOCAL version.")
             else: return False
-
             session.commit()
             del self.conflicts[conflict_id]; self._save_conflicts()
             return True
@@ -745,37 +674,29 @@ class SyncManager:
             "day_counts": {d: 0 for d in EVENT_DAYS},
         }
         if not self.SessionMySQL: return empty
-
         mysql_session = self.SessionMySQL()
         sqlite_session = self.SessionSQLite() if self.SessionSQLite else None
-        
         try:
             total_att = mysql_session.query(Attendee).count()
             kiosk_regs = mysql_session.query(OfflineKioskAttendee).count()
-            
             pending_main = mysql_session.query(Attendee).filter_by(needs_cloud_sync=True).count()
             pending_kiosk = mysql_session.query(OfflineKioskAttendee).filter_by(needs_cloud_sync=True).count()
             pending_push = pending_main + pending_kiosk
-
             total_sqlite = 0
             if sqlite_session:
                 total_sqlite = sqlite_session.query(Attendee).count() + sqlite_session.query(OfflineKioskAttendee).count()
-
             day_counts = {d: 0 for d in EVENT_DAYS}
             checked_in = 0
-            
             portal_to_iso = {}
             for iso_day in EVENT_DAYS:
                 dt = datetime.strptime(iso_day, "%Y-%m-%d")
                 portal_to_iso[f"{dt.day} {dt.strftime('%B')}"] = iso_day
-
             for human_date, iso_date in portal_to_iso.items():
                 c_main = mysql_session.query(Attendee).filter((Attendee.checkin_history.like(f'%"{human_date}"%')) | (Attendee.checkin_history.like(f'%"{iso_date}"%'))).count()
                 c_kiosk = mysql_session.query(OfflineKioskAttendee).filter((OfflineKioskAttendee.checkin_history.like(f'%"{human_date}"%')) | (OfflineKioskAttendee.checkin_history.like(f'%"{iso_date}"%'))).count()
                 day_sum = c_main + c_kiosk
                 day_counts[iso_date] = day_sum
                 checked_in += day_sum
-
             return {
                 "mysql_total": total_att, "sqlite_total": total_sqlite,
                 "pending_push": pending_push, "kiosk_reg": kiosk_regs,
@@ -789,10 +710,6 @@ class SyncManager:
             mysql_session.close()
             if sqlite_session: sqlite_session.close()
 
-
-# ==============================================================================
-# CONFIGURATION GUI DIALOG
-# ==============================================================================
 class ConfigDialog(ttk.Toplevel):
     def __init__(self, parent):
         super().__init__()
@@ -800,36 +717,29 @@ class ConfigDialog(ttk.Toplevel):
         self.transient(parent)
         self.geometry("560x720")
         self.position_center()
-
         self.secrets = {}
         if os.path.exists(SECRETS_PATH):
             try:
                 with open(SECRETS_PATH, 'r') as f: self.secrets = json.load(f)
             except Exception: pass
-
         self.schema = {"mysql": {}, "sqlite": {}}
         if os.path.exists(SCHEMA_PATH):
             try:
                 with open(SCHEMA_PATH, 'r') as f: self.schema = json.load(f)
             except Exception: pass
-
         outer = ttk.Frame(self, padding=25)
         outer.pack(fill=BOTH, expand=True)
-
         ttk.Label(outer, text="Configure Databases", font="-size 16 -weight bold").pack(anchor=W)
         ttk.Label(outer, text="Run this once per machine — it writes config/secrets.json and config/schema.json.", bootstyle=SECONDARY, font="-size 9").pack(anchor=W, pady=(0, 15))
-
         sb_card = ttk.Labelframe(outer, text=" Supabase Cloud ", padding=15)
         sb_card.pack(fill=X, pady=(0, 15))
         self.ent_sb_url = self._make_input(sb_card, "SUPABASE_URL", self.secrets.get("SUPABASE_URL", ""))
         self.ent_sb_key = self._make_input(sb_card, "SUPABASE_KEY", self.secrets.get("SUPABASE_KEY", ""), show="*")
-
         sb_test_row = ttk.Frame(sb_card)
         sb_test_row.pack(fill=X, pady=(4, 0))
         ttk.Button(sb_test_row, text="Test Connection", bootstyle="outline-info", command=self.test_supabase).pack(side=LEFT)
         self.lbl_sb_test = ttk.Label(sb_test_row, text="")
         self.lbl_sb_test.pack(side=LEFT, padx=10)
-
         my_card = ttk.Labelframe(outer, text=" MySQL (Local Hub) ", padding=15)
         my_card.pack(fill=X, pady=(0, 15))
         my_conf = self.schema.get("mysql", {})
@@ -837,13 +747,11 @@ class ConfigDialog(ttk.Toplevel):
         self.ent_my_user = self._make_input(my_card, "User", my_conf.get("user", "root"))
         self.ent_my_pass = self._make_input(my_card, "Password", my_conf.get("password", ""), show="*")
         self.ent_my_db = self._make_input(my_card, "Database", my_conf.get("database", "eventhub_db"))
-
         my_test_row = ttk.Frame(my_card)
         my_test_row.pack(fill=X, pady=(4, 0))
         ttk.Button(my_test_row, text="Test Connection", bootstyle="outline-info", command=self.test_mysql).pack(side=LEFT)
         self.lbl_my_test = ttk.Label(my_test_row, text="")
         self.lbl_my_test.pack(side=LEFT, padx=10)
-
         btn_frame = ttk.Frame(outer)
         btn_frame.pack(fill=X, pady=(10, 0), side=BOTTOM)
         ttk.Button(btn_frame, text="Save Settings", bootstyle=SUCCESS, command=self.save).pack(side=RIGHT, padx=5)
@@ -856,7 +764,6 @@ class ConfigDialog(ttk.Toplevel):
         ent = ttk.Entry(row, show=show or "")
         ent.insert(0, default)
         ent.pack(side=LEFT, fill=X, expand=True)
-
         if show:
             def toggle():
                 if ent.cget('show') == '':
@@ -895,8 +802,6 @@ class ConfigDialog(ttk.Toplevel):
     def _test_mysql_thread(self, host, user, password, db):
         try:
             url = f"mysql+mysqldb://{user}:{password}@{host}:3306/{db}"
-            
-            # Engineered for highly concurrent polling without exhausting ports
             engine = create_engine(url, pool_size=10, max_overflow=20, pool_pre_ping=True, connect_args={"connect_timeout": 5})
             with engine.connect(): pass
             self.after(0, lambda: self.lbl_my_test.configure(text="Connected successfully.", bootstyle=SUCCESS))
@@ -918,10 +823,6 @@ class ConfigDialog(ttk.Toplevel):
         self.master.reinitialize_manager()
         self.destroy()
 
-
-# ==============================================================================
-# CONFLICT DETAIL DIALOG
-# ==============================================================================
 class ConflictDetailDialog(ttk.Toplevel):
     def __init__(self, parent, conflict, on_resolve):
         super().__init__()
@@ -931,24 +832,19 @@ class ConflictDetailDialog(ttk.Toplevel):
         self.position_center()
         self.on_resolve = on_resolve
         self.conflict_id = conflict["id"]
-
         frame = ttk.Frame(self, padding=22)
         frame.pack(fill=BOTH, expand=True)
-
         ttk.Label(frame, text=conflict.get("full_name", "Unknown"), font="-size 15 -weight bold").pack(anchor=W)
         ttk.Label(frame, text=f"Attendee ID: {conflict.get('attendee_id', '')}", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 6))
         ttk.Label(frame, text=f"Local last changed {_fmt_dt(conflict['local_updated_at'])}   ·   Cloud last changed {_fmt_dt(conflict['cloud_updated_at'])}", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 16))
         ttk.Separator(frame).pack(fill=X, pady=(0, 10))
-
         header_row = ttk.Frame(frame)
         header_row.pack(fill=X)
         ttk.Label(header_row, text="FIELD", width=18, font="-weight bold").pack(side=LEFT)
         ttk.Label(header_row, text="LOCAL", width=24, font="-weight bold", bootstyle=SUCCESS).pack(side=LEFT)
         ttk.Label(header_row, text="CLOUD", width=24, font="-weight bold", bootstyle=INFO).pack(side=LEFT)
-
         rows_frame = ttk.Frame(frame)
         rows_frame.pack(fill=BOTH, expand=True, pady=(6, 16))
-
         diff_fields = conflict.get("diff_fields", {})
         for i, (field, values) in enumerate(diff_fields.items()):
             row = ttk.Frame(rows_frame, bootstyle=(SECONDARY if i % 2 else DEFAULT))
@@ -956,7 +852,6 @@ class ConflictDetailDialog(ttk.Toplevel):
             ttk.Label(row, text=field.replace("_", " ").title(), width=18).pack(side=LEFT, pady=3)
             ttk.Label(row, text=str(values.get("local") or "—"), width=24, wraplength=170).pack(side=LEFT, pady=3)
             ttk.Label(row, text=str(values.get("cloud") or "—"), width=24, wraplength=170).pack(side=LEFT, pady=3)
-
         btn_frame = ttk.Frame(frame)
         btn_frame.pack(fill=X, side=BOTTOM, pady=(10, 0))
         ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(side=RIGHT)
@@ -967,14 +862,9 @@ class ConflictDetailDialog(ttk.Toplevel):
         self.on_resolve([self.conflict_id], keep)
         self.destroy()
 
-
-# ==============================================================================
-# MAIN DASHBOARD GUI
-# ==============================================================================
 class SyncDashboard(ttk.Window):
     def __init__(self):
         super().__init__(themename="darkly", title="EventHub Portable — Ultra-Fast Sync Manager")
-        
         self.update_idletasks()
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
         w, h = 1400, 850
@@ -982,42 +872,38 @@ class SyncDashboard(ttk.Window):
         y = max(0, (sh - h) // 2 - 20)
         self.geometry(f"{w}x{h}+{x}+{y}")
         self.minsize(1200, 720)
+        
+        icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
+        if os.path.exists(icon_path):
+            try:
+                self.iconbitmap(icon_path)
+            except tk.TclError:
+                pass
 
-        self.gui_queue = queue.Queue(maxsize=1000) # Increased capacity to prevent bottlenecking logs
+        self.gui_queue = queue.Queue(maxsize=1000) 
         self.sync_manager = SyncManager()
         self.is_syncing = False
         self._is_refreshing_stats = False  
-
         self.is_light_theme = tk.BooleanVar(value=False)
         self.canvas_indicators = []
-
         self._spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._spinner_idx = 0
-
         self.auto_pull_enabled = tk.BooleanVar(value=False)
         self.auto_pull_val = tk.StringVar(value="15")
         self.auto_pull_unit = tk.StringVar(value="Minutes")
-        
         self.auto_push_enabled = tk.BooleanVar(value=False)
         self.auto_push_val = tk.StringVar(value="15")
         self.auto_push_unit = tk.StringVar(value="Minutes")
-        
         self.next_pull_ts = 0
         self.next_push_ts = 0
-        
         self.auto_pull_enabled.trace_add("write", self._recalc_pull_ts)
         self.auto_pull_val.trace_add("write", self._recalc_pull_ts)
         self.auto_pull_unit.trace_add("write", self._recalc_pull_ts)
-        
         self.auto_push_enabled.trace_add("write", self._recalc_push_ts)
         self.auto_push_val.trace_add("write", self._recalc_push_ts)
         self.auto_push_unit.trace_add("write", self._recalc_push_ts)
-
         self.build_ui()
-        
         self.animated_health_meter = AnimatedMeter(self.health_meter)
-        
-        # Highly separated execution timers ensure 60fps animations never clash with DB processing
         self.process_gui_queue()
         self.animation_loop()
         self.refresh_stats_async()
@@ -1027,11 +913,9 @@ class SyncDashboard(ttk.Window):
     def toggle_theme(self):
         theme_name = "cosmo" if self.is_light_theme.get() else "darkly"
         self.style.theme_use(theme_name)
-        
         bg_color = self.style.colors.bg
         for canvas in self.canvas_indicators:
             canvas.configure(bg=bg_color)
-            
         if theme_name == "cosmo":
             self.log_tree.tag_configure('info', foreground='#212529')  
             self.log_tree.tag_configure('warning', foreground='#d35400') 
@@ -1042,7 +926,6 @@ class SyncDashboard(ttk.Window):
             self.log_tree.tag_configure('warning', foreground='#ffc046') 
             self.log_tree.tag_configure('error', foreground='#ff5c5c') 
             self.conflict_tree.tag_configure('severe', foreground='#ff5c5c')
-            
         self.update_idletasks()
 
     def _get_seconds(self, val_str, unit_str):
@@ -1071,17 +954,13 @@ class SyncDashboard(ttk.Window):
         return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
     def animation_loop(self):
-        """Dedicated 60 FPS loop that only handles rendering math"""
         self.animated_health_meter.tick()
         self.after(16, self.animation_loop)
 
     def _auto_sync_scheduler(self):
-        """1-second accurate cron job for handling backgrounds syncs safely"""
         now = time.time()
-        
         self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_frames)
         spin = self._spinner_frames[self._spinner_idx]
-
         if self.auto_pull_enabled.get():
             if self.is_syncing:
                 self.lbl_pull_countdown.configure(text=f"{spin} Syncing...", bootstyle=WARNING)
@@ -1090,7 +969,6 @@ class SyncDashboard(ttk.Window):
                 self.lbl_pull_countdown.configure(text=f"⏱ {self._format_countdown(rem_pull)}", bootstyle=INFO)
         else:
             self.lbl_pull_countdown.configure(text="Off", bootstyle=SECONDARY)
-
         if self.auto_push_enabled.get():
             if self.is_syncing:
                 self.lbl_push_countdown.configure(text=f"{spin} Syncing...", bootstyle=WARNING)
@@ -1099,7 +977,6 @@ class SyncDashboard(ttk.Window):
                 self.lbl_push_countdown.configure(text=f"⏱ {self._format_countdown(rem_push)}", bootstyle=SUCCESS)
         else:
             self.lbl_push_countdown.configure(text="Off", bootstyle=SECONDARY)
-
         if not self.is_syncing:
             if self.auto_pull_enabled.get() and self.next_pull_ts and now >= self.next_pull_ts:
                 self._recalc_pull_ts()
@@ -1109,11 +986,9 @@ class SyncDashboard(ttk.Window):
                 self._recalc_push_ts()
                 logging.info("Auto-sync: Initiating scheduled PUSH")
                 self.run_push()
-        
         self.after(1000, self._auto_sync_scheduler)
 
     def process_gui_queue(self):
-        # Allow processing up to 200 logs per frame to prevent the queue from backing up
         for _ in range(200):
             try: self.gui_queue.get_nowait()()
             except queue.Empty: break
@@ -1131,57 +1006,43 @@ class SyncDashboard(ttk.Window):
     def refresh_stats_async(self):
         if getattr(self, '_is_refreshing_stats', False): return
         self._is_refreshing_stats = True
-        
         def _fetch():
             try:
                 stats = self.sync_manager.get_dashboard_stats()
                 self.gui_queue.put(lambda: self._apply_stats(stats))
             finally:
                 self._is_refreshing_stats = False
-                
         threading.Thread(target=_fetch, daemon=True).start()
 
     def _create_stat_card(self, parent, icon, title, initial_value, style, var_name):
         outer = ttk.Frame(parent, borderwidth=1, relief="ridge")
         outer.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
-        
         ttk.Frame(outer, bootstyle=style, width=4).pack(side=LEFT, fill=Y)
-        
         inner = ttk.Frame(outer, padding=(18, 16))
         inner.pack(side=LEFT, fill=BOTH, expand=True)
-        
         top_row = ttk.Frame(inner)
         top_row.pack(fill=X, anchor=NW)
         if icon:
             ttk.Label(top_row, text=icon, font="-size 12").pack(side=LEFT, padx=(0, 6))
         ttk.Label(top_row, text=title, font="-size 9 -weight bold", bootstyle=style).pack(side=LEFT)
-        
         val_lbl = ttk.Label(inner, text=initial_value, font="-size 28 -weight bold")
         val_lbl.pack(anchor=NW, pady=(8, 0))
-        
         self.stat_vars[var_name] = val_lbl
 
     def build_ui(self):
         self.root_container = ttk.Frame(self)
         self.root_container.pack(fill=BOTH, expand=True)
-
         self.build_sidebar(self.root_container)
-
         content = ttk.Frame(self.root_container, padding=30) 
         content.pack(side=LEFT, fill=BOTH, expand=True)
-
         header_row = ttk.Frame(content)
         header_row.pack(fill=X, pady=(0, 20))
-        
         title_box = ttk.Frame(header_row)
         title_box.pack(side=LEFT)
         ttk.Label(title_box, text="Sync Dashboard", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
         ttk.Label(title_box, text="TDE UP 2026", font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-
         ttk.Button(header_row, text="⟳ Refresh Data", bootstyle="outline-info", command=self.refresh_stats_async).pack(side=RIGHT)
-        
         self.stat_vars = {}
-
         cards_row1 = ttk.Frame(content)
         cards_row1.pack(fill=X, pady=(0, 15))
         self._create_stat_card(cards_row1, "👥", "MYSQL (PRIMARY)", "0", PRIMARY, "mysql_total")
@@ -1189,53 +1050,40 @@ class SyncDashboard(ttk.Window):
         self._create_stat_card(cards_row1, "⏳", "PENDING PUSH", "0", WARNING, "pending_push")
         self._create_stat_card(cards_row1, "⚠", "CONFLICTS", "0", DANGER, "conflicts")
         self._create_stat_card(cards_row1, "🖥️", "KIOSK REG.", "0", SECONDARY, "kiosk_reg")
-
         cards_row2 = ttk.Frame(content)
         cards_row2.pack(fill=X, pady=(0, 25))
         self._create_stat_card(cards_row2, "✔", "TOTAL CHECKED IN", "0", SUCCESS, "checked_in")
         for day in EVENT_DAYS:
             self._create_stat_card(cards_row2, "📅", _format_day_label(day).replace("📅 ", ""), "0", LIGHT, f"day_{day}")
-
         controls_frame = ttk.Frame(content)
         controls_frame.pack(fill=X, pady=(0, 10))
         self.progress = ttk.Progressbar(controls_frame, mode='indeterminate', bootstyle=INFO)
         self.progress.pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
         self.lbl_status = ttk.Label(controls_frame, text="Ready.", font="-size 10")
         self.lbl_status.pack(side=LEFT, padx=10)
-
         self.notebook = ttk.Notebook(content)
         self.notebook.pack(fill=BOTH, expand=True, pady=(15, 0))
-
         self.build_log_tab()
         self.build_conflicts_tab()
-        
         self.toggle_theme()
 
     def build_sidebar(self, container):
         sidebar_outer = ttk.Frame(container, width=380) 
         sidebar_outer.pack(side=LEFT, fill=Y)
         sidebar_outer.pack_propagate(False)
-
         sidebar = ttk.Frame(sidebar_outer, padding=25)
         sidebar.pack(fill=BOTH, expand=True)
-
         ttk.Label(sidebar, text="EventHub Portable", font="-size 18 -weight bold").pack(anchor=W)
         ttk.Label(sidebar, text="Data Synchronization", font="-size 10", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 12))
-        
         ttk.Checkbutton(sidebar, text="☀️ Sunlight Mode", variable=self.is_light_theme, bootstyle="round-toggle", command=self.toggle_theme).pack(anchor=W, pady=(0, 20))
-
         conn_frame = ttk.Labelframe(sidebar, text=" CONNECTION STATUS ", padding=15)
         conn_frame.pack(fill=X, pady=(0, 15))
-        
         self.lbl_supa, self.supa_canvas, self.supa_dot = self._create_status_label(conn_frame, "Supabase Cloud: Idle", SECONDARY)
         self.lbl_mysql, self.my_canvas, self.my_dot = self._create_status_label(conn_frame, "MySQL (Primary): Checking...", INFO)
         self.lbl_sqlite, self.sq_canvas, self.sq_dot = self._create_status_label(conn_frame, "SQLite (Fallback): Checking...", INFO)
-
         ttk.Button(sidebar, text="⟳ Refresh Connections", bootstyle="outline-secondary", command=self.reinitialize_manager).pack(fill=X, pady=(0, 20))
-
         health_frame = ttk.Labelframe(sidebar, text=" SYNC HEALTH ", padding=15)
         health_frame.pack(fill=X, pady=(0, 20))
-        
         meter_row = ttk.Frame(health_frame)
         meter_row.pack()
         self.health_meter = ttk.Meter(
@@ -1246,22 +1094,17 @@ class SyncDashboard(ttk.Window):
         self.health_meter.pack()
         self.lbl_last_sync = ttk.Label(health_frame, text="Last synced: Never", font="-size 9", bootstyle=SECONDARY)
         self.lbl_last_sync.pack(anchor=CENTER, pady=(10, 0))
-
         ttk.Separator(sidebar).pack(fill=X, pady=10)
-
         self.btn_full_sync = ttk.Button(sidebar, text="🔄 Full Sync (Pull + Push)", bootstyle=PRIMARY, command=self.run_full_sync)
         self.btn_full_sync.pack(fill=X, pady=(10, 8), ipady=6)
-
         pp_row = ttk.Frame(sidebar)
         pp_row.pack(fill=X, pady=(0, 8))
         self.btn_pull = ttk.Button(pp_row, text="↓ Pull Data", bootstyle=INFO, command=self.run_pull)
         self.btn_pull.pack(side=LEFT, fill=X, expand=True, padx=(0, 4), ipady=4)
         self.btn_push = ttk.Button(pp_row, text="↑ Push Data", bootstyle=SUCCESS, command=self.run_push)
         self.btn_push.pack(side=LEFT, fill=X, expand=True, padx=(4, 0), ipady=4)
-
         auto_frame = ttk.Labelframe(sidebar, text=" AUTO SYNC SCHEDULE ", padding=12)
         auto_frame.pack(fill=X, pady=(10, 20))
-
         p_row = ttk.Frame(auto_frame)
         p_row.pack(fill=X, pady=6)
         ttk.Checkbutton(p_row, text="Auto Pull", variable=self.auto_pull_enabled, bootstyle="info-round-toggle", width=10).pack(side=LEFT, padx=(0,6))
@@ -1269,7 +1112,6 @@ class SyncDashboard(ttk.Window):
         ttk.Combobox(p_row, textvariable=self.auto_pull_unit, values=["Minutes", "Hours"], width=8, state="readonly").pack(side=LEFT, padx=4)
         self.lbl_pull_countdown = ttk.Label(p_row, text="Off", font="-size 9 -weight bold", bootstyle=SECONDARY)
         self.lbl_pull_countdown.pack(side=RIGHT, padx=5)
-
         pu_row = ttk.Frame(auto_frame)
         pu_row.pack(fill=X, pady=6)
         ttk.Checkbutton(pu_row, text="Auto Push", variable=self.auto_push_enabled, bootstyle="success-round-toggle", width=10).pack(side=LEFT, padx=(0,6))
@@ -1277,7 +1119,6 @@ class SyncDashboard(ttk.Window):
         ttk.Combobox(pu_row, textvariable=self.auto_push_unit, values=["Minutes", "Hours"], width=8, state="readonly").pack(side=LEFT, padx=4)
         self.lbl_push_countdown = ttk.Label(pu_row, text="Off", font="-size 9 -weight bold", bootstyle=SECONDARY)
         self.lbl_push_countdown.pack(side=RIGHT, padx=5)
-
         ttk.Button(sidebar, text="⚙ Configure Databases", bootstyle="outline-secondary", command=lambda: ConfigDialog(self)).pack(fill=X, side=BOTTOM, pady=(20, 0))
 
     def _create_status_label(self, parent, text, bootstyle):
@@ -1295,21 +1136,17 @@ class SyncDashboard(ttk.Window):
         label.configure(text=text, bootstyle=bootstyle)
         current_color = self.style.colors.get(bootstyle)
         canvas.itemconfig(dot, fill=current_color)
-        
         canvas.coords(dot, 1, 1, 11, 11)
         self.after(200, lambda: canvas.coords(dot, 2, 2, 10, 10) if canvas.winfo_exists() else None)
 
     def build_log_tab(self):
         log_tab = ttk.Frame(self.notebook)
         self.notebook.add(log_tab, text="Activity Log")
-        
         toolbar = ttk.Frame(log_tab, padding=(10, 10, 10, 5))
         toolbar.pack(fill=X)
         ttk.Button(toolbar, text="Clear Log", bootstyle="outline-secondary", command=self.clear_log).pack(side=RIGHT)
-
         body = ttk.Frame(log_tab)
         body.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
-
         cols = ("Time", "Level", "Message")
         self.log_tree = ttk.Treeview(body, columns=cols, show="headings", bootstyle=INFO)
         self.log_tree.heading("Time", text="TIME", anchor=W)
@@ -1317,12 +1154,10 @@ class SyncDashboard(ttk.Window):
         self.log_tree.heading("Message", text="MESSAGE", anchor=W)
         self.log_tree.column("Time", width=100, stretch=False)
         self.log_tree.column("Level", width=100, stretch=False)
-
         scrollbar = ttk.Scrollbar(body, orient=VERTICAL, command=self.log_tree.yview)
         self.log_tree.configure(yscrollcommand=scrollbar.set)
         self.log_tree.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side=RIGHT, fill=Y)
-
         gui_logger = TkinterLogHandler(self.gui_queue, self.log_tree)
         gui_logger.setFormatter(logging.Formatter('%(message)s'))
         logging.getLogger().addHandler(gui_logger)
@@ -1331,21 +1166,17 @@ class SyncDashboard(ttk.Window):
         conflicts_tab = ttk.Frame(self.notebook)
         self.notebook.add(conflicts_tab, text="Conflicts")
         self.conflicts_tab = conflicts_tab
-        
         toolbar = ttk.Frame(conflicts_tab, padding=(10, 10, 10, 5))
         toolbar.pack(fill=X)
         ttk.Label(toolbar, text="Double-click a row to compare fields side-by-side.", bootstyle=SECONDARY).pack(side=LEFT)
-
         self.btn_resolve_all = ttk.Button(toolbar, text="Resolve All → Prefer Newest", bootstyle="outline-warning", command=self.resolve_all_conflicts_bulk)
         self.btn_resolve_all.pack(side=RIGHT, padx=(5, 0))
         self.btn_keep_cloud = ttk.Button(toolbar, text="Keep Cloud (Selected)", bootstyle="outline-info", command=lambda: self.resolve_selected("cloud"))
         self.btn_keep_cloud.pack(side=RIGHT, padx=5)
         self.btn_keep_local = ttk.Button(toolbar, text="Keep Local (Selected)", bootstyle="outline-success", command=lambda: self.resolve_selected("local"))
         self.btn_keep_local.pack(side=RIGHT, padx=5)
-
         body = ttk.Frame(conflicts_tab)
         body.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
-
         cols = ("attendee_id", "full_name", "local_updated", "cloud_updated", "fields")
         self.conflict_tree = ttk.Treeview(body, columns=cols, show="headings", bootstyle=WARNING, selectmode="extended")
         headings = {"attendee_id": "ATTENDEE ID", "full_name": "NAME", "local_updated": "LOCAL UPDATED", "cloud_updated": "CLOUD UPDATED", "fields": "FIELDS DIFFERING"}
@@ -1355,10 +1186,8 @@ class SyncDashboard(ttk.Window):
         self.conflict_tree.column("local_updated", width=150, stretch=False)
         self.conflict_tree.column("cloud_updated", width=150, stretch=False)
         self.conflict_tree.bind("<Double-1>", self.on_conflict_double_click)
-
         self._conflict_scroll = ttk.Scrollbar(body, orient=VERTICAL, command=self.conflict_tree.yview)
         self.conflict_tree.configure(yscrollcommand=self._conflict_scroll.set)
-
         self.conflict_empty_label = ttk.Label(body, text="✅ No conflicts right now — everything's in sync.", font="-size 12", bootstyle=SUCCESS, anchor=CENTER, justify=CENTER)
 
     def _apply_stats(self, stats):
@@ -1366,29 +1195,23 @@ class SyncDashboard(ttk.Window):
             self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Offline", DANGER)
             self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Check Config", DANGER)
             self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", SECONDARY)
-            
-            # Smoothly transition health meter down to 0 using the Lerp engine
             self.animated_health_meter.set_target(0)
             self.health_meter.configure(bootstyle=DANGER)
             self.lbl_last_sync.configure(text=f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
             self._refresh_conflicts_ui()
             return
-
         self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Online", SUCCESS)
         if self.sync_manager.SessionSQLite:
             self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Ready", SUCCESS)
         else:
             self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Offline", DANGER)
-
         if self.sync_manager.state == SyncState.ERROR: 
             self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Error", DANGER)
         elif not self.is_syncing: 
             self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", SECONDARY)
-
         def safe_set(key, val):
             if self.stat_vars[key].cget("text") != str(val):
                 self.stat_vars[key].configure(text=str(val))
-                
         safe_set("mysql_total", stats["mysql_total"])
         safe_set("sqlite_total", stats["sqlite_total"])
         safe_set("pending_push", stats["pending_push"])
@@ -1397,10 +1220,7 @@ class SyncDashboard(ttk.Window):
         safe_set("checked_in", stats["checked_in"])
         for day in EVENT_DAYS: 
             safe_set(f"day_{day}", stats["day_counts"].get(day, 0))
-
         health = _compute_sync_health(stats)
-        
-        # Drive the health meter completely from the Lerp Engine
         self.animated_health_meter.set_target(health)
         self.health_meter.configure(bootstyle=SUCCESS if health >= 95 else (WARNING if health >= 80 else DANGER))
         self.lbl_last_sync.configure(text=f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
@@ -1511,5 +1331,11 @@ class SyncDashboard(ttk.Window):
 
 
 if __name__ == "__main__":
+    if os.name == 'nt':
+        try:
+            my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.sync")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
+        except Exception:
+            pass
     app = SyncDashboard()
     app.mainloop()
