@@ -8,8 +8,8 @@
     "window-controls-overlay",
     "minimal-ui"
   ],
-  "background_color": "#0b0d14",
-  "theme_color": "#0b0d14",
+  "background_color": "#FFF",
+  "theme_color": "#FFF",
   "orientation": "any",
   "dir": "ltr",
   "lang": "en-US",
