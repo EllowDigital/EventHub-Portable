@@ -7,12 +7,12 @@
   <title>TDE UP 2026 — Operations Hub</title>
   
   <!-- Flask Static Favicons & Web Manifest -->
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon-96x96.png') }}?v=2.6" sizes="96x96" />
-  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v=2.6" />
-  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}?v=2.6" />
-  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='apple-touch-icon.png') }}?v=2.6" />
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-96x96.png') }}?v=2.6" sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon/favicon.svg') }}?v=2.6" />
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon/favicon.ico') }}?v=2.6" />
+  <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}?v=2.6" />
   <meta name="apple-mobile-web-app-title" content="EventHub" />
-  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.7" />
 
   <style>
     :root {
@@ -200,6 +200,19 @@
       color: #ccc;
       margin-top: 6px;
       display: inline-block;
+    }
+
+    .install-banner {
+      background: rgba(0, 210, 255, 0.1);
+      color: var(--primary);
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .install-banner:hover {
+      background: rgba(0, 210, 255, 0.2);
+      transform: translateY(-2px);
     }
 
     .header {
@@ -644,6 +657,11 @@
       </div>
     </div>
 
+    <!-- PWA Install Banner -->
+    <div id="install-banner" class="banner install-banner">
+      📲 Install EventHub App for Offline Access
+    </div>
+
     <div id="test-mode-banner" class="banner test-mode-banner">
       ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
     </div>
@@ -654,7 +672,7 @@
     </div>
 
     <div class="header">
-      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.6</span></h1>
+      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.7</span></h1>
       <p>Operations Portal</p>
     </div>
 
@@ -763,6 +781,27 @@
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => { });
     }
+
+    // --- PWA Installation Logic ---
+    let deferredPrompt;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      const installBtn = document.getElementById('install-banner');
+      installBtn.style.display = 'block';
+
+      installBtn.addEventListener('click', async () => {
+        installBtn.style.display = 'none';
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        deferredPrompt = null;
+      });
+    });
+
+    window.addEventListener('appinstalled', (e) => {
+      document.getElementById('install-banner').style.display = 'none';
+      deferredPrompt = null;
+    });
 
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
