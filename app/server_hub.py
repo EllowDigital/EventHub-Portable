@@ -335,21 +335,24 @@ def _global_audio_playback_worker():
     try:
         with sd.RawOutputStream(samplerate=48000, channels=1, dtype='int16', blocksize=960) as stream:
             while not _global_shutdown_event.is_set():
-                with MIXER_LOCK:
-                    channels = list(GLOBAL_AUDIO_MIXER.values())
-                    for k in list(GLOBAL_AUDIO_MIXER.keys()):
-                        GLOBAL_AUDIO_MIXER[k] = np.zeros(960, dtype=np.int16)
-
-                if not channels:
-                    stream.write(np.zeros(960, dtype=np.int16).tobytes())
-                    continue
-
                 mixed = np.zeros(960, dtype=np.int32)
-                for frame in channels:
-                    mixed += frame
-                
-                mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-                stream.write(mixed.tobytes())
+                has_audio = False
+                with MIXER_LOCK:
+                    for dev_id, q in list(GLOBAL_AUDIO_MIXER.items()):
+                        if len(q) > 0:
+                            frame = q.popleft()
+                            if len(frame) < 960:
+                                frame = np.pad(frame, (0, 960 - len(frame)))
+                            elif len(frame) > 960:
+                                frame = frame[:960]
+                            mixed += frame
+                            has_audio = True
+
+                if not has_audio:
+                    stream.write(np.zeros(960, dtype=np.int16).tobytes())
+                else:
+                    mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+                    stream.write(mixed.tobytes())
     except Exception as e:
         logging.error(f"Global Hardware Mixer Error: {e}")
 
@@ -421,6 +424,9 @@ async def signaling_handler(websocket, path=None):
                             if track.kind == "audio":
                                 async def process_incoming_audio():
                                     global app_window, GLOBAL_GROUP_CALL_ACTIVE
+                                    with MIXER_LOCK:
+                                        if device_id not in GLOBAL_AUDIO_MIXER:
+                                            GLOBAL_AUDIO_MIXER[device_id] = collections.deque(maxlen=10)
                                     try:
                                         while True:
                                             frame = await track.recv()
@@ -429,7 +435,8 @@ async def signaling_handler(websocket, path=None):
                                                 data_bytes = f.planes[0].to_bytes()
                                                 samples = np.frombuffer(data_bytes, dtype=np.int16)
                                                 with MIXER_LOCK:
-                                                    GLOBAL_AUDIO_MIXER[device_id] = samples
+                                                    if device_id in GLOBAL_AUDIO_MIXER:
+                                                        GLOBAL_AUDIO_MIXER[device_id].append(samples)
                                                 try:
                                                     rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
                                                     if rms < 150:
