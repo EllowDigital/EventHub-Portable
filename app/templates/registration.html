@@ -5,7 +5,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Kiosk Registration - TDE UP 2026</title>
-  <link rel="manifest" href="/manifest.json">
+
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-96x96.png') }}?v=2.6"
+    sizes="96x96" />
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon/favicon.svg') }}?v=2.6" />
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}?v=2.6" />
+  <link rel="apple-touch-icon" sizes="180x180"
+    href="{{ url_for('static', filename='favicon/apple-touch-icon.png') }}?v=2.6" />
+  <meta name="apple-mobile-web-app-title" content="EventHub" />
+  <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
+
   <style>
     :root {
       --bg-dark: #07080c;
@@ -72,7 +81,6 @@
       }
     }
 
-    /* WebRTC Animations */
     @keyframes ringShake {
       0% {
         transform: rotate(-15deg);
@@ -595,7 +603,6 @@
       transform: translateY(2px);
     }
 
-    /* --- ROBUST MESSAGE MODAL CSS --- */
     #operator-msg-modal {
       display: none;
       position: fixed;
@@ -632,7 +639,6 @@
       transform: scale(1);
     }
 
-    /* --- MINIMIZABLE CALL UI STYLES --- */
     .call-overlay {
       position: fixed;
       inset: 0;
@@ -977,7 +983,6 @@
     </div>
   </div>
 
-  <!-- Persistent Operator Message Modal (FULLY FIXED REPAINT BUG) -->
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
       <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
@@ -990,7 +995,6 @@
     </div>
   </div>
 
-  <!-- WebRTC Incoming Call Modal -->
   <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
     <div class="active-call-card"
       style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
@@ -1009,7 +1013,6 @@
     </div>
   </div>
 
-  <!-- NEW Minimizable WebRTC Active Call Modal -->
   <div id="active-call-overlay" class="call-overlay" style="display: none;">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
@@ -1573,9 +1576,6 @@
         });
     }
 
-    // ==========================================
-    // MINIMIZABLE CALL UI LOGIC
-    // ==========================================
     let isCallMinimized = false;
 
     function toggleMinimizeCall() {
@@ -1591,10 +1591,6 @@
         btn.innerHTML = "🗕";
       }
     }
-
-    // ==========================================
-    // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
-    // ==========================================
 
     let wsCall = null;
     let peerConnection = null;
@@ -1756,7 +1752,6 @@
       }
     }
 
-    // Intercept Back button if on a call
     document.getElementById('nav-hub-btn').addEventListener('click', function (e) {
       if (peerConnection && peerConnection.connectionState === 'connected') {
         e.preventDefault();
