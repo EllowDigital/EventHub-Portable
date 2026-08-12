@@ -59,7 +59,7 @@ except ImportError:
 try:
     import websockets
     import av
-    from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+    from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCConfiguration, RTCIceServer
     WEBRTC_SUPPORTED = True
 except ImportError:
     WEBRTC_SUPPORTED = False
@@ -285,41 +285,43 @@ class GlobalAudioEngine:
                     blocksize=960, callback=self.in_callback
                 )
                 self.in_stream.start()
-            except Exception as e:
-                logging.error(f"PC Microphone hook failed: {e}")
+            except Exception:
+                pass
             try:
                 self.out_stream = sd.RawOutputStream(
                     samplerate=48000, channels=1, dtype='int16',
                     blocksize=960, callback=self.out_callback
                 )
                 self.out_stream.start()
-            except Exception as e:
-                logging.error(f"PC Speaker hook failed: {e}")
-
-    def in_callback(self, indata, frames, time_info, status):
-        data = bytes(indata)
-        for q in list(GLOBAL_MIC_SUBSCRIBERS):
-            try:
-                if q.qsize() < 30:
-                    q.put_nowait(data)
-            except queue.Full:
+            except Exception:
                 pass
 
+    def in_callback(self, indata, frames, time_info, status):
+        try:
+            data = bytes(indata)
+            for sub in list(GLOBAL_MIC_SUBSCRIBERS):
+                sub.add_data(data)
+        except Exception:
+            pass
+
     def out_callback(self, outdata, frames, time_info, status):
-        needed_bytes = frames * 2
-        mixed = np.zeros(frames, dtype=np.int32)
-        has_audio = False
-        with MIXER_LOCK:
-            for dev_id, buf in list(GLOBAL_AUDIO_MIXER.items()):
-                if len(buf) >= needed_bytes:
-                    chunk = buf[:needed_bytes]
-                    del buf[:needed_bytes]
-                    mixed += np.frombuffer(chunk, dtype=np.int16)
-                    has_audio = True
-        if has_audio:
-            outdata[:] = np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
-        else:
-            outdata[:] = b'\x00' * needed_bytes
+        try:
+            needed_bytes = frames * 2
+            mixed = np.zeros(frames, dtype=np.int32)
+            has_audio = False
+            with MIXER_LOCK:
+                for dev_id, buf in list(GLOBAL_AUDIO_MIXER.items()):
+                    if len(buf) >= needed_bytes:
+                        chunk = bytes(buf[:needed_bytes])
+                        del buf[:needed_bytes]
+                        mixed += np.frombuffer(chunk, dtype=np.int16)
+                        has_audio = True
+            if has_audio:
+                outdata[:] = np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
+            else:
+                outdata[:] = b'\x00' * needed_bytes
+        except Exception:
+            outdata[:] = b'\x00' * (frames * 2)
 
 global_audio = GlobalAudioEngine()
 
@@ -327,14 +329,21 @@ class WebRTCMicTrack(MediaStreamTrack):
     kind = "audio"
     def __init__(self):
         super().__init__()
-        self.q = queue.Queue(maxsize=30)
-        GLOBAL_MIC_SUBSCRIBERS.add(self.q)
+        self.q = collections.deque()
+        self.loop = asyncio.get_event_loop()
+        self.event = asyncio.Event()
+        GLOBAL_MIC_SUBSCRIBERS.add(self)
         self.pts = 0
 
     def stop(self):
-        if self.q in GLOBAL_MIC_SUBSCRIBERS:
-            GLOBAL_MIC_SUBSCRIBERS.remove(self.q)
+        if self in GLOBAL_MIC_SUBSCRIBERS:
+            GLOBAL_MIC_SUBSCRIBERS.remove(self)
         super().stop()
+
+    def add_data(self, data):
+        if len(self.q) < 30:
+            self.q.append(data)
+            self.loop.call_soon_threadsafe(self.event.set)
 
     async def recv(self):
         if not global_audio.in_stream:
@@ -346,14 +355,14 @@ class WebRTCMicTrack(MediaStreamTrack):
             self.pts += 960
             return frame
 
-        def get_data():
-            try:
-                return self.q.get(timeout=0.02)
-            except queue.Empty:
-                return b'\x00' * 1920
-
-        loop = asyncio.get_event_loop()
-        data = await loop.run_in_executor(None, get_data)
+        if not self.q:
+            await self.event.wait()
+            self.event.clear()
+        
+        if self.q:
+            data = self.q.popleft()
+        else:
+            data = b'\x00' * 1920
 
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -415,15 +424,16 @@ async def signaling_handler(websocket, path=None):
                 
                 if msg_type == "offer":
                     if device_id not in ACTIVE_CALLS_DATA:
-                        pc = RTCPeerConnection()
+                        config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
+                        pc = RTCPeerConnection(configuration=config)
                         mic_track = None
                         
                         if SOUNDDEVICE_AVAILABLE:
                             try:
                                 mic_track = WebRTCMicTrack()
                                 pc.addTrack(mic_track)
-                            except Exception as e:
-                                logging.error(f"Failed to attach Native Mic to WebRTC: {e}")
+                            except Exception:
+                                pass
 
                         resampler = av.AudioResampler(format='s16', layout='mono', rate=48000)
 
@@ -500,11 +510,11 @@ async def signaling_handler(websocket, path=None):
                 elif msg_type == "call_ended":
                     await cleanup_call(device_id)
                         
-            except Exception as e:
-                logging.error(f"WebRTC message parsing error: {e}")
+            except Exception:
+                pass
                 
-    except Exception as e:
-        logging.error(f"WebRTC socket error: {e}")
+    except Exception:
+        pass
     finally:
         if device_id in CONNECTED_WS:
             del CONNECTED_WS[device_id]
@@ -522,20 +532,19 @@ async def _run_webrtc_server():
 
         async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
             await asyncio.Future()
-    except Exception as e:
-        logging.error(f"WebRTC Server start failed: {e}")
+    except Exception:
+        pass
 
 def start_webrtc_server():
     global _ws_loop
     if not WEBRTC_SUPPORTED:
-        logging.error("aiortc or websockets not installed. WebRTC disabled.")
         return
     try:
         _ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_ws_loop)
         _ws_loop.run_until_complete(_run_webrtc_server())
-    except Exception as e:
-        logging.error(f"WebRTC Server failed to boot loop: {e}")
+    except Exception:
+        pass
 
 threading.Thread(target=start_webrtc_server, daemon=True).start()
 
@@ -691,7 +700,6 @@ def ensure_ssl_certificate(local_ip):
             reuse_existing = False
             
     if not reuse_existing:
-        logging.info("[SSL] Auto-regenerating certificates to map missing IP adapters...")
         _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
     
     return cert_path, key_path
@@ -718,15 +726,12 @@ def log_request(response):
                     SERVER_METRICS["avg_process_ms"] = (SERVER_METRICS["avg_process_ms"] * 0.9) + (duration_ms * 0.1)
             finally:
                 metrics_lock.release()
-        if duration_ms > SLOW_REQUEST_THRESHOLD_MS:
-            logging.warning(f"Slow req: {request.method} {request.path} took {duration_ms:.0f}ms")
     except Exception:
         pass
     return response
 
 @app.errorhandler(Exception)
 def handle_global_exception(e):
-    logging.error(f"Global API Error: {str(e)}", exc_info=True)
     return jsonify({"status": "error", "message": "An unexpected server fault occurred. Contact admin."}), 500
 
 def _status_log_tag(status_code):
@@ -854,7 +859,7 @@ def _submit_db_job(kind, payload):
         return job.future.result(timeout=DB_JOB_TIMEOUT)
     except concurrent.futures.TimeoutError:
         return 504, {"status": "error", "message": "The request took too long. Please try again."}
-    except Exception as e:
+    except Exception:
         return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
 
 def _handle_checkin_job(payload):
@@ -931,14 +936,14 @@ def _handle_checkin_job(payload):
             log_event_clean("CHECKIN", device_name, success_msg, 200)
             broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
             return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
-        except OperationalError as e:
+        except OperationalError:
             session.rollback()
             retries -= 1
             if retries == 0:
                 log_event_clean("CHECKIN", device_name, "DB Locked (OperationalError)", 503)
                 return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
             time.sleep(random.uniform(0.1, 0.4))
-        except Exception as e:
+        except Exception:
             session.rollback()
             log_event_clean("CHECKIN", device_name, "DB Error", 500)
             return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
@@ -1014,13 +1019,13 @@ def _handle_register_job(payload):
             if existing:
                 return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
             return 500, {"status": "error", "message": "Another registration is processing. Please try clicking submit again."}
-        except OperationalError as e:
+        except OperationalError:
             session.rollback()
             retries -= 1
             if retries == 0:
                 return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
             time.sleep(random.uniform(0.1, 0.4))
-        except Exception as e:
+        except Exception:
             session.rollback()
             return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
         finally:
