@@ -18,22 +18,30 @@
 
   <style>
     :root {
-      --bg-dark: #0b0d14;
-      --card-bg: #161a26;
+      --bg-dark: #050608;
+      --surface: #10131a;
+      --surface-light: #1a1e29;
       --primary: #00d2ff;
+      --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
       --warning: #ffaa00;
       --danger: #ff4444;
+      --purple: #c792ea;
       --text-light: #ffffff;
       --text-dim: #8b93a5;
-      --radius-lg: 16px;
-      --transition: all 0.3s ease;
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 18px;
+      --transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      --glass-border: rgba(255, 255, 255, 0.08);
     }
 
     body {
       font-family: 'Inter', system-ui, -apple-system, sans-serif;
       background-color: var(--bg-dark);
-      background-image: radial-gradient(circle at top center, #111520, var(--bg-dark) 80%);
+      background-image:
+        radial-gradient(circle at 50% -20%, rgba(0, 210, 255, 0.12), transparent 50%),
+        radial-gradient(circle at 50% 120%, rgba(0, 230, 118, 0.05), transparent 50%);
       color: var(--text-light);
       margin: 0;
       padding: 0;
@@ -42,23 +50,70 @@
       align-items: center;
       min-height: 100vh;
       overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
     }
 
-    .app-container {
-      width: 100%;
-      max-width: 850px;
-      padding: 20px 20px 40px 20px;
+    /* --- COMPACT PRELOADER --- */
+    #preloader {
+      position: fixed;
+      inset: 0;
+      background: var(--bg-dark);
+      z-index: 9999999;
       display: flex;
       flex-direction: column;
+      justify-content: center;
       align-items: center;
-      box-sizing: border-box;
-      animation: fadeIn 0.4s ease-out;
+      transition: opacity 0.5s ease, visibility 0.5s ease;
     }
 
-    @keyframes fadeIn {
+    #preloader.fade-out {
+      opacity: 0;
+      visibility: hidden;
+    }
+
+    .loader-ring {
+      width: 45px;
+      height: 45px;
+      border: 3px solid rgba(0, 210, 255, 0.15);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin 1s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+      margin-bottom: 20px;
+      box-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
+    }
+
+    .loader-text {
+      color: var(--primary);
+      font-weight: 800;
+      letter-spacing: 2px;
+      font-size: 0.85rem;
+      animation: pulseMic 1.5s infinite;
+      text-transform: uppercase;
+    }
+
+    /* --- ANIMATIONS --- */
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes slideUpFade {
       from {
         opacity: 0;
-        transform: translateY(10px);
+        transform: translateY(20px) scale(0.97);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
+    }
+
+    @keyframes fadeInDown {
+      from {
+        opacity: 0;
+        transform: translateY(-15px);
       }
 
       to {
@@ -81,15 +136,15 @@
 
     @keyframes ringShake {
       0% {
-        transform: rotate(-15deg);
+        transform: rotate(-10deg);
       }
 
       50% {
-        transform: rotate(15deg);
+        transform: rotate(10deg);
       }
 
       100% {
-        transform: rotate(-15deg);
+        transform: rotate(-10deg);
       }
     }
 
@@ -100,7 +155,7 @@
       }
 
       50% {
-        transform: scale(1.15);
+        transform: scale(1.1);
         opacity: 0.7;
       }
 
@@ -112,11 +167,11 @@
 
     @keyframes pulseBg {
       0% {
-        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.4);
+        box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.3);
       }
 
       70% {
-        box-shadow: 0 0 0 10px rgba(0, 230, 118, 0);
+        box-shadow: 0 0 0 8px rgba(0, 230, 118, 0);
       }
 
       100% {
@@ -124,24 +179,40 @@
       }
     }
 
+    /* --- COMPACT LAYOUT --- */
+    .app-container {
+      width: 100%;
+      max-width: 820px;
+      padding: 15px 15px 30px 15px;
+      /* Shrunk paddings */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-sizing: border-box;
+    }
+
     .top-bar {
       width: 100%;
       display: flex;
       justify-content: flex-end;
-      margin-bottom: 30px;
+      margin-bottom: 20px;
+      /* Reduced */
+      animation: fadeInDown 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .network-pill {
       font-size: 0.75rem;
-      padding: 8px 16px;
-      border-radius: 30px;
+      /* Shrunk */
+      padding: 6px 14px;
+      border-radius: 20px;
       font-weight: 700;
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(18, 22, 32, 0.8);
-      border: 1px solid rgba(255, 255, 255, 0.05);
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+      background: rgba(16, 19, 26, 0.85);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--glass-border);
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
       letter-spacing: 0.5px;
       transition: var(--transition);
     }
@@ -150,38 +221,41 @@
       width: 8px;
       height: 8px;
       border-radius: 50%;
+      transition: background 0.3s, box-shadow 0.3s;
     }
 
     .net-excellent {
       background: var(--success);
-      box-shadow: 0 0 10px var(--success);
+      box-shadow: 0 0 8px var(--success);
     }
 
     .net-fair {
       background: var(--warning);
-      box-shadow: 0 0 10px var(--warning);
+      box-shadow: 0 0 8px var(--warning);
     }
 
     .net-poor {
       background: var(--danger);
-      box-shadow: 0 0 10px var(--danger);
+      box-shadow: 0 0 8px var(--danger);
     }
 
     .net-offline {
       background: #555;
     }
 
+    /* --- BANNERS --- */
     .banner {
       width: 100%;
       text-align: center;
-      padding: 14px;
-      font-size: 0.9rem;
-      font-weight: 700;
-      border-radius: 12px;
+      padding: 12px;
+      font-size: 0.85rem;
+      font-weight: 800;
+      border-radius: var(--radius-md);
       margin-bottom: 20px;
       box-sizing: border-box;
       display: none;
       animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      letter-spacing: 0.5px;
     }
 
     .test-mode-banner {
@@ -198,16 +272,16 @@
 
     .unsynced-warning span.subtext {
       font-size: 0.8rem;
-      font-weight: 500;
+      font-weight: 600;
       color: #ccc;
-      margin-top: 6px;
+      margin-top: 4px;
       display: inline-block;
     }
 
     .install-banner {
-      background: rgba(0, 210, 255, 0.1);
+      background: linear-gradient(135deg, rgba(0, 210, 255, 0.15), rgba(0, 210, 255, 0.05));
       color: var(--primary);
-      border: 1px solid rgba(0, 210, 255, 0.3);
+      border: 1px solid rgba(0, 210, 255, 0.4);
       cursor: pointer;
       transition: var(--transition);
     }
@@ -217,54 +291,64 @@
       transform: translateY(-2px);
     }
 
+    /* --- COMPACT HEADER --- */
     .header {
       text-align: center;
-      margin-bottom: 40px;
+      margin-bottom: 30px;
+      /* Shrunk */
       width: 100%;
+      animation: fadeInDown 0.5s 0.1s both cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .header h1 {
       margin: 0;
-      font-size: clamp(2rem, 5vw, 2.8rem);
+      font-size: clamp(1.8rem, 5vw, 2.4rem);
+      /* Shrunk */
       color: var(--text-light);
-      letter-spacing: 2px;
+      letter-spacing: 1px;
       display: flex;
       align-items: center;
       justify-content: center;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 10px;
       font-weight: 900;
     }
 
     .header h1 span.highlight {
-      color: var(--primary);
-      text-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
+      background: linear-gradient(135deg, #fff, var(--primary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 10px rgba(0, 210, 255, 0.3));
     }
 
     .version-tag {
       font-size: 0.75rem;
       background: rgba(0, 210, 255, 0.1);
       color: var(--primary);
-      padding: 4px 12px;
+      padding: 4px 10px;
       border-radius: 20px;
       letter-spacing: 1px;
       border: 1px solid rgba(0, 210, 255, 0.3);
-      font-weight: 700;
+      font-weight: 800;
+      box-shadow: 0 2px 10px rgba(0, 210, 255, 0.1);
     }
 
     .header p {
-      margin: 12px 0 0 0;
+      margin: 10px 0 0 0;
       color: var(--text-dim);
-      font-size: clamp(0.75rem, 2vw, 0.9rem);
-      font-weight: 700;
+      font-size: clamp(0.75rem, 2vw, 0.85rem);
+      font-weight: 800;
       text-transform: uppercase;
-      letter-spacing: 6px;
+      letter-spacing: 5px;
+      /* Shrunk spacing */
     }
 
+    /* --- COMPACT MENU GRID --- */
     .menu-container {
       display: grid;
       grid-template-columns: 1fr;
-      gap: 20px;
+      gap: 16px;
+      /* Shrunk from 25px */
       width: 100%;
     }
 
@@ -272,57 +356,90 @@
       .menu-container {
         grid-template-columns: 1fr 1fr;
       }
-    }
 
-    @media (min-width: 950px) {
       .menu-card:nth-child(3) {
         grid-column: 1 / -1;
       }
     }
 
     .menu-card {
+      position: relative;
       display: flex;
       align-items: center;
-      padding: 24px;
-      background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 35%, rgba(0, 0, 0, 0.15) 35.1%, rgba(0, 0, 0, 0.4) 100%), var(--card-bg);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      padding: 20px;
+      /* Shrunk padding */
+      background: linear-gradient(160deg, var(--surface-light) 0%, var(--surface) 100%);
+      border: 1px solid var(--glass-border);
       border-radius: var(--radius-lg);
       text-decoration: none;
       color: var(--text-light);
       transition: var(--transition);
-      position: relative;
       overflow: hidden;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+      animation: slideUpFade 0.5s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+    }
+
+    /* Staggered entry */
+    .menu-card:nth-child(1) {
+      animation-delay: 0.15s;
+      --hover-color: var(--primary);
+    }
+
+    .menu-card:nth-child(2) {
+      animation-delay: 0.25s;
+      --hover-color: var(--success);
+    }
+
+    .menu-card:nth-child(3) {
+      animation-delay: 0.35s;
+      --hover-color: var(--purple);
+    }
+
+    .menu-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 3px;
+      background: var(--hover-color);
+      opacity: 0;
+      transition: opacity 0.3s;
     }
 
     .menu-card:hover {
-      transform: translateY(-4px);
+      transform: translateY(-4px) scale(1.01);
       border-color: rgba(255, 255, 255, 0.15);
-      box-shadow: 0 15px 40px rgba(0, 0, 0, 0.7);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 255, 255, 0.05);
+    }
+
+    .menu-card:hover::before {
+      opacity: 1;
     }
 
     .menu-card:active {
-      transform: translateY(1px);
+      transform: translateY(1px) scale(0.98);
     }
 
     .icon-box {
-      width: 65px;
-      height: 65px;
+      width: 55px;
+      height: 55px;
+      /* Shrunk from 75px */
       background: rgba(0, 0, 0, 0.4);
       border-radius: 14px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 28px;
-      margin-right: 20px;
+      font-size: 24px;
+      margin-right: 16px;
       flex-shrink: 0;
-      border: 1px solid rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--glass-border);
       box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
-      transition: transform 0.3s ease;
+      transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
     .menu-card:hover .icon-box {
-      transform: scale(1.05);
+      transform: scale(1.1) rotate(5deg);
     }
 
     .card-content {
@@ -331,59 +448,63 @@
     }
 
     .card-title {
-      font-size: 1.25rem;
+      font-size: 1.15rem;
       font-weight: 800;
       margin-bottom: 6px;
       letter-spacing: 0.5px;
     }
 
+    /* Shrunk */
     .card-desc {
       font-size: 0.85rem;
       color: var(--text-dim);
-      line-height: 1.5;
+      line-height: 1.4;
       font-weight: 500;
     }
 
+    /* --- COMPACT SUPPORT BOX --- */
     .support-box {
       width: 100%;
-      background: radial-gradient(ellipse at top, rgba(255, 170, 0, 0.08) 0%, transparent 70%), rgba(15, 15, 15, 0.6);
+      background: radial-gradient(ellipse at top, rgba(255, 170, 0, 0.08) 0%, transparent 70%), rgba(16, 19, 26, 0.8);
       border: 1px dashed rgba(255, 170, 0, 0.3);
       border-radius: var(--radius-lg);
-      padding: 30px;
+      padding: 20px;
+      /* Shrunk */
       text-align: center;
-      margin-top: 40px;
+      margin-top: 30px;
+      /* Shrunk from 50px */
       box-sizing: border-box;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+      animation: slideUpFade 0.5s 0.45s backwards;
     }
 
     .support-box p {
-      margin: 0 0 20px 0;
+      margin: 0 0 15px 0;
       color: #e2e8f0;
       font-size: 0.95rem;
-      font-weight: 700;
+      font-weight: 800;
     }
 
     .btn-call {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 10px;
-      background: linear-gradient(180deg, #ffbc00, #ff9500);
+      gap: 8px;
+      background: linear-gradient(135deg, #ffbc00, #ff9500);
       color: #000;
       text-decoration: none;
-      padding: 14px 28px;
-      border-radius: 30px;
-      font-weight: 900;
+      padding: 12px 24px;
+      border-radius: 25px;
+      font-weight: 800;
       font-size: 0.95rem;
       transition: var(--transition);
-      box-shadow: 0 5px 20px rgba(255, 170, 0, 0.3);
+      box-shadow: 0 4px 15px rgba(255, 170, 0, 0.3);
       text-transform: uppercase;
-      letter-spacing: 1px;
     }
 
     .btn-call:hover {
       transform: translateY(-2px);
-      box-shadow: 0 8px 25px rgba(255, 170, 0, 0.5);
+      box-shadow: 0 6px 20px rgba(255, 170, 0, 0.4);
     }
 
     .btn-call:active {
@@ -392,12 +513,12 @@
 
     .desktop-contact {
       display: none;
-      font-size: 1.4rem;
+      font-size: 1.25rem;
       font-weight: 900;
       color: var(--warning);
-      margin-top: 10px;
+      margin-top: 8px;
       letter-spacing: 1px;
-      text-shadow: 0 0 20px rgba(255, 170, 0, 0.5);
+      text-shadow: 0 0 15px rgba(255, 170, 0, 0.3);
     }
 
     @media (min-width: 650px) {
@@ -411,17 +532,20 @@
     }
 
     .footer {
-      margin-top: 50px;
+      margin-top: 30px;
+      /* Shrunk from 60px */
       text-align: center;
-      color: #555;
+      color: #666;
       font-size: 0.75rem;
-      padding-bottom: 20px;
-      line-height: 1.8;
+      padding-bottom: 15px;
+      line-height: 1.6;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1px;
+      animation: fadeInDown 0.5s 0.55s backwards;
     }
 
+    /* --- TOAST & MODALS (Kept proportioned) --- */
     #toast {
       position: fixed;
       bottom: -100px;
@@ -429,10 +553,10 @@
       transform: translateX(-50%);
       background: var(--success);
       color: #000;
-      padding: 15px 25px;
+      padding: 14px 24px;
       border-radius: var(--radius-md);
       font-weight: 800;
-      font-size: 1rem;
+      font-size: 0.95rem;
       z-index: 200000;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
       transition: bottom 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
@@ -442,7 +566,6 @@
       bottom: 30px;
     }
 
-    /* --- ROBUST MESSAGE MODAL CSS --- */
     #operator-msg-modal {
       display: none;
       position: fixed;
@@ -453,7 +576,6 @@
       align-items: center;
       justify-content: center;
       z-index: 999999;
-      /* Supreme Z-index */
       opacity: 0;
       transition: opacity 0.3s ease;
     }
@@ -465,10 +587,10 @@
     .msg-modal-content {
       background: var(--warning);
       color: #000;
-      padding: 30px;
-      border-radius: 15px;
-      border: 3px solid #ff9100;
-      max-width: 400px;
+      padding: 25px;
+      border-radius: var(--radius-lg);
+      border: 2px solid #ff9100;
+      max-width: 380px;
       width: 90%;
       text-align: center;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8);
@@ -480,7 +602,6 @@
       transform: scale(1);
     }
 
-    /* --- MINIMIZABLE CALL UI STYLES --- */
     .call-overlay {
       position: fixed;
       inset: 0;
@@ -491,13 +612,13 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.4s ease, backdrop-filter 0.4s ease;
+      transition: background 0.3s ease, backdrop-filter 0.3s ease;
     }
 
     .call-overlay.minimized {
       inset: auto;
-      bottom: 25px;
-      right: 25px;
+      bottom: 20px;
+      right: 20px;
       width: auto;
       height: auto;
       background: transparent;
@@ -507,43 +628,44 @@
     }
 
     .active-call-card {
-      background: var(--card-bg);
-      padding: 30px;
-      border-radius: 24px;
+      background: var(--surface);
+      padding: 25px;
+      border-radius: 20px;
       border: 2px solid var(--success);
       text-align: center;
-      box-shadow: 0 0 60px rgba(0, 230, 118, 0.25);
-      max-width: 350px;
+      box-shadow: 0 0 60px rgba(0, 230, 118, 0.2);
+      max-width: 320px;
       width: 90%;
       transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       pointer-events: auto;
     }
 
     .call-overlay.minimized .active-call-card {
-      padding: 15px 20px;
-      border-radius: 16px;
-      width: 280px;
-      max-width: calc(100vw - 50px);
+      padding: 12px 16px;
+      border-radius: 14px;
+      width: 260px;
+      max-width: calc(100vw - 40px);
       text-align: left;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
+      border-width: 1px;
     }
 
     .call-card-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: 15px;
     }
 
     .call-overlay.minimized .call-card-header {
-      margin-bottom: 5px;
+      margin-bottom: 4px;
     }
 
     .call-badge {
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 800;
       color: var(--success);
       background: rgba(0, 230, 118, 0.15);
@@ -560,9 +682,9 @@
       background: rgba(255, 255, 255, 0.1);
       border: none;
       color: #fff;
-      font-size: 1.1rem;
-      width: 35px;
-      height: 35px;
+      font-size: 1rem;
+      width: 32px;
+      height: 32px;
       border-radius: 50%;
       cursor: pointer;
       transition: 0.2s;
@@ -580,43 +702,45 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 15px;
-      margin-bottom: 30px;
+      gap: 10px;
+      margin-bottom: 25px;
     }
 
     .call-overlay.minimized .call-info {
       flex-direction: row;
-      margin-bottom: 5px;
-      gap: 15px;
+      margin-bottom: 4px;
+      gap: 12px;
     }
 
     .call-avatar {
-      font-size: 60px;
+      font-size: 50px;
       animation: pulseMic 1.5s infinite;
       margin: 0;
+      filter: drop-shadow(0 5px 15px rgba(0, 0, 0, 0.5));
     }
 
     .call-overlay.minimized .call-avatar {
-      font-size: 30px;
+      font-size: 26px;
       animation: none;
+      filter: none;
     }
 
     .call-title {
       margin: 0;
       color: var(--success);
       font-weight: 900;
-      font-size: 1.5rem;
+      font-size: 1.4rem;
     }
 
     .call-overlay.minimized .call-title {
-      font-size: 1.1rem;
+      font-size: 1rem;
     }
 
     .call-subtitle {
       color: var(--text-muted);
-      margin: 5px 0 0 0;
-      font-size: 0.95rem;
-      font-weight: 500;
+      margin: 4px 0 0 0;
+      font-size: 0.85rem;
+      font-weight: 600;
     }
 
     .call-overlay.minimized .call-subtitle {
@@ -627,15 +751,16 @@
       background: var(--danger);
       color: #fff;
       border: none;
-      padding: 16px 40px;
-      border-radius: 30px;
+      padding: 14px 30px;
+      border-radius: 25px;
       font-weight: 900;
-      font-size: 1.1rem;
+      font-size: 1rem;
       cursor: pointer;
       width: 100%;
       text-transform: uppercase;
-      box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3);
+      box-shadow: 0 6px 20px rgba(255, 68, 68, 0.3);
       transition: transform 0.2s;
+      letter-spacing: 0.5px;
     }
 
     .btn-end-call:hover {
@@ -644,13 +769,20 @@
     }
 
     .call-overlay.minimized .btn-end-call {
-      padding: 10px 20px;
-      font-size: 0.9rem;
+      padding: 8px 16px;
+      font-size: 0.85rem;
     }
   </style>
 </head>
 
 <body>
+
+  <!-- Smooth Compact Preloader -->
+  <div id="preloader">
+    <div class="loader-ring"></div>
+    <div class="loader-text">Loading Hub</div>
+  </div>
+
   <div class="app-container">
     <div class="top-bar">
       <div id="network-pill" class="network-pill">
@@ -665,16 +797,16 @@
     </div>
 
     <div id="test-mode-banner" class="banner test-mode-banner">
-      ⚠️ TEST MODE ACTIVE (OVERRIDE: <span id="test-mode-date">...</span>)
+      ⚠️ TEST MODE ACTIVE (DATE: <span id="test-mode-date">...</span>)
     </div>
 
     <div id="unsynced-warning" class="banner unsynced-warning">
-      ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records trapped on this device!
-      <br><span class="subtext">Open the Scanner or Registration tab while online to push them to the Hub.</span>
+      ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records trapped!
+      <br><span class="subtext">Open Scanner/Registration while online to sync.</span>
     </div>
 
     <div class="header">
-      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.7</span></h1>
+      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.6</span></h1>
       <p>Operations Portal</p>
     </div>
 
@@ -684,7 +816,7 @@
         <div class="card-content">
           <div class="card-title">Live Scanner</div>
           <div class="card-desc">
-            Instantly scan attendee QR badges or manually verify IDs. Safely queues data if offline.
+            Instantly scan attendee QR badges or verify IDs. Safely queues data if offline.
           </div>
         </div>
       </a>
@@ -694,7 +826,7 @@
         <div class="card-content">
           <div class="card-title">Kiosk Registration</div>
           <div class="card-desc">
-            Register new walk-in attendees quickly. Auto-generates verified ID pass codes.
+            Register new walk-in attendees quickly. Auto-generates verified ID codes.
           </div>
         </div>
       </a>
@@ -704,7 +836,7 @@
         <div class="card-content">
           <div class="card-title">Network Statistics</div>
           <div class="card-desc">
-            Monitor live device connections, global sync status, and active event metrics.
+            Monitor live device connections, global sync status, and event metrics.
           </div>
         </div>
       </a>
@@ -712,7 +844,7 @@
 
     <div class="support-box">
       <p>Experiencing hardware or network issues?</p>
-      <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Tech Support</a>
+      <a href="tel:8960446756" class="btn-call" onclick="playClick()">📞 Call Support</a>
       <div class="desktop-contact">📞 Support: +91 8960 446 756</div>
     </div>
 
@@ -722,41 +854,39 @@
     </div>
   </div>
 
+  <!-- Modals & Overlays -->
   <div id="toast">Message</div>
 
-  <!-- Persistent Operator Message Modal (FULLY REWRITTEN TO AVOID REPAINT BUG) -->
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
-      <h2 style="margin-top:0; color:#000;">📨 Hub Message</h2>
+      <h2 style="margin-top:0; color:#000; font-size: 1.4rem;">📨 Hub Message</h2>
       <p id="operator-msg-text"
-        style="font-size: 1.2rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 25px;"></p>
+        style="font-size: 1.1rem; font-weight: 800; color: #000; white-space: pre-wrap; margin-bottom: 20px;"></p>
       <button onclick="closeOperatorMsg()"
-        style="padding: 14px 24px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1.1rem; width:100%; box-shadow: 0 4px 15px rgba(0,0,0,0.3); transition: transform 0.2s;">
+        style="padding: 12px 20px; background: #000; color: var(--warning); border:none; border-radius: 10px; cursor: pointer; font-weight: 900; font-size:1rem; width:100%; box-shadow: 0 6px 20px rgba(0,0,0,0.3); transition: transform 0.2s;">
         Acknowledge Message
       </button>
     </div>
   </div>
 
-  <!-- WebRTC Incoming Call Modal -->
   <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
     <div class="active-call-card"
-      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
       <div
-        style="font-size: 55px; margin-bottom: 25px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
+        style="font-size: 50px; margin-bottom: 20px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
         📞</div>
-      <h2 style="margin: 0 0 10px 0; color: var(--text-light); font-weight: 900;">Incoming Call</h2>
-      <p style="color: var(--text-dim); margin-bottom: 35px; font-size: 0.95rem; font-weight: 500;">Command Hub is
+      <h2 style="margin: 0 0 8px 0; color: var(--text-light); font-weight: 900; font-size: 1.5rem;">Incoming Call</h2>
+      <p style="color: var(--text-dim); margin-bottom: 30px; font-size: 0.9rem; font-weight: 600;">Command Hub is
         dispatching audio...</p>
-      <div style="display: flex; gap: 15px; justify-content: center;">
+      <div style="display: flex; gap: 12px; justify-content: center;">
         <button onclick="acceptCall()"
-          style="background: var(--success); color: #000; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
+          style="background: var(--success); color: #000; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
         <button onclick="rejectCall()"
-          style="background: var(--danger); color: #fff; border: none; padding: 14px 28px; border-radius: 30px; font-weight: 900; font-size: 1rem; cursor: pointer; flex: 1; box-shadow: 0 5px 20px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+          style="background: var(--danger); color: #fff; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
       </div>
     </div>
   </div>
 
-  <!-- Minimizable WebRTC Active Call Modal -->
   <div id="active-call-overlay" class="call-overlay" style="display: none;">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
@@ -764,7 +894,6 @@
         <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()"
           title="Minimize / Maximize">🗕</button>
       </div>
-
       <div class="call-info">
         <div class="call-avatar" id="call-avatar">🎙️</div>
         <div class="call-text">
@@ -772,7 +901,6 @@
           <p class="call-subtitle">Command Hub Connected.</p>
         </div>
       </div>
-
       <div class="call-actions">
         <button onclick="endCall()" class="btn-end-call">❌ End Call</button>
       </div>
@@ -780,6 +908,19 @@
   </div>
 
   <script>
+    // --- Preloader Logic ---
+    window.addEventListener("load", () => {
+      const preloader = document.getElementById("preloader");
+      preloader.classList.add("fade-out");
+      setTimeout(() => {
+        preloader.style.display = "none";
+      }, 500);
+
+      syncServerStatus();
+      connectCallServer();
+      setInterval(syncServerStatus, 4000);
+    });
+
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => { });
     }
@@ -954,7 +1095,6 @@
               const msgBox = document.getElementById("operator-msg-modal");
               document.getElementById("operator-msg-text").innerText = data.message;
               msgBox.style.display = "flex";
-              // Timeout ensures the browser reflows before running the opacity animation
               setTimeout(() => msgBox.classList.add("show"), 10);
               playAudioTone("ALERT");
             }
@@ -990,7 +1130,6 @@
     // ==========================================
     // WEBRTC BIDIRECTIONAL CALL SYSTEM LOGIC
     // ==========================================
-
     let wsCall = null;
     let peerConnection = null;
     let localStream = null;
@@ -1030,10 +1169,6 @@
       const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
-      if (window.location.hostname.includes("trycloudflare.com")) {
-        console.warn("⚠️ Cloudflare Tunnel Detected: Port 5002 for WebRTC audio may be blocked by Cloudflare unless explicitly routed.");
-      }
-
       try {
         wsCall = new WebSocket(wsUrl);
 
@@ -1053,21 +1188,16 @@
             }
             else if (data.type === 'client_muted') {
               if (localStream) {
-                localStream.getAudioTracks().forEach(track => {
-                  track.enabled = !data.muted;
-                });
+                localStream.getAudioTracks().forEach(track => { track.enabled = !data.muted; });
               }
             }
             else if (data.type === 'call_ended') {
               endCall(false);
             }
-          } catch (parseError) {
-            console.error("Failed to parse WebRTC data:", parseError);
-          }
+          } catch (parseError) { }
         };
 
         wsCall.onclose = (e) => {
-          console.log(`Voice server disconnected (Code: ${e.code}). Retrying in 5s...`);
           clearTimeout(wsReconnectTimer);
           wsReconnectTimer = setTimeout(connectCallServer, 5000);
         };
@@ -1092,28 +1222,19 @@
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
 
-        peerConnection = new RTCPeerConnection({
-          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-        localStream.getTracks().forEach(track => {
-          peerConnection.addTrack(track, localStream);
-        });
+        localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
 
         peerConnection.ontrack = (event) => {
-          if (!remoteAudio.srcObject) {
-            remoteAudio.srcObject = event.streams[0];
-          }
+          if (!remoteAudio.srcObject) { remoteAudio.srcObject = event.streams[0]; }
         };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
 
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-          wsCall.send(JSON.stringify({
-            type: 'offer',
-            sdp: peerConnection.localDescription.sdp
-          }));
+          wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
         }
 
       } catch (err) {
@@ -1122,22 +1243,12 @@
       }
     }
 
-    function rejectCall() {
-      endCall(true);
-    }
+    function rejectCall() { endCall(true); }
 
     function endCall(sendPing = true) {
-      if (peerConnection) {
-        peerConnection.close();
-        peerConnection = null;
-      }
-      if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-        localStream = null;
-      }
-      if (remoteAudio.srcObject) {
-        remoteAudio.srcObject = null;
-      }
+      if (peerConnection) { peerConnection.close(); peerConnection = null; }
+      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+      if (remoteAudio.srcObject) { remoteAudio.srcObject = null; }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
@@ -1171,19 +1282,11 @@
     });
 
     document.addEventListener("click", initAudio, { once: true });
-
+    window.addEventListener("online", syncServerStatus);
+    window.addEventListener("offline", syncServerStatus);
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") syncServerStatus();
     });
-
-    window.addEventListener("load", () => {
-      syncServerStatus();
-      connectCallServer();
-      setInterval(syncServerStatus, 4000);
-    });
-
-    window.addEventListener("online", syncServerStatus);
-    window.addEventListener("offline", syncServerStatus);
   </script>
 </body>
 
