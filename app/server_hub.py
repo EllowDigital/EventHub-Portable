@@ -278,10 +278,22 @@ class GlobalAudioEngine:
     def __init__(self):
         self.in_stream = None
         self.out_stream = None
+        self.in_channels = 1
+        self.out_channels = 1
         if SOUNDDEVICE_AVAILABLE:
             try:
+                in_info = sd.query_devices(sd.default.device[0], 'input')
+                self.in_channels = min(2, in_info['max_input_channels'])
+            except Exception:
+                pass
+            try:
+                out_info = sd.query_devices(sd.default.device[1], 'output')
+                self.out_channels = min(2, out_info['max_output_channels'])
+            except Exception:
+                pass
+            try:
                 self.in_stream = sd.RawInputStream(
-                    samplerate=48000, channels=1, dtype='int16',
+                    samplerate=48000, channels=self.in_channels, dtype='int16',
                     blocksize=960, callback=self.in_callback
                 )
                 self.in_stream.start()
@@ -289,7 +301,7 @@ class GlobalAudioEngine:
                 pass
             try:
                 self.out_stream = sd.RawOutputStream(
-                    samplerate=48000, channels=1, dtype='int16',
+                    samplerate=48000, channels=self.out_channels, dtype='int16',
                     blocksize=960, callback=self.out_callback
                 )
                 self.out_stream.start()
@@ -298,7 +310,11 @@ class GlobalAudioEngine:
 
     def in_callback(self, indata, frames, time_info, status):
         try:
-            data = bytes(indata)
+            if self.in_channels == 2:
+                arr = np.frombuffer(indata, dtype=np.int16)[0::2]
+                data = arr.tobytes()
+            else:
+                data = bytes(indata)
             for sub in list(GLOBAL_MIC_SUBSCRIBERS):
                 sub.add_data(data)
         except Exception:
@@ -316,12 +332,18 @@ class GlobalAudioEngine:
                         del buf[:needed_bytes]
                         mixed += np.frombuffer(chunk, dtype=np.int16)
                         has_audio = True
-            if has_audio:
-                outdata[:] = np.clip(mixed, -32768, 32767).astype(np.int16).tobytes()
+            
+            mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+            
+            if self.out_channels == 2:
+                stereo = np.empty((frames, 2), dtype=np.int16)
+                stereo[:, 0] = mixed
+                stereo[:, 1] = mixed
+                outdata[:] = stereo.tobytes()
             else:
-                outdata[:] = b'\x00' * needed_bytes
+                outdata[:] = mixed.tobytes()
         except Exception:
-            outdata[:] = b'\x00' * (frames * 2)
+            outdata[:] = b'\x00' * (frames * 2 * self.out_channels)
 
 global_audio = GlobalAudioEngine()
 
@@ -348,21 +370,19 @@ class WebRTCMicTrack(MediaStreamTrack):
     async def recv(self):
         if not global_audio.in_stream:
             await asyncio.sleep(0.02)
-            frame = av.AudioFrame(format='s16', layout='mono', samples=960)
-            frame.sample_rate = 48000
-            frame.pts = self.pts
-            frame.time_base = fractions.Fraction(1, 48000)
-            self.pts += 960
-            return frame
-
-        if not self.q:
-            await self.event.wait()
-            self.event.clear()
-        
-        if self.q:
-            data = self.q.popleft()
-        else:
             data = b'\x00' * 1920
+        else:
+            try:
+                if not self.q:
+                    await asyncio.wait_for(self.event.wait(), timeout=0.02)
+                    self.event.clear()
+            except asyncio.TimeoutError:
+                pass
+            
+            if self.q:
+                data = self.q.popleft()
+            else:
+                data = b'\x00' * 1920
 
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -414,7 +434,7 @@ async def signaling_handler(websocket, path=None):
         if GLOBAL_GROUP_CALL_ACTIVE:
             try:
                 await websocket.send(json.dumps({"type": "incoming_call"}))
-            except:
+            except Exception:
                 pass
         
         async for message in websocket:
@@ -447,30 +467,36 @@ async def signaling_handler(websocket, path=None):
                                             GLOBAL_AUDIO_MIXER[device_id] = bytearray()
                                     try:
                                         while True:
-                                            frame = await track.recv()
-                                            frames = resampler.resample(frame)
-                                            for f in frames:
-                                                data_bytes = f.planes[0].to_bytes()
-                                                with MIXER_LOCK:
-                                                    if device_id in GLOBAL_AUDIO_MIXER:
-                                                        GLOBAL_AUDIO_MIXER[device_id].extend(data_bytes)
-                                                        if len(GLOBAL_AUDIO_MIXER[device_id]) > 96000:
-                                                            del GLOBAL_AUDIO_MIXER[device_id][:-96000]
-                                                samples = np.frombuffer(data_bytes, dtype=np.int16)
-                                                try:
-                                                    rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
-                                                    vol_percent = 0 if rms < 150 else min(100, int((rms / 4000.0) * 100))
-                                                    
-                                                    if app_window:
-                                                        try:
-                                                            if GLOBAL_GROUP_CALL_ACTIVE:
-                                                                app_window.gui_queue.put_nowait(lambda v=vol_percent: app_window.update_group_call_meter(v))
-                                                            else:
-                                                                app_window.gui_queue.put_nowait(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
-                                                        except queue.Full:
-                                                            pass
-                                                except Exception:
-                                                    pass
+                                            try:
+                                                frame = await track.recv()
+                                                frames = resampler.resample(frame)
+                                                for f in frames:
+                                                    data_bytes = f.planes[0].to_bytes()
+                                                    with MIXER_LOCK:
+                                                        if device_id in GLOBAL_AUDIO_MIXER:
+                                                            GLOBAL_AUDIO_MIXER[device_id].extend(data_bytes)
+                                                            if len(GLOBAL_AUDIO_MIXER[device_id]) > 48000:
+                                                                del GLOBAL_AUDIO_MIXER[device_id][:-48000]
+                                                    samples = np.frombuffer(data_bytes, dtype=np.int16)
+                                                    try:
+                                                        rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
+                                                        vol_percent = 0 if rms < 150 else min(100, int((rms / 4000.0) * 100))
+                                                        if app_window:
+                                                            try:
+                                                                if GLOBAL_GROUP_CALL_ACTIVE:
+                                                                    app_window.gui_queue.put_nowait(lambda v=vol_percent: app_window.update_group_call_meter(v))
+                                                                else:
+                                                                    app_window.gui_queue.put_nowait(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                                            except queue.Full:
+                                                                pass
+                                                    except Exception:
+                                                        pass
+                                            except av.AVError:
+                                                pass
+                                            except asyncio.CancelledError:
+                                                break
+                                            except Exception:
+                                                await asyncio.sleep(0.1)
                                     except Exception:
                                         pass
 
