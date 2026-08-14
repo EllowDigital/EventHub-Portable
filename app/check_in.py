@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -14,12 +15,12 @@ import requests
 import urllib3
 import ctypes
 from datetime import datetime
-import tkinter as tk
-from tkinter import messagebox, filedialog
 
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-from PIL import Image, ImageTk, ImageOps
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                               QGridLayout, QLabel, QPushButton, QFrame, QGroupBox, QLineEdit, 
+                               QDialog, QMessageBox, QFileDialog, QScrollArea, QSizePolicy)
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QImage, QKeySequence, QShortcut
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -55,19 +56,34 @@ _file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3,
 _file_handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s'))
 logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
 
-CATEGORY_STYLES = {
-    "business": "warning",    
-    "general": "primary",     
-    "media": "danger",        
-    "exhibitor": "info",      
-    "default": "secondary"    
+# PySide6 Theme Colors Map
+THEMES = {
+    "darkly": {
+        "BG": "#141414", "CARD_BG": "#242424", "BORDER": "#333333", "TEXT": "#e0e0e0",
+        "PRIMARY": "#375a7f", "INFO": "#0dcaf0", "SUCCESS": "#00bc8c", "WARNING": "#f39c12", "DANGER": "#e74c3c", "SECONDARY": "#888888"
+    },
+    "flatly": {
+        "BG": "#f8f9fa", "CARD_BG": "#ffffff", "BORDER": "#ced4da", "TEXT": "#212529",
+        "PRIMARY": "#2c3e50", "INFO": "#3498db", "SUCCESS": "#18bc9c", "WARNING": "#f39c12", "DANGER": "#e74c3c", "SECONDARY": "#95a5a6"
+    }
 }
 
-def global_exception_handler(*args):
-    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
+CATEGORY_STYLES = {
+    "business": "WARNING",    
+    "general": "PRIMARY",     
+    "media": "DANGER",        
+    "exhibitor": "INFO",      
+    "default": "SECONDARY"    
+}
 
-tk.Tk.report_callback_exception = global_exception_handler
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc_type, exc_value, exc_traceback))
 
+sys.excepthook = global_exception_handler
+
+# ==============================================================================
+# CONFIG & NOTIFICATION ENGINES
+# ==============================================================================
 class ConfigManager:
     def __init__(self):
         self.config = {
@@ -127,25 +143,17 @@ class NotificationEngine(threading.Thread):
             status, message = task.get("status"), task.get("message", "")
             if HAS_WINSOUND:
                 try:
-                    if status == "SUCCESS":
-                        winsound.Beep(2000, 100)  
-                    elif status == "DUPLICATE":
-                        winsound.Beep(1000, 100) 
-                        time.sleep(0.05)
-                        winsound.Beep(1000, 100)
-                    elif status == "ALERT":
-                        winsound.Beep(600, 200)
-                        winsound.Beep(800, 500)
-                    else:
-                        winsound.Beep(400, 150)
-                        winsound.Beep(300, 300)
-                except Exception:
-                    print('\a') 
+                    if status == "SUCCESS": winsound.Beep(2000, 100)  
+                    elif status == "DUPLICATE": winsound.Beep(1000, 100); time.sleep(0.05); winsound.Beep(1000, 100)
+                    elif status == "ALERT": winsound.Beep(600, 200); winsound.Beep(800, 500)
+                    else: winsound.Beep(400, 150); winsound.Beep(300, 300)
+                except Exception: QApplication.beep()
             else:
-                print('\a')
+                QApplication.beep()
                 if status not in ["SUCCESS", "ALERT"]:
                     time.sleep(0.2)
-                    print('\a')
+                    QApplication.beep()
+                    
             speak_text = "Access Denied." if status not in ["SUCCESS", "DUPLICATE", "ALERT"] else ""
             if speak_text:
                 if platform.system() == "Windows":
@@ -161,89 +169,103 @@ class NotificationEngine(threading.Thread):
                     try:
                         self.engine.say(speak_text)
                         self.engine.runAndWait()
-                    except Exception as e:
-                        logging.error(f"TTS Play Error: {e}")
+                    except Exception as e: logging.error(f"TTS Play Error: {e}")
             self.queue.task_done()
 
-
-class SettingsDialog(ttk.Toplevel):
+# ==============================================================================
+# UI COMPONENTS
+# ==============================================================================
+class SettingsDialog(QDialog):
     def __init__(self, parent, config_manager, on_save_callback):
         super().__init__(parent)
-        self.title("Settings — Gate Terminal")
-        self.geometry("520x500") 
-        self.resizable(False, False)
+        self.setWindowTitle("Settings — Gate Terminal")
+        self.setFixedSize(520, 420)
         self.config_manager = config_manager
         self.on_save = on_save_callback
-        self.attributes('-topmost', True)
+        
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.build_ui()
-        self.center_window(parent)
-
-    def center_window(self, parent):
-        self.update_idletasks()
-        x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_width() // 2)
-        y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_height() // 2)
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
     def build_ui(self):
-        frame = ttk.Frame(self, padding=30)
-        frame.pack(fill=BOTH, expand=True)
-        ttk.Label(frame, text="⚙️ Terminal Settings", font="-size 18 -weight bold", bootstyle=PRIMARY).pack(anchor=W, pady=(0, 25))
+        lyt = QVBoxLayout(self)
+        lyt.setContentsMargins(30, 30, 30, 30)
+        
+        t = QLabel("⚙️ Terminal Settings")
+        t.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        t.setStyleSheet(f"color: {THEMES['darkly']['PRIMARY']};")
+        lyt.addWidget(t)
+        lyt.addSpacing(15)
+        
         fields = [
             ("Hub Server URL (HTTP/HTTPS)", "hub_url", self.config_manager.config["hub_url"]),
             ("Device Identifier Name", "device_name", self.config_manager.config["device_name"])
         ]
+        
         self.entries = {}
         for label_text, key, val in fields:
-            ttk.Label(frame, text=label_text, font="-weight bold").pack(anchor=W)
-            ent = ttk.Entry(frame, font="-size 11")
-            ent.insert(0, val)
-            ent.pack(fill=X, pady=(5, 20), ipady=6)
+            lbl = QLabel(label_text)
+            lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            lyt.addWidget(lbl)
+            
+            ent = QLineEdit(val)
+            lyt.addWidget(ent)
+            lyt.addSpacing(10)
             self.entries[key] = ent
-        ttk.Label(frame, text="Local Photo Directory", font="-weight bold").pack(anchor=W)
-        photo_frame = ttk.Frame(frame)
-        photo_frame.pack(fill=X, pady=(5, 30))
-        self.ent_photo = ttk.Entry(photo_frame, font="-size 11")
-        self.ent_photo.insert(0, self.config_manager.config["photo_directory"])
-        self.ent_photo.pack(side=LEFT, fill=X, expand=True, padx=(0, 10), ipady=6)
-        ttk.Button(photo_frame, text="Browse", bootstyle=SECONDARY, command=self.browse_dir).pack(side=RIGHT, ipady=6)
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill=X, side=BOTTOM, pady=(10, 0))
-        ttk.Button(btn_frame, text="💾 Save & Apply", bootstyle=SUCCESS, command=self.save).pack(fill=X, pady=5, ipady=8)
-        ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(fill=X, ipady=8)
+            
+        lbl = QLabel("Local Photo Directory")
+        lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        lyt.addWidget(lbl)
+        
+        photo_row = QHBoxLayout()
+        self.ent_photo = QLineEdit(self.config_manager.config["photo_directory"])
+        photo_row.addWidget(self.ent_photo, 1)
+        
+        btn_browse = QPushButton("Browse")
+        btn_browse.clicked.connect(self.browse_dir)
+        photo_row.addWidget(btn_browse)
+        lyt.addLayout(photo_row)
+        
+        lyt.addStretch()
+        
+        btn_row = QHBoxLayout()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_save = QPushButton("💾 Save & Apply")
+        btn_save.setStyleSheet(f"background-color: {THEMES['darkly']['SUCCESS']}; color: white; font-weight: bold;")
+        btn_save.clicked.connect(self.save)
+        
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_save)
+        lyt.addLayout(btn_row)
 
     def browse_dir(self):
-        start_dir = os.path.normpath(os.path.join(BASE_DIR, self.ent_photo.get()))
-        d = filedialog.askdirectory(initialdir=start_dir)
+        start_dir = os.path.normpath(os.path.join(BASE_DIR, self.ent_photo.text()))
+        d = QFileDialog.getExistingDirectory(self, "Select Directory", start_dir)
         if d:
-            self.ent_photo.delete(0, END)
-            self.ent_photo.insert(0, os.path.relpath(d, start=BASE_DIR).replace('\\', '/'))
+            self.ent_photo.setText(os.path.relpath(d, start=BASE_DIR).replace('\\', '/'))
 
     def save(self):
-        self.config_manager.config["hub_url"] = self.entries["hub_url"].get().strip().rstrip('/')
-        self.config_manager.config["device_name"] = self.entries["device_name"].get().strip()
-        self.config_manager.config["photo_directory"] = self.ent_photo.get().strip()
+        self.config_manager.config["hub_url"] = self.entries["hub_url"].text().strip().rstrip('/')
+        self.config_manager.config["device_name"] = self.entries["device_name"].text().strip()
+        self.config_manager.config["photo_directory"] = self.ent_photo.text().strip()
         self.config_manager.save()
         self.on_save()
-        self.destroy()
+        self.accept()
 
 
-class GateDisplay(ttk.Window):
+class GateDisplay(QMainWindow):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Gate Terminal")
-        self.geometry("1440x900")
-        self.minsize(1280, 750)
+        super().__init__()
+        self.setWindowTitle("TDE UP 2026 — Gate Terminal")
+        self.resize(1440, 900)
+        self.setMinimumSize(1280, 750)
         
         icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
         if os.path.exists(icon_path):
-            try:
-                self.iconbitmap(icon_path)
-            except tk.TclError:
-                pass
+            try: self.setWindowIcon(QIcon(icon_path))
+            except Exception: pass
 
-        self.update_idletasks()
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        self.geometry(f"+{(sw - 1440) // 2}+{(sh - 900) // 2 - 20}")
-        
         self.current_theme = "darkly"
         self.config_manager = ConfigManager()
         self.gui_queue = queue.Queue()
@@ -263,107 +285,166 @@ class GateDisplay(ttk.Window):
         self._photo_cache = collections.OrderedDict() 
         self._last_scan_time = 0.0
         self._processed_sigs = collections.deque(maxlen=200) 
+        
         self.stream_session = None
         self.api_session = None
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
         
         self.build_ui()
-        self.process_queues()
+        self.apply_theme()
+        
+        self.queue_timer = QTimer(self)
+        self.queue_timer.timeout.connect(self.process_queues)
+        self.queue_timer.start(20)
+        
         self.start_threads()
 
     def toggle_theme(self):
         self.current_theme = "flatly" if self.current_theme == "darkly" else "darkly"
-        self.style.theme_use(self.current_theme)
-        self.handle_placeholder_colors()
-        if self.lbl_attendee_id.cget("text") == "---":
+        self.apply_theme()
+        if self.lbl_attendee_id.text() == "---":
             self.set_placeholder_photo()
 
-    def handle_placeholder_colors(self):
-        for e in (self.ent_id, self.ent_phone):
-            if "e.g." in e.get():
-                e.configure(foreground="gray")
-            else:
-                e.configure(foreground="")
+    def apply_theme(self):
+        t = THEMES[self.current_theme]
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{ background-color: {t['BG']}; color: {t['TEXT']}; font-family: 'Segoe UI', Arial; }}
+            QFrame#Card {{ background-color: {t['CARD_BG']}; border: 1px solid {t['BORDER']}; border-radius: 8px; }}
+            QLabel {{ background: transparent; border: none; }}
+            QLineEdit {{ 
+                background-color: {t['CARD_BG']}; 
+                border: 1px solid {t['BORDER']}; 
+                color: {t['TEXT']}; 
+                border-radius: 4px; 
+                padding: 10px; 
+                font-size: 14px; 
+            }}
+            QLineEdit:focus {{ border: 1px solid {t['PRIMARY']}; }}
+            QPushButton {{ 
+                background-color: {t['CARD_BG']}; 
+                color: {t['TEXT']}; 
+                border: 1px solid {t['BORDER']}; 
+                padding: 8px 16px; 
+                border-radius: 4px; 
+                font-weight: bold; 
+            }}
+            QPushButton:hover {{ background-color: {t['BORDER']}; }}
+            #Pill {{ border: 1px solid {t['BORDER']}; border-radius: 18px; background-color: {t['CARD_BG']}; }}
+            #BigBanner {{ border-radius: 8px; padding: 15px; font-weight: bold; font-size: 32px; }}
+            #RecentCard {{ border: 1px solid {t['BORDER']}; border-radius: 6px; }}
+        """)
 
     def build_ui(self):
-        self.nav = ttk.Frame(self, padding=20)
-        self.nav.pack(fill=X)
-        title_frame = ttk.Frame(self.nav)
-        title_frame.pack(side=LEFT)
-        ttk.Label(title_frame, text="🎟️ Gate Display Terminal", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
-        self.lbl_subtitle = ttk.Label(title_frame, text=f"{self.config_manager.config['device_name']} • TDE UP 2026", font="-size 11 -weight bold", bootstyle=SECONDARY)
-        self.lbl_subtitle.pack(anchor=W, pady=(2, 0))
-        controls = ttk.Frame(self.nav)
-        controls.pack(side=RIGHT)
-        ttk.Button(controls, text="🌗 Theme", bootstyle="outline-secondary", command=self.toggle_theme).pack(side=LEFT, padx=6)
-        ttk.Button(controls, text="⚙️ Settings", bootstyle="outline-secondary", command=self.open_settings).pack(side=LEFT, padx=6)
-        self.btn_sound = ttk.Button(controls, text="🔊 Sound", bootstyle="outline-info", command=self.toggle_sound)
-        self.btn_sound.pack(side=LEFT, padx=6)
-        ttk.Button(controls, text="⛶ Fullscreen", bootstyle="outline-secondary", command=lambda: self.attributes('-fullscreen', not self.attributes('-fullscreen'))).pack(side=LEFT, padx=6)
-        self.net_pill = ttk.Frame(controls, borderwidth=1, relief="solid", bootstyle="dark", padding=(15, 8))
-        self.net_pill.pack(side=LEFT, padx=25)
-        self.lbl_hub_status = ttk.Label(self.net_pill, text="● Connecting...", font="-weight bold -size 12", bootstyle=WARNING)
-        self.lbl_hub_status.pack(side=LEFT)
-        ttk.Separator(self, orient=HORIZONTAL).pack(fill=X)
-
-        self.test_banner = ttk.Frame(self, bootstyle=DANGER)
-        self.lbl_test_mode = ttk.Label(self.test_banner, text="⚠️ TEST MODE ACTIVE", font="-weight bold -size 14", bootstyle="inverse-danger")
-        self.lbl_test_mode.pack(pady=10)
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QVBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.content = ttk.Frame(self, padding=30)
-        self.content.pack(fill=BOTH, expand=True)
-        self.content.columnconfigure(0, weight=1) 
-        self.content.columnconfigure(1, weight=0, minsize=440) 
-        self.content.rowconfigure(0, weight=1)
-
-        left_panel = ttk.Frame(self.content)
-        left_panel.grid(row=0, column=0, sticky=NSEW, padx=(0, 30))
-        left_panel.columnconfigure(0, weight=1)
-        left_panel.rowconfigure(1, weight=1)
-
-        self.status_banner = ttk.Label(left_panel, text="WAITING FOR SCAN...", font="-size 34 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
-        self.status_banner.grid(row=0, column=0, sticky=EW, pady=(0, 30), ipady=35)
-
-        profile_frame = ttk.Frame(left_panel)
-        profile_frame.grid(row=1, column=0, sticky=NSEW)
-        profile_frame.columnconfigure(1, weight=1) 
+        # NAV BAR
+        self.nav = QWidget()
+        self.nav.setStyleSheet(f"border-bottom: 1px solid #333;")
+        nav_lyt = QHBoxLayout(self.nav)
+        nav_lyt.setContentsMargins(20, 15, 20, 15)
         
-        photo_container = ttk.Frame(profile_frame)
-        photo_container.grid(row=0, column=0, sticky=NS, padx=(0, 35))
-        photo_border = ttk.Frame(photo_container, bootstyle=SECONDARY, padding=3)
-        photo_border.pack(fill=BOTH, expand=True)
-        self.lbl_photo = ttk.Label(photo_border, anchor=CENTER)
-        self.lbl_photo.pack(fill=BOTH, expand=True)
+        title_box = QVBoxLayout()
+        t1 = QLabel("🎟️ Gate Display Terminal")
+        t1.setFont(QFont("Segoe UI", 22, QFont.Bold))
+        self.lbl_subtitle = QLabel(f"{self.config_manager.config['device_name']} • TDE UP 2026")
+        self.lbl_subtitle.setStyleSheet("color: gray; font-weight: bold;")
+        title_box.addWidget(t1)
+        title_box.addWidget(self.lbl_subtitle)
+        nav_lyt.addLayout(title_box)
+        nav_lyt.addStretch()
         
-        self.lbl_attendee_id = ttk.Label(photo_container, text="---", font="-size 15 -weight bold", bootstyle=SECONDARY, anchor=CENTER)
-        self.lbl_attendee_id.pack(pady=15)
+        btn_theme = QPushButton("🌗 Theme")
+        btn_theme.clicked.connect(self.toggle_theme)
+        btn_settings = QPushButton("⚙️ Settings")
+        btn_settings.clicked.connect(self.open_settings)
+        self.btn_sound = QPushButton("🔊 Sound")
+        self.btn_sound.clicked.connect(self.toggle_sound)
+        btn_fs = QPushButton("⛶ Fullscreen")
+        btn_fs.clicked.connect(lambda: self.showNormal() if self.isFullScreen() else self.showFullScreen())
+        
+        self.net_pill = QFrame()
+        self.net_pill.setObjectName("Pill")
+        net_lyt = QHBoxLayout(self.net_pill)
+        net_lyt.setContentsMargins(15, 5, 15, 5)
+        self.net_dot = QLabel("●")
+        self.net_dot.setStyleSheet(f"color: {THEMES['darkly']['WARNING']}; font-size: 16px;")
+        self.lbl_hub_status = QLabel("Connecting...")
+        self.lbl_hub_status.setStyleSheet("font-weight: bold; font-size: 12px;")
+        net_lyt.addWidget(self.net_dot)
+        net_lyt.addWidget(self.lbl_hub_status)
+        
+        for w in [btn_theme, btn_settings, self.btn_sound, btn_fs, self.net_pill]:
+            nav_lyt.addWidget(w)
+            nav_lyt.addSpacing(5)
+            
+        main_layout.addWidget(self.nav)
+
+        # TEST MODE BANNER
+        self.test_banner = QLabel("⚠️ TEST MODE ACTIVE")
+        self.test_banner.setAlignment(Qt.AlignCenter)
+        self.test_banner.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.test_banner.setStyleSheet(f"background-color: {THEMES['darkly']['DANGER']}; color: white; padding: 10px;")
+        self.test_banner.hide()
+        main_layout.addWidget(self.test_banner)
+        
+        # CONTENT SPLIT
+        content = QWidget()
+        content_lyt = QHBoxLayout(content)
+        content_lyt.setContentsMargins(30, 30, 30, 30)
+        
+        # --- LEFT PANEL ---
+        left_panel = QWidget()
+        left_lyt = QVBoxLayout(left_panel)
+        left_lyt.setContentsMargins(0, 0, 15, 0)
+        
+        self.status_banner = QLabel("WAITING FOR SCAN...")
+        self.status_banner.setObjectName("BigBanner")
+        self.status_banner.setAlignment(Qt.AlignCenter)
+        self.status_banner.setStyleSheet(f"background-color: {THEMES['darkly']['SECONDARY']}; color: white;")
+        left_lyt.addWidget(self.status_banner)
+        left_lyt.addSpacing(30)
+        
+        profile_frame = QHBoxLayout()
+        
+        photo_box = QVBoxLayout()
+        self.lbl_photo = QLabel()
+        self.lbl_photo.setFixedSize(340, 340)
+        self.lbl_photo.setAlignment(Qt.AlignCenter)
         self.set_placeholder_photo()
-
-        details = ttk.Frame(profile_frame)
-        details.grid(row=0, column=1, sticky=NSEW)
-        header_frame = ttk.Frame(details)
-        header_frame.pack(fill=X, pady=(10, 0))
+        self.lbl_attendee_id = QLabel("---")
+        self.lbl_attendee_id.setAlignment(Qt.AlignCenter)
+        self.lbl_attendee_id.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        self.lbl_attendee_id.setStyleSheet("color: gray;")
+        photo_box.addWidget(self.lbl_photo)
+        photo_box.addWidget(self.lbl_attendee_id)
+        photo_box.addStretch()
+        profile_frame.addLayout(photo_box)
+        profile_frame.addSpacing(30)
         
-        self.lbl_pass_badge = ttk.Label(header_frame, text="PENDING", font="-size 16 -weight bold", bootstyle="inverse-secondary", padding=(20, 10))
-        self.lbl_pass_badge.pack(side=RIGHT, anchor=NE, padx=(10, 0))
-        self.lbl_name = ttk.Label(header_frame, text="SCAN TICKET", font="-size 36 -weight bold", bootstyle=DEFAULT)
-        self.lbl_name.pack(side=LEFT, anchor=NW, fill=X, expand=True, pady=(0, 5))
-        self.lbl_company = ttk.Label(details, text="Awaiting attendee details...", font="-size 18", bootstyle=INFO)
-        self.lbl_company.pack(anchor=W, pady=(8, 35), fill=X)
-
-        def adjust_wraplength(event):
-            badge_width = self.lbl_pass_badge.winfo_reqwidth()
-            available = event.width - badge_width - 30
-            if available > 150:
-                self.lbl_name.configure(wraplength=available)
-                self.lbl_company.configure(wraplength=event.width)
-                
-        header_frame.bind("<Configure>", adjust_wraplength)
-
-        grid = ttk.Frame(details)
-        grid.pack(fill=BOTH, expand=True)
-        grid.columnconfigure((0, 1), weight=1, uniform="group1") 
+        details_box = QVBoxLayout()
+        details_hdr = QHBoxLayout()
+        self.lbl_name = QLabel("SCAN TICKET")
+        self.lbl_name.setFont(QFont("Segoe UI", 36, QFont.Bold))
+        self.lbl_name.setWordWrap(True)
+        self.lbl_pass_badge = QLabel("PENDING")
+        self.lbl_pass_badge.setAlignment(Qt.AlignCenter)
+        self.lbl_pass_badge.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        self.lbl_pass_badge.setStyleSheet(f"background-color: {THEMES['darkly']['SECONDARY']}; color: white; padding: 10px 20px; border-radius: 8px;")
+        details_hdr.addWidget(self.lbl_name, 1)
+        details_hdr.addWidget(self.lbl_pass_badge)
+        details_box.addLayout(details_hdr)
         
+        self.lbl_company = QLabel("Awaiting attendee details...")
+        self.lbl_company.setFont(QFont("Segoe UI", 18))
+        self.lbl_company.setStyleSheet("color: gray;")
+        self.lbl_company.setWordWrap(True)
+        details_box.addWidget(self.lbl_company)
+        details_box.addSpacing(30)
+        
+        grid = QGridLayout()
+        grid.setSpacing(15)
         self.fields = {}
         row_col = [
             (0, 0, "📱 Mobile Number", "mobile"), (0, 1, "📍 Location", "location"), 
@@ -371,89 +452,130 @@ class GateDisplay(ttk.Window):
             (2, 0, "📅 Event Date", "date"), (2, 1, "📡 Scanner ID", "scanner")
         ]
         for r, c, label, key in row_col:
-            f = ttk.Frame(grid, padding=12)
-            f.grid(row=r, column=c, sticky=NSEW, padx=6, pady=6)
-            ttk.Label(f, text=f"{label.upper()}", font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-            val = ttk.Label(f, text="---", font="-size 16 -weight bold", wraplength=250)
-            val.pack(anchor=W, pady=(6,0))
+            f = QFrame()
+            f.setObjectName("Card")
+            f_lyt = QVBoxLayout(f)
+            l1 = QLabel(label.upper())
+            l1.setStyleSheet("color: gray; font-weight: bold;")
+            val = QLabel("---")
+            val.setFont(QFont("Segoe UI", 16, QFont.Bold))
+            val.setWordWrap(True)
+            f_lyt.addWidget(l1)
+            f_lyt.addWidget(val)
+            grid.addWidget(f, r, c)
             self.fields[key] = val
-
-        self.bottom_banner = ttk.Label(left_panel, text="READY FOR OPERATIONS", font="-size 18 -weight bold", bootstyle="inverse-secondary", anchor=CENTER)
-        self.bottom_banner.grid(row=2, column=0, sticky=EW, pady=(30,0), ipady=22)
-
-
-        right_panel = ttk.Frame(self.content)
-        right_panel.grid(row=0, column=1, sticky=NSEW)
-        right_panel.columnconfigure(0, weight=1) 
-        right_panel.rowconfigure(3, weight=1)
-
-        lookup = ttk.Labelframe(right_panel, text=" 🔍 Manual Entry ", padding=25)
-        lookup.grid(row=0, column=0, sticky=EW, pady=(0, 25))
-        self.ent_phone = self.create_placeholder_entry(lookup, "Phone Number (e.g. 90000...)")
-        self.ent_phone.pack(fill=X, pady=(0, 15), ipady=8)
-        self.ent_phone.bind("<Return>", lambda e: self.manual_scan('phone'))
-        self.ent_id = self.create_placeholder_entry(lookup, "Attendee ID (e.g. TDE26...)")
-        self.ent_id.pack(fill=X, pady=(0, 18), ipady=8)
-        self.ent_id.bind("<Return>", lambda e: self.manual_scan('id'))
-        ttk.Button(lookup, text="PROCESS MANUAL SCAN", bootstyle=SUCCESS, command=self.handle_manual_submit).pack(fill=X, ipady=8)
-
-        stats_frame = ttk.Frame(right_panel)
-        stats_frame.grid(row=1, column=0, sticky=EW, pady=(0, 30))
-        stats_frame.columnconfigure((0, 1), weight=1)
-        self.stat_labels = {}
-        for idx, (title, color) in enumerate([("Success", SUCCESS), ("Duplicate", WARNING), ("Wrong Day", SECONDARY), ("Errors", DANGER)]):
-            f = ttk.Frame(stats_frame, borderwidth=1, relief=SOLID, padding=15)
-            f.grid(row=idx//2, column=idx%2, sticky=NSEW, padx=5, pady=5)
-            val = ttk.Label(f, text="0", font="-size 26 -weight bold", bootstyle=color)
-            val.pack(anchor=CENTER)
-            ttk.Label(f, text=title.upper(), font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=CENTER)
-            self.stat_labels[title] = val
-
-        ttk.Label(right_panel, text="🕒 RECENT ACTIVITY", font="-size 13 -weight bold", bootstyle=PRIMARY).grid(row=2, column=0, sticky=NW, pady=(0, 12))
-        self.list_frame = ttk.Frame(right_panel)
-        self.list_frame.grid(row=3, column=0, sticky=NSEW)
-
-    def create_placeholder_entry(self, parent, placeholder_text):
-        entry = ttk.Entry(parent, font="-size 12")
-        entry.insert(0, placeholder_text)
-        entry.configure(foreground='gray')
+            
+        details_box.addLayout(grid)
+        details_box.addStretch()
+        profile_frame.addLayout(details_box, 1)
+        left_lyt.addLayout(profile_frame, 1)
         
-        def on_focus_in(event):
-            if entry.get() == placeholder_text:
-                entry.delete(0, END)
-                entry.configure(foreground='') 
+        self.bottom_banner = QLabel("READY FOR OPERATIONS")
+        self.bottom_banner.setObjectName("BigBanner")
+        self.bottom_banner.setAlignment(Qt.AlignCenter)
+        self.bottom_banner.setStyleSheet(f"background-color: {THEMES['darkly']['SECONDARY']}; color: white;")
+        left_lyt.addWidget(self.bottom_banner)
 
-        def on_focus_out(event):
-            if not entry.get():
-                entry.insert(0, placeholder_text)
-                entry.configure(foreground='gray')
+        # --- RIGHT PANEL ---
+        right_panel = QWidget()
+        right_panel.setFixedWidth(440)
+        right_lyt = QVBoxLayout(right_panel)
+        right_lyt.setContentsMargins(15, 0, 0, 0)
+        
+        # Manual Entry
+        lookup_card = QFrame()
+        lookup_card.setObjectName("Card")
+        lookup_lyt = QVBoxLayout(lookup_card)
+        lookup_lyt.setContentsMargins(20, 20, 20, 20)
+        
+        lbl_lu = QLabel("🔍 Manual Entry")
+        lbl_lu.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lookup_lyt.addWidget(lbl_lu)
+        lookup_lyt.addSpacing(10)
+        
+        self.ent_phone = QLineEdit()
+        self.ent_phone.setPlaceholderText("Phone Number (e.g. 90000...)")
+        self.ent_phone.returnPressed.connect(lambda: self.manual_scan('phone'))
+        
+        self.ent_id = QLineEdit()
+        self.ent_id.setPlaceholderText("Attendee ID (e.g. TDE26...)")
+        self.ent_id.returnPressed.connect(lambda: self.manual_scan('id'))
+        
+        btn_proc = QPushButton("PROCESS MANUAL SCAN")
+        btn_proc.setStyleSheet(f"background-color: {THEMES['darkly']['SUCCESS']}; color: white; padding: 12px; font-size: 14px;")
+        btn_proc.clicked.connect(self.handle_manual_submit)
+        
+        lookup_lyt.addWidget(self.ent_phone)
+        lookup_lyt.addWidget(self.ent_id)
+        lookup_lyt.addSpacing(10)
+        lookup_lyt.addWidget(btn_proc)
+        right_lyt.addWidget(lookup_card)
+        right_lyt.addSpacing(20)
 
-        entry.bind("<FocusIn>", on_focus_in)
-        entry.bind("<FocusOut>", on_focus_out)
-        return entry
+        # Stats Grid
+        stats_grid = QGridLayout()
+        stats_grid.setSpacing(10)
+        self.stat_labels = {}
+        stat_items = [("Success", THEMES['darkly']['SUCCESS']), ("Duplicate", THEMES['darkly']['WARNING']), 
+                      ("Wrong Day", THEMES['darkly']['SECONDARY']), ("Errors", THEMES['darkly']['DANGER'])]
+        for idx, (title, color) in enumerate(stat_items):
+            f = QFrame()
+            f.setObjectName("Card")
+            f_lyt = QVBoxLayout(f)
+            val = QLabel("0")
+            val.setFont(QFont("Segoe UI", 26, QFont.Bold))
+            val.setStyleSheet(f"color: {color};")
+            val.setAlignment(Qt.AlignCenter)
+            lbl = QLabel(title.upper())
+            lbl.setStyleSheet("color: gray; font-weight: bold; font-size: 11px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            f_lyt.addWidget(val)
+            f_lyt.addWidget(lbl)
+            stats_grid.addWidget(f, idx//2, idx%2)
+            self.stat_labels[title] = val
+        right_lyt.addLayout(stats_grid)
+        right_lyt.addSpacing(20)
+
+        # Recent Activity
+        lbl_ra = QLabel("🕒 RECENT ACTIVITY")
+        lbl_ra.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        lbl_ra.setStyleSheet(f"color: {THEMES['darkly']['PRIMARY']};")
+        right_lyt.addWidget(lbl_ra)
+        
+        self.list_frame = QWidget()
+        self.list_lyt = QVBoxLayout(self.list_frame)
+        self.list_lyt.setContentsMargins(0, 0, 0, 0)
+        self.list_lyt.setSpacing(8)
+        self.list_lyt.setAlignment(Qt.AlignTop)
+        right_lyt.addWidget(self.list_frame, 1)
+
+        content_lyt.addWidget(left_panel, 1)
+        content_lyt.addWidget(right_panel)
+        main_layout.addWidget(content)
 
     def handle_manual_submit(self):
-        id_val = self.ent_id.get()
-        phone_val = self.ent_phone.get()
-        if id_val and "Attendee ID" not in id_val:
-            self.manual_scan('id')
-        elif phone_val and "Phone Number" not in phone_val:
-            self.manual_scan('phone')
+        id_val = self.ent_id.text().strip()
+        phone_val = self.ent_phone.text().strip()
+        if id_val: self.manual_scan('id')
+        elif phone_val: self.manual_scan('phone')
 
     def toggle_sound(self):
         self.notifier.sound_enabled = not self.notifier.sound_enabled
-        self.btn_sound.configure(
-            text="🔊 Sound" if self.notifier.sound_enabled else "🔇 Muted", 
-            bootstyle="outline-info" if self.notifier.sound_enabled else "outline-secondary"
-        )
+        if self.notifier.sound_enabled:
+            self.btn_sound.setText("🔊 Sound")
+            self.btn_sound.setStyleSheet(f"border: 1px solid {THEMES['darkly']['INFO']}; color: {THEMES['darkly']['INFO']}; background: transparent;")
+        else:
+            self.btn_sound.setText("🔇 Muted")
+            self.btn_sound.setStyleSheet(f"border: 1px solid {THEMES['darkly']['SECONDARY']}; color: {THEMES['darkly']['SECONDARY']}; background: transparent;")
 
     def set_placeholder_photo(self):
-        bg_color = '#e9ecef' if self.current_theme == "flatly" else '#222222'
+        bg_color = "#e9ecef" if self.current_theme == "flatly" else "#222222"
         if bg_color not in self._placeholder_img_cache:
-            img = Image.new('RGB', (340, 340), color=bg_color)
-            self._placeholder_img_cache[bg_color] = ImageTk.PhotoImage(img)
+            img = QPixmap(340, 340)
+            img.fill(QColor(bg_color))
+            self._placeholder_img_cache[bg_color] = img
         self.current_photo = self._placeholder_img_cache[bg_color]
-        self.lbl_photo.configure(image=self.current_photo)
+        self.lbl_photo.setPixmap(self.current_photo)
 
     def async_load_photo(self, attendee_id):
         if attendee_id in self._photo_cache:
@@ -469,17 +591,20 @@ class GateDisplay(ttk.Window):
                 path = os.path.join(abs_directory, f"{attendee_id}{ext}")
                 if os.path.exists(path):
                     try:
-                        img = Image.open(path)
-                        img = ImageOps.fit(img, (340, 340), Image.Resampling.LANCZOS)
-                        photo_image = ImageTk.PhotoImage(img)
-                        self._photo_cache[attendee_id] = photo_image
-                        if len(self._photo_cache) > 50:
-                            self._photo_cache.popitem(last=False)
-                        self.gui_queue.put(lambda p=photo_image: self.update_photo_ui(p))
-                        photo_found = True
-                        break
-                    except Exception as e:
-                        logging.error(f"Photo error: {e}")
+                        pixmap = QPixmap(path)
+                        if not pixmap.isNull():
+                            # Crop and scale properly
+                            scaled = pixmap.scaled(340, 340, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+                            crop_rect = scaled.rect()
+                            crop_rect.moveCenter(scaled.rect().center())
+                            cropped = scaled.copy(crop_rect.intersected(scaled.rect()))
+                            
+                            self._photo_cache[attendee_id] = cropped
+                            if len(self._photo_cache) > 50: self._photo_cache.popitem(last=False)
+                            self.gui_queue.put(lambda p=cropped: self.update_photo_ui(p))
+                            photo_found = True
+                            break
+                    except Exception as e: logging.error(f"Photo error: {e}")
             if not photo_found:
                 self.gui_queue.put(self.set_placeholder_photo)
 
@@ -487,28 +612,29 @@ class GateDisplay(ttk.Window):
 
     def update_photo_ui(self, photo_image):
         self.current_photo = photo_image  
-        self.lbl_photo.configure(image=self.current_photo)
+        self.lbl_photo.setPixmap(self.current_photo)
 
     def process_queues(self):
         while not self.gui_queue.empty():
-            try:
-                task = self.gui_queue.get_nowait()
-                task()
+            try: self.gui_queue.get_nowait()()
             except queue.Empty: break
             except Exception as e: logging.error(f"GUI queue task failed: {e}")
+            
         scans_to_process = []
         while not self.scan_queue.empty() and len(scans_to_process) < 5:
             try: scans_to_process.append(self.scan_queue.get_nowait())
             except queue.Empty: break
+            
         for event in scans_to_process:
             self.update_ui_with_event(event)
-        self.after(50, self.process_queues)
 
     def trigger_banner_animation(self, c_style):
-        original_style = f"inverse-{c_style}"
-        flash_style = "light" if self.current_theme == "darkly" else "dark"
-        self.status_banner.configure(bootstyle=f"inverse-{flash_style}")
-        self.after(100, lambda: self.status_banner.configure(bootstyle=original_style))
+        t = THEMES[self.current_theme]
+        flash_color = t['TEXT']
+        original_color = t.get(c_style.upper(), t['SECONDARY'])
+        
+        self.status_banner.setStyleSheet(f"background-color: {flash_color}; color: {t['BG']}; border-radius: 8px;")
+        QTimer.singleShot(150, lambda: self.status_banner.setStyleSheet(f"background-color: {original_color}; color: white; border-radius: 8px;"))
 
     def update_ui_with_event(self, event_data):
         status_type = event_data.get("status", "ERROR")
@@ -530,103 +656,135 @@ class GateDisplay(ttk.Window):
             except Exception: pass
 
         configs = {
-            "SUCCESS": {"color": "success", "banner": "✅ ACCESS GRANTED", "bottom": "SUCCESSFULLY CHECKED IN"},
-            "DUPLICATE": {"color": "warning", "banner": "⚠️ ALREADY SCANNED", "bottom": "DUPLICATE SCAN DETECTED"},
-            "ERROR": {"color": "danger", "banner": "❌ ACCESS DENIED", "bottom": message}
+            "SUCCESS": {"color": "SUCCESS", "banner": "✅ ACCESS GRANTED", "bottom": "SUCCESSFULLY CHECKED IN"},
+            "DUPLICATE": {"color": "WARNING", "banner": "⚠️ ALREADY SCANNED", "bottom": "DUPLICATE SCAN DETECTED"},
+            "ERROR": {"color": "DANGER", "banner": "❌ ACCESS DENIED", "bottom": message}
         }
         cfg = configs.get(status_type, configs["ERROR"])
         c_style = cfg["color"]
         
-        self.status_banner.configure(text=cfg["banner"])
-        self.bottom_banner.configure(text=cfg["bottom"], bootstyle=f"inverse-{c_style}")
+        t = THEMES[self.current_theme]
+        banner_color = t.get(c_style, t['SECONDARY'])
+        
+        self.status_banner.setText(cfg["banner"])
+        self.bottom_banner.setText(cfg["bottom"])
+        self.bottom_banner.setStyleSheet(f"background-color: {banner_color}; color: white; border-radius: 8px;")
         self.trigger_banner_animation(c_style)
         self.notifier.queue.put({"status": status_type, "message": message})
 
         if attendee:
             category_raw = str(attendee.get("attendee_type", "")).lower()
             badge_style = CATEGORY_STYLES.get(category_raw, CATEGORY_STYLES["default"])
-            self.lbl_pass_badge.configure(bootstyle=f"inverse-{badge_style}", text=category_raw.upper() if category_raw else "UNKNOWN")
-            self.lbl_name.configure(text=attendee.get("full_name", "").upper(), bootstyle="default")
-            self.lbl_company.configure(text=attendee.get("business_name") or "General Admission", bootstyle="info" if c_style=="success" else c_style)
-            self.lbl_attendee_id.configure(text=attendee.get("attendee_id", ""))
+            badge_color = t.get(badge_style, t['SECONDARY'])
+            
+            self.lbl_pass_badge.setText(category_raw.upper() if category_raw else "UNKNOWN")
+            self.lbl_pass_badge.setStyleSheet(f"background-color: {badge_color}; color: white; padding: 10px 20px; border-radius: 8px;")
+            self.lbl_name.setText(attendee.get("full_name", "").upper())
+            
+            comp_color = t['INFO'] if c_style == "SUCCESS" else banner_color
+            self.lbl_company.setText(attendee.get("business_name") or "General Admission")
+            self.lbl_company.setStyleSheet(f"color: {comp_color}; font-weight: bold;")
+            
+            self.lbl_attendee_id.setText(attendee.get("attendee_id", ""))
             
             mobile = str(attendee.get("mobile", ""))
             masked_mobile = f"••••••{mobile[-4:]}" if len(mobile) >= 4 else mobile
-            self.fields["mobile"].configure(text=masked_mobile)
-            self.fields["location"].configure(text=f"{attendee.get('city', '')}, {attendee.get('state', '')}".strip(', '))
-            self.fields["category"].configure(text=attendee.get("attendee_type", ""))
-            self.fields["gender"].configure(text=attendee.get("gender", ""))
-            self.fields["date"].configure(text=datetime.now().strftime("%d %B %Y"))
-            self.fields["scanner"].configure(text=scanner_dev)
+            self.fields["mobile"].setText(masked_mobile)
+            self.fields["location"].setText(f"{attendee.get('city', '')}, {attendee.get('state', '')}".strip(', '))
+            self.fields["category"].setText(attendee.get("attendee_type", ""))
+            self.fields["gender"].setText(attendee.get("gender", ""))
+            self.fields["date"].setText(datetime.now().strftime("%d %B %Y"))
+            self.fields["scanner"].setText(scanner_dev)
             
             self.async_load_photo(attendee.get("attendee_id"))
             self.add_recent_scan(attendee.get("full_name"), attendee.get("attendee_id"), c_style, time_str)
         else:
-            self.lbl_name.configure(text="UNKNOWN RECORD", bootstyle=DANGER)
-            self.lbl_company.configure(text="---", bootstyle=SECONDARY)
-            self.lbl_attendee_id.configure(text="---")
-            self.lbl_pass_badge.configure(bootstyle="inverse-secondary", text="N/A")
-            for lbl in self.fields.values(): lbl.configure(text="---")
+            self.lbl_name.setText("UNKNOWN RECORD")
+            self.lbl_company.setText("---")
+            self.lbl_company.setStyleSheet(f"color: {t['SECONDARY']};")
+            self.lbl_attendee_id.setText("---")
+            self.lbl_pass_badge.setText("N/A")
+            self.lbl_pass_badge.setStyleSheet(f"background-color: {t['SECONDARY']}; color: white; padding: 10px 20px; border-radius: 8px;")
+            for lbl in self.fields.values(): lbl.setText("---")
             self.set_placeholder_photo()
 
         if status_type in ["SUCCESS", "DUPLICATE", "ERROR"]:
             key = "Success" if status_type == "SUCCESS" else ("Duplicate" if status_type == "DUPLICATE" else "Errors")
             self.stats[key] += 1
-            self.stat_labels[key].configure(text=str(self.stats[key]))
+            self.stat_labels[key].setText(str(self.stats[key]))
 
     def add_recent_scan(self, name, att_id, style, time_str):
-        card = ttk.Frame(self.list_frame, bootstyle=style, borderwidth=1, relief=SOLID)
-        lbl_style = f"inverse-{style}"
-        top = ttk.Frame(card, bootstyle=style)
-        top.pack(fill=X, padx=14, pady=(10, 0))
-        ttk.Label(top, text=f"👤 {name}", font="-size 12 -weight bold", bootstyle=lbl_style).pack(side=LEFT)
-        ttk.Label(top, text=time_str, font="-size 10", bootstyle=lbl_style).pack(side=RIGHT)
-        bot = ttk.Frame(card, bootstyle=style)
-        bot.pack(fill=X, padx=14, pady=(4, 10))
-        ttk.Label(bot, text=att_id, font="-size 10", bootstyle=lbl_style).pack(side=LEFT)
-        ttk.Label(bot, text="✓ OK" if style=="success" else "⚠ WARN", font="-weight bold", bootstyle=lbl_style).pack(side=RIGHT)
-        if self.recent_scans:
-            card.pack(fill=X, pady=0, padx=2, before=self.recent_scans[0])
-        else:
-            card.pack(fill=X, pady=0, padx=2)
-            
-        def expand_card(c, target_pad, step=1):
-            current = int(c.pack_info().get('pady', 0))
-            if current < target_pad:
-                c.pack_configure(pady=current+step)
-                self.after(10, lambda: expand_card(c, target_pad, step))
-                
-        expand_card(card, 5)
+        card = QFrame()
+        card.setObjectName("RecentCard")
+        t = THEMES[self.current_theme]
+        bg_color = t.get(style, t['SECONDARY'])
+        card.setStyleSheet(f"background-color: {bg_color}; color: white; border-radius: 6px;")
+        
+        lyt = QVBoxLayout(card)
+        lyt.setContentsMargins(15, 10, 15, 10)
+        
+        top = QHBoxLayout()
+        n = QLabel(f"👤 {name}")
+        n.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        n.setStyleSheet("border: none; background: transparent;")
+        tm = QLabel(time_str)
+        tm.setStyleSheet("border: none; background: transparent;")
+        top.addWidget(n); top.addStretch(); top.addWidget(tm)
+        lyt.addLayout(top)
+        
+        bot = QHBoxLayout()
+        i = QLabel(att_id)
+        i.setStyleSheet("border: none; background: transparent;")
+        st = QLabel("✓ OK" if style=="SUCCESS" else "⚠ WARN")
+        st.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        st.setStyleSheet("border: none; background: transparent;")
+        bot.addWidget(i); bot.addStretch(); bot.addWidget(st)
+        lyt.addLayout(bot)
+        
+        self.list_lyt.insertWidget(0, card)
         self.recent_scans.insert(0, card)
+        
         if len(self.recent_scans) > 5:
             old = self.recent_scans.pop()
-            old.destroy()
+            old.deleteLater()
 
     def show_hub_message(self, msg):
         if getattr(self, '_showing_msg', False): return
         self._showing_msg = True
         self.notifier.queue.put({"status": "ALERT", "message": ""})
-        modal = tk.Toplevel(self)
-        modal.title("Hub Alert")
-        modal.geometry("450x300")
-        modal.resizable(False, False)
-        modal.transient(self)
-        modal.grab_set()
-        x = self.winfo_x() + (self.winfo_width() // 2) - 225
-        y = self.winfo_y() + (self.winfo_height() // 2) - 150
-        modal.geometry(f"+{x}+{y}")
-        frame = ttk.Frame(modal, borderwidth=3, relief="solid", bootstyle="warning")
-        frame.pack(fill=BOTH, expand=True)
-        ttk.Label(frame, text="📨 Hub Message", font="-size 18 -weight bold").pack(pady=(20, 10))
-        msg_lbl = ttk.Label(frame, text=msg, font="-size 12 -weight bold", wraplength=400, justify=CENTER)
-        msg_lbl.pack(expand=True, fill=BOTH, padx=20, pady=10)
-        def close_msg(event=None):
+        
+        modal = QDialog(self)
+        modal.setWindowTitle("Hub Alert")
+        modal.setFixedSize(450, 300)
+        
+        lyt = QVBoxLayout(modal)
+        frame = QFrame()
+        frame.setStyleSheet(f"border: 3px solid {THEMES['darkly']['WARNING']}; background-color: {THEMES['darkly']['CARD_BG']}; border-radius: 6px;")
+        f_lyt = QVBoxLayout(frame)
+        
+        t = QLabel("📨 Hub Message")
+        t.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        t.setAlignment(Qt.AlignCenter)
+        t.setStyleSheet("border: none;")
+        f_lyt.addWidget(t)
+        
+        m = QLabel(msg)
+        m.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        m.setAlignment(Qt.AlignCenter)
+        m.setWordWrap(True)
+        m.setStyleSheet("border: none;")
+        f_lyt.addWidget(m, 1)
+        
+        btn = QPushButton("Acknowledge Message")
+        btn.setStyleSheet("background-color: #333; padding: 10px; font-weight: bold;")
+        def close_msg():
             self._showing_msg = False
-            modal.destroy()
-        btn = ttk.Button(frame, text="Acknowledge Message", bootstyle="dark", padding=10, command=close_msg)
-        btn.pack(pady=20, fill=X, padx=40)
-        modal.bind('<Return>', close_msg)
-        modal.bind('<Escape>', close_msg)
+            modal.accept()
+        btn.clicked.connect(close_msg)
+        f_lyt.addWidget(btn)
+        
+        lyt.addWidget(frame)
+        modal.exec()
 
     def get_system_telemetry(self):
         battery_str = "N/A"
@@ -634,12 +792,9 @@ class GateDisplay(ttk.Window):
         if HAS_PSUTIL:
             try:
                 batt = psutil.sensors_battery()
-                if batt is not None:
-                    battery_str = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
-                else:
-                    battery_str = "AC Power (Desktop)"
-            except Exception:
-                pass
+                if batt is not None: battery_str = f"{int(batt.percent)}%" + (" AC" if batt.power_plugged else "")
+                else: battery_str = "AC Power (Desktop)"
+            except Exception: pass
             try:
                 if hasattr(psutil, 'sensors_temperatures'):
                     temps = psutil.sensors_temperatures()
@@ -648,8 +803,7 @@ class GateDisplay(ttk.Window):
                             if v and len(v) > 0:
                                 temp_str = f"{int(v[0].current)}°C"
                                 break
-            except Exception:
-                pass
+            except Exception: pass
             if temp_str == "N/A" and platform.system() == "Windows":
                 try:
                     cmd = "powershell -Command \"(Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature).CurrentTemperature\""
@@ -657,10 +811,8 @@ class GateDisplay(ttk.Window):
                     if output and output.isdigit():
                         kelvin_x10 = float(output)
                         celsius = int((kelvin_x10 / 10.0) - 273.15)
-                        if 0 <= celsius <= 120:
-                            temp_str = f"{celsius}°C"
-                except Exception:
-                    pass
+                        if 0 <= celsius <= 120: temp_str = f"{celsius}°C"
+                except Exception: pass
         return battery_str, temp_str
 
     def telemetry_loop(self):
@@ -669,8 +821,7 @@ class GateDisplay(ttk.Window):
                 b, t = self.get_system_telemetry()
                 self._cached_battery = b
                 self._cached_temp = t
-            except Exception:
-                pass
+            except Exception: pass
             time.sleep(15)
 
     def start_threads(self):
@@ -679,10 +830,12 @@ class GateDisplay(ttk.Window):
             if self.stream_session: self.stream_session.close()
             if self.api_session: self.api_session.close()
         except Exception: pass
+        
         self.stream_session = requests.Session()
         self.stream_session.headers.update({"User-Agent": "EventHub-GateDisplay-Stream/2.6", "Connection": "keep-alive"})
         self.api_session = requests.Session()
         self.api_session.headers.update({"User-Agent": "EventHub-GateDisplay-API/2.6", "Connection": "keep-alive"})
+        
         self.is_polling = True
         threading.Thread(target=self.telemetry_loop, daemon=True).start()
         threading.Thread(target=self.listen_to_server_stream, daemon=True).start()
@@ -704,28 +857,30 @@ class GateDisplay(ttk.Window):
                 resp.raise_for_status()
                 latency = int((time.time() - start_t) * 1000)
                 data = resp.json()
+                
                 canonical = data.get("canonical_name")
                 if canonical and canonical != self.config_manager.config.get("device_name") and canonical != "Unknown Device":
                     self.config_manager.config["device_name"] = canonical
                     self.config_manager.save()
-                    self.gui_queue.put(lambda c=canonical: self.lbl_subtitle.configure(text=f"{c} • TDE UP 2026"))
+                    self.gui_queue.put(lambda c=canonical: self.lbl_subtitle.setText(f"{c} • TDE UP 2026"))
+                    
                 msg = data.get("message")
-                if msg:
-                    self.gui_queue.put(lambda m=msg: self.show_hub_message(m))
+                if msg: self.gui_queue.put(lambda m=msg: self.show_hub_message(m))
+                    
                 self.gui_queue.put(lambda l=latency, tm=data.get("test_mode", False), td=data.get("test_date", "Unknown"): (
-                    self.update_net_pill(f"● Connected • {l}ms", "success" if l < 200 else "warning"),
+                    self.update_net_pill(f"● Connected • {l}ms", THEMES[self.current_theme]["SUCCESS"] if l < 200 else THEMES[self.current_theme]["WARNING"]),
                     self.update_test_banner(tm, td)
                 ))
             except Exception:
-                self.gui_queue.put(lambda: (self.update_net_pill("● Offline / Timeout", "danger"), self.update_test_banner(False, "")))
+                self.gui_queue.put(lambda: (self.update_net_pill("● Offline / Timeout", THEMES[self.current_theme]["DANGER"]), self.update_test_banner(False, "")))
             time.sleep(3)
 
     def update_test_banner(self, is_test_mode, test_date):
         if is_test_mode:
-            self.lbl_test_mode.configure(text=f"⚠️ TEST MODE ACTIVE (OVERRIDE: {test_date})")
-            if not self.test_banner.winfo_ismapped(): self.test_banner.pack(fill=X, before=self.content)
-        elif self.test_banner.winfo_ismapped(): 
-            self.test_banner.pack_forget()
+            self.test_banner.setText(f"⚠️ TEST MODE ACTIVE (OVERRIDE: {test_date})")
+            self.test_banner.show()
+        else:
+            self.test_banner.hide()
 
     def listen_to_server_stream(self):
         backoff = 1
@@ -743,30 +898,32 @@ class GateDisplay(ttk.Window):
                                 if decoded.startswith("data: "):
                                     try: self.scan_queue.put(json.loads(decoded[6:]))
                                     except Exception as e: logging.error(f"SSE JSON Error: {e}")
-                    else:
-                        time.sleep(backoff)
+                    else: time.sleep(backoff)
             except Exception as e:
                 logging.warning(f"Stream dropped. Reconnecting in {backoff}s. ({e})")
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 10) 
 
-    def update_net_pill(self, text, style_name):
-        self.lbl_hub_status.configure(text=text, bootstyle=style_name)
+    def update_net_pill(self, text, color):
+        self.lbl_hub_status.setText(text)
+        self.net_dot.setStyleSheet(f"color: {color}; font-size: 16px; border: none; background: transparent;")
 
     def manual_scan(self, lookup_type):
         current_time = time.time()
-        if current_time - self._last_scan_time < 1.0:
-            return 
+        if current_time - self._last_scan_time < 1.0: return 
         self._last_scan_time = current_time
-        val = self.ent_phone.get() if lookup_type == 'phone' else self.ent_id.get()
-        if "e.g." in val or not val.strip(): return
+        
+        val = self.ent_phone.text().strip() if lookup_type == 'phone' else self.ent_id.text().strip()
+        if not val: return
+        
         url = f"{self.config_manager.config['hub_url'].rstrip('/')}/api/checkin"
         payload = {
-            "attendee_id": val.strip(),
+            "attendee_id": val,
             "search_type": lookup_type,
             "device_name": self.config_manager.config["device_name"],
             "device_id": self.config_manager.config.get("device_id")
         }
+        
         def _post_action():
             try:
                 res = self.api_session.post(url, json=payload, timeout=5, verify=False)
@@ -787,35 +944,32 @@ class GateDisplay(ttk.Window):
                     "device": self.config_manager.config["device_name"]
                 })
         threading.Thread(target=_post_action, daemon=True).start()
+        
         def reset_inputs():
-            for entry in (self.ent_id, self.ent_phone):
-                entry.delete(0, END)
-                if self.focus_get() == entry: entry.configure(foreground='') 
-                else: entry.event_generate('<FocusOut>')
+            self.ent_id.clear()
+            self.ent_phone.clear()
         self.gui_queue.put(reset_inputs)
 
     def open_settings(self):
-        SettingsDialog(self, self.config_manager, self.on_settings_saved)
+        SettingsDialog(self, self.config_manager, self.on_settings_saved).exec()
 
     def on_settings_saved(self):
-        self.lbl_subtitle.config(text=f"{self.config_manager.config['device_name']} • TDE UP 2026")
+        self.lbl_subtitle.setText(f"{self.config_manager.config['device_name']} • TDE UP 2026")
         time.sleep(0.5)
         self.start_threads()
-
-    def on_close(self):
-        self.is_polling = False
-        try:
-            if self.stream_session: self.stream_session.close()
-            if self.api_session: self.api_session.close()
-        except Exception: pass
-        self.destroy()
 
 if __name__ == "__main__":
     if os.name == 'nt':
         try:
             my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.gate_display")
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
-        except Exception:
-            pass
-    app = GateDisplay()
-    app.mainloop()
+        except Exception: pass
+        
+    # High DPI Scaling
+    if hasattr(Qt, 'AA_EnableHighDpiScaling'): QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+    if hasattr(Qt, 'AA_UseHighDpiPixmaps'): QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        
+    app = QApplication(sys.argv)
+    window = GateDisplay()
+    window.show()
+    sys.exit(app.exec())
