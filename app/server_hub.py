@@ -26,7 +26,7 @@ import html
 import sys
 from datetime import datetime, timezone, timedelta
 
-# --- High-DPI Environment Flags (Must be set before QApplication) ---
+# --- High-DPI Environment Flags ---
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
@@ -54,6 +54,7 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Optional Imports
 try:
     import sounddevice as sd
     import soundfile as sf
@@ -105,37 +106,24 @@ def global_exception_handler(exc_type, exc_value, exc_traceback):
 sys.excepthook = global_exception_handler
 
 def _configure_windows_platform():
-    if platform.system() != "Windows":
-        return
+    if platform.system() != "Windows": return
     try:
         from ctypes import windll, c_void_p
         dpi_awareness_set = False
         try:
-            if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)):
-                dpi_awareness_set = True
-        except Exception:
-            pass
+            if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)): dpi_awareness_set = True
+        except: pass
         if not dpi_awareness_set:
-            try:
-                windll.shcore.SetProcessDpiAwareness(2)
-                dpi_awareness_set = True
-            except Exception:
-                pass
+            try: windll.shcore.SetProcessDpiAwareness(2); dpi_awareness_set = True
+            except: pass
         if not dpi_awareness_set:
-            try:
-                windll.user32.SetProcessDPIAware()
-            except Exception:
-                pass
-        try:
-            windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
-        except Exception:
-            pass
-        try:
-            windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
-        except Exception:
-            pass
-    except Exception:
-        pass
+            try: windll.user32.SetProcessDPIAware()
+            except: pass
+        try: windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
+        except: pass
+        try: windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        except: pass
+    except: pass
 
 _configure_windows_platform()
 
@@ -151,10 +139,8 @@ _db_shutdown_event = threading.Event()
 
 def _telemetry_worker():
     last_time = time.time()
-    try:
-        last_io = psutil.net_io_counters()
-    except Exception:
-        last_io = None
+    try: last_io = psutil.net_io_counters()
+    except: last_io = None
     while not _global_shutdown_event.is_set():
         try:
             cpu = int(psutil.cpu_percent(interval=None))
@@ -164,16 +150,12 @@ def _telemetry_worker():
             eth_iface = next((i for i in up_ifaces if 'ethernet' in i.lower() or 'eth' in i.lower()), None)
             usb_iface = next((i for i in up_ifaces if 'usb' in i.lower()), None)
             wifi_iface = next((i for i in up_ifaces if 'wi-fi' in i.lower() or 'wireless' in i.lower() or 'wlan' in i.lower()), None)
-            if eth_iface:
-                active_iface, iface_type = eth_iface, "Ethernet"
-            elif usb_iface:
-                active_iface, iface_type = usb_iface, "USB Eth"
-            elif wifi_iface:
-                active_iface, iface_type = wifi_iface, "Wi-Fi"
-            elif up_ifaces:
-                active_iface, iface_type = up_ifaces[0], "Network"
-            else:
-                active_iface, iface_type = None, "Offline"
+            if eth_iface: active_iface, iface_type = eth_iface, "Ethernet"
+            elif usb_iface: active_iface, iface_type = usb_iface, "USB Eth"
+            elif wifi_iface: active_iface, iface_type = wifi_iface, "Wi-Fi"
+            elif up_ifaces: active_iface, iface_type = up_ifaces[0], "Network"
+            else: active_iface, iface_type = None, "Offline"
+            
             dl_mbps = ul_mbps = total_mbps = dl_mb = ul_mb = 0.0
             link_speed = 0
             current_io = psutil.net_io_counters()
@@ -187,8 +169,7 @@ def _telemetry_worker():
                 dl_mb = current_io.bytes_recv / 1048576
                 ul_mb = current_io.bytes_sent / 1048576
             last_io, last_time = current_io, current_time
-            if active_iface and active_iface in stats:
-                link_speed = stats[active_iface].speed
+            if active_iface and active_iface in stats: link_speed = stats[active_iface].speed
             with _telemetry_lock:
                 TELEMETRY_DATA.update({
                     "cpu": cpu, "ram": ram, "net_type": iface_type,
@@ -227,7 +208,6 @@ DB_JOB_TIMEOUT = 12
 
 STATS_REFRESH_INTERVAL_SEC = 300  
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
-SLOW_REQUEST_THRESHOLD_MS = 300  
 MAX_LOG_LINES = 5000 
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
@@ -249,8 +229,7 @@ DEVICE_NAMES_FILE = os.path.join(CONFIG_DIR, 'device_names.json')
 
 try:
     if os.path.exists(DEVICE_NAMES_FILE):
-        with open(DEVICE_NAMES_FILE, 'r') as f:
-            CUSTOM_DEVICE_NAMES = json.load(f)
+        with open(DEVICE_NAMES_FILE, 'r') as f: CUSTOM_DEVICE_NAMES = json.load(f)
 except Exception as e:
     logging.error(f"Failed to load custom device names: {e}")
 
@@ -307,10 +286,8 @@ class GlobalAudioEngine:
             logging.error("[AUDIO] 'sounddevice' not installed - voice call audio will not work at all.")
             return
 
-        try:
-            logging.info(f"[AUDIO] sounddevice sees these devices:\n{sd.query_devices()}")
-        except Exception as e:
-            logging.error(f"[AUDIO] Could not enumerate audio devices: {e}")
+        try: logging.info(f"[AUDIO] sounddevice sees these devices:\n{sd.query_devices()}")
+        except Exception as e: logging.error(f"[AUDIO] Could not enumerate audio devices: {e}")
 
         self._open_input()
         self._open_output()
@@ -321,13 +298,9 @@ class GlobalAudioEngine:
             in_info = sd.query_devices(sd.default.device[0], 'input')
             self.in_channels = min(2, in_info['max_input_channels']) or 1
             self.in_device_name = in_info.get('name', 'default')
-        except Exception as e:
-            logging.warning(f"[AUDIO] Could not query default input device info: {e}")
+        except Exception as e: logging.warning(f"[AUDIO] Could not query default input device info: {e}")
         try:
-            self.in_stream = sd.RawInputStream(
-                samplerate=48000, channels=self.in_channels, dtype='int16',
-                blocksize=960, callback=self.in_callback
-            )
+            self.in_stream = sd.RawInputStream(samplerate=48000, channels=self.in_channels, dtype='int16', blocksize=960, callback=self.in_callback)
             self.in_stream.start()
             self.in_error = None
             logging.info(f"[AUDIO] Mic input OPEN on '{self.in_device_name}' ({self.in_channels}ch).")
@@ -341,13 +314,9 @@ class GlobalAudioEngine:
             out_info = sd.query_devices(sd.default.device[1], 'output')
             self.out_channels = min(2, out_info['max_output_channels']) or 1
             self.out_device_name = out_info.get('name', 'default')
-        except Exception as e:
-            logging.warning(f"[AUDIO] Could not query default output device info: {e}")
+        except Exception as e: logging.warning(f"[AUDIO] Could not query default output device info: {e}")
         try:
-            self.out_stream = sd.RawOutputStream(
-                samplerate=48000, channels=self.out_channels, dtype='int16',
-                blocksize=960, callback=self.out_callback
-            )
+            self.out_stream = sd.RawOutputStream(samplerate=48000, channels=self.out_channels, dtype='int16', blocksize=960, callback=self.out_callback)
             self.out_stream.start()
             self.out_error = None
             logging.info(f"[AUDIO] Speaker output OPEN on '{self.out_device_name}' ({self.out_channels}ch).")
@@ -360,33 +329,21 @@ class GlobalAudioEngine:
         while not _global_shutdown_event.is_set():
             time.sleep(AUDIO_WATCHDOG_INTERVAL_SEC)
             try:
-                if self.in_stream is None:
-                    self._open_input()
+                if self.in_stream is None: self._open_input()
                 elif not self.in_stream.active:
-                    logging.warning("[AUDIO] Mic input stream stopped unexpectedly - reopening.")
-                    self.in_stream = None
-                    self._open_input()
-            except Exception as e:
-                logging.error(f"[AUDIO] Watchdog input check failed: {e}")
+                    self.in_stream = None; self._open_input()
+            except Exception as e: logging.error(f"[AUDIO] Watchdog input check failed: {e}")
             try:
-                if self.out_stream is None:
-                    self._open_output()
+                if self.out_stream is None: self._open_output()
                 elif not self.out_stream.active:
-                    logging.warning("[AUDIO] Speaker output stream stopped unexpectedly - reopening.")
-                    self.out_stream = None
-                    self._open_output()
-            except Exception as e:
-                logging.error(f"[AUDIO] Watchdog output check failed: {e}")
+                    self.out_stream = None; self._open_output()
+            except Exception as e: logging.error(f"[AUDIO] Watchdog output check failed: {e}")
 
     def status_text(self):
-        if not SOUNDDEVICE_AVAILABLE:
-            return ("● VOICE: NOT INSTALLED", "secondary")
-        if self.out_stream and self.in_stream:
-            return ("● VOICE: LIVE", "success")
-        if self.out_stream and not self.in_stream:
-            return ("● VOICE: MIC OFFLINE", "warning")
-        if self.in_stream and not self.out_stream:
-            return ("● VOICE: SPK OFFLINE", "danger")
+        if not SOUNDDEVICE_AVAILABLE: return ("● MIC: NOT INSTALLED", "secondary")
+        if self.out_stream and self.in_stream: return ("● MIC: LIVE", "success")
+        if self.out_stream and not self.in_stream: return ("● MIC: OFFLINE", "warning")
+        if self.in_stream and not self.out_stream: return ("● SPK: OFFLINE", "danger")
         return ("● VOICE: OFFLINE", "danger")
 
     def in_callback(self, indata, frames, time_info, status):
@@ -394,12 +351,9 @@ class GlobalAudioEngine:
             if self.in_channels == 2:
                 arr = np.frombuffer(indata, dtype=np.int16)[0::2]
                 data = arr.tobytes()
-            else:
-                data = bytes(indata)
-            for sub in list(GLOBAL_MIC_SUBSCRIBERS):
-                sub.add_data(data)
-        except Exception as e:
-            logging.error(f"[AUDIO] in_callback error: {e}")
+            else: data = bytes(indata)
+            for sub in list(GLOBAL_MIC_SUBSCRIBERS): sub.add_data(data)
+        except Exception as e: logging.error(f"[AUDIO] in_callback error: {e}")
 
     def out_callback(self, outdata, frames, time_info, status):
         try:
@@ -413,16 +367,13 @@ class GlobalAudioEngine:
                         del buf[:needed_bytes]
                         mixed += np.frombuffer(chunk, dtype=np.int16)
                         has_audio = True
-            
             mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-            
             if self.out_channels == 2:
                 stereo = np.empty((frames, 2), dtype=np.int16)
                 stereo[:, 0] = mixed
                 stereo[:, 1] = mixed
                 outdata[:] = stereo.tobytes()
-            else:
-                outdata[:] = mixed.tobytes()
+            else: outdata[:] = mixed.tobytes()
         except Exception as e:
             logging.error(f"[AUDIO] out_callback error: {e}")
             outdata[:] = b'\x00' * (frames * 2 * self.out_channels)
@@ -440,8 +391,7 @@ class WebRTCMicTrack(MediaStreamTrack):
         self.pts = 0
 
     def stop(self):
-        if self in GLOBAL_MIC_SUBSCRIBERS:
-            GLOBAL_MIC_SUBSCRIBERS.remove(self)
+        if self in GLOBAL_MIC_SUBSCRIBERS: GLOBAL_MIC_SUBSCRIBERS.remove(self)
         super().stop()
 
     def add_data(self, data):
@@ -458,13 +408,9 @@ class WebRTCMicTrack(MediaStreamTrack):
                 if not self.q:
                     await asyncio.wait_for(self.event.wait(), timeout=0.02)
                     self.event.clear()
-            except asyncio.TimeoutError:
-                pass
-            
-            if self.q:
-                data = self.q.popleft()
-            else:
-                data = b'\x00' * 1920
+            except asyncio.TimeoutError: pass
+            if self.q: data = self.q.popleft()
+            else: data = b'\x00' * 1920
 
         frame = av.AudioFrame(format='s16', layout='mono', samples=960)
         frame.sample_rate = 48000
@@ -482,44 +428,34 @@ async def cleanup_call(device_id):
         try:
             if pc: await pc.close()
             if mic_track: mic_track.stop()
-        except Exception as e:
-            logging.error(f"[VOICE] Error tearing down call for {device_id}: {e}")
+        except Exception as e: logging.error(f"[VOICE] Error tearing down call for {device_id}: {e}")
             
     with MIXER_LOCK:
-        if device_id in GLOBAL_AUDIO_MIXER:
-            del GLOBAL_AUDIO_MIXER[device_id]
+        if device_id in GLOBAL_AUDIO_MIXER: del GLOBAL_AUDIO_MIXER[device_id]
             
     global app_window, GLOBAL_GROUP_CALL_ACTIVE
     if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
-        try:
-            app_window.gui_queue.put_nowait(lambda: app_window.close_call_ui(device_id))
-        except queue.Full:
-            pass
+        try: app_window.gui_queue.put_nowait(lambda: app_window.close_call_ui(device_id))
+        except queue.Full: pass
 
 async def signaling_handler(websocket, path=None):
     global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW
     device_id = "Unknown"
     try:
         if path is None:
-            try:
-                path = websocket.request.path
-            except AttributeError:
-                path = ""
+            try: path = websocket.request.path
+            except AttributeError: path = ""
                 
         query = path.split("?device_id=")
-        if len(query) > 1:
-            device_id = query[1]
-        else:
-            device_id = "Unknown"
+        if len(query) > 1: device_id = query[1]
+        else: device_id = "Unknown"
             
         CONNECTED_WS[device_id] = websocket
         logging.info(f"[VOICE] Device connected to voice signaling: {device_id}")
         
         if GLOBAL_GROUP_CALL_ACTIVE:
-            try:
-                await websocket.send(json.dumps({"type": "incoming_call"}))
-            except Exception as e:
-                logging.error(f"[VOICE] Could not send incoming_call ping to {device_id}: {e}")
+            try: await websocket.send(json.dumps({"type": "incoming_call"}))
+            except Exception as e: logging.error(f"[VOICE] Could not send incoming_call ping to {device_id}: {e}")
         
         async for message in websocket:
             msg_type = None
@@ -537,8 +473,7 @@ async def signaling_handler(websocket, path=None):
                             try:
                                 mic_track = WebRTCMicTrack()
                                 pc.addTrack(mic_track)
-                            except Exception as e:
-                                logging.error(f"[VOICE] Could not create/attach mic track for {device_id}: {e}")
+                            except Exception as e: logging.error(f"[VOICE] Could not create/attach mic track for {device_id}: {e}")
 
                         resampler = av.AudioResampler(format='s16', layout='mono', rate=48000)
 
@@ -548,8 +483,7 @@ async def signaling_handler(websocket, path=None):
                                 async def process_incoming_audio():
                                     global app_window, GLOBAL_GROUP_CALL_ACTIVE
                                     with MIXER_LOCK:
-                                        if device_id not in GLOBAL_AUDIO_MIXER:
-                                            GLOBAL_AUDIO_MIXER[device_id] = bytearray()
+                                        if device_id not in GLOBAL_AUDIO_MIXER: GLOBAL_AUDIO_MIXER[device_id] = bytearray()
                                     try:
                                         while True:
                                             try:
@@ -568,75 +502,53 @@ async def signaling_handler(websocket, path=None):
                                                         vol_percent = 0 if rms < 150 else min(100, int((rms / 4000.0) * 100))
                                                         if app_window:
                                                             try:
-                                                                if GLOBAL_GROUP_CALL_ACTIVE:
-                                                                    app_window.gui_queue.put_nowait(lambda v=vol_percent: app_window.update_group_call_meter(v))
-                                                                else:
-                                                                    app_window.gui_queue.put_nowait(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
-                                                            except queue.Full:
-                                                                pass
-                                                    except Exception:
-                                                        pass
-                                            except av.AVError as e:
-                                                logging.warning(f"[VOICE] Audio decode hiccup from {device_id}: {e}")
-                                            except asyncio.CancelledError:
-                                                break
+                                                                if GLOBAL_GROUP_CALL_ACTIVE: app_window.gui_queue.put_nowait(lambda v=vol_percent: app_window.update_group_call_meter(v))
+                                                                else: app_window.gui_queue.put_nowait(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
+                                                            except queue.Full: pass
+                                                    except Exception: pass
+                                            except av.AVError as e: logging.warning(f"[VOICE] Audio decode hiccup from {device_id}: {e}")
+                                            except asyncio.CancelledError: break
                                             except Exception as e:
                                                 logging.error(f"[VOICE] Error reading incoming audio frame from {device_id}: {e}")
                                                 await asyncio.sleep(0.1)
-                                    except Exception as e:
-                                        logging.error(f"[VOICE] process_incoming_audio fatal error for {device_id}: {e}")
-
+                                    except Exception as e: logging.error(f"[VOICE] process_incoming_audio fatal error for {device_id}: {e}")
                                 asyncio.create_task(process_incoming_audio())
                             
                         ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'mic_track': mic_track}
                         
                         global app_window
                         if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
-                            try:
-                                app_window.gui_queue.put_nowait(lambda: app_window.show_active_call_ui(device_id))
-                            except queue.Full:
-                                pass
+                            try: app_window.gui_queue.put_nowait(lambda: app_window.show_active_call_ui(device_id))
+                            except queue.Full: pass
                         
                         @pc.on("connectionstatechange")
                         async def on_connectionstatechange():
-                            if pc.connectionState in ["failed", "closed"]:
-                                await cleanup_call(device_id)
+                            if pc.connectionState in ["failed", "closed"]: await cleanup_call(device_id)
 
                     pc = ACTIVE_CALLS_DATA[device_id]['pc']
                     offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
                     await pc.setRemoteDescription(offer)
                     answer = await pc.createAnswer()
                     await pc.setLocalDescription(answer)
-                    await websocket.send(json.dumps({
-                        "type": "answer",
-                        "sdp": pc.localDescription.sdp
-                    }))
+                    await websocket.send(json.dumps({"type": "answer", "sdp": pc.localDescription.sdp}))
                     
                     if GLOBAL_GROUP_CALL_ACTIVE and GROUP_CALL_WINDOW:
                         await websocket.send(json.dumps({"type": "server_muted", "muted": GROUP_CALL_WINDOW['mic_muted']}))
                         await websocket.send(json.dumps({"type": "client_muted", "muted": GROUP_CALL_WINDOW['spk_muted']}))
                     
-                elif msg_type == "candidate":
-                    pass 
-                    
-                elif msg_type == "call_ended":
-                    await cleanup_call(device_id)
+                elif msg_type == "candidate": pass 
+                elif msg_type == "call_ended": await cleanup_call(device_id)
                         
-            except Exception as e:
-                logging.error(f"[VOICE] Error handling '{msg_type}' message from {device_id}: {e}")
-                
-    except Exception as e:
-        logging.error(f"[VOICE] signaling_handler connection error for {device_id}: {e}")
+            except Exception as e: logging.error(f"[VOICE] Error handling '{msg_type}' message from {device_id}: {e}")
+    except Exception as e: logging.error(f"[VOICE] signaling_handler connection error for {device_id}: {e}")
     finally:
-        if device_id in CONNECTED_WS:
-            del CONNECTED_WS[device_id]
+        if device_id in CONNECTED_WS: del CONNECTED_WS[device_id]
         await cleanup_call(device_id)
 
 async def _run_webrtc_server():
     try:
         cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
         key_path = os.path.join(CERT_DIR, 'hub_key.pem')
-        
         ssl_context = None
         if os.path.exists(cert_path) and os.path.exists(key_path):
             ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -645,20 +557,16 @@ async def _run_webrtc_server():
         logging.info(f"[VOICE] Voice signaling server listening on 0.0.0.0:{WS_AUDIO_PORT} (ssl={'on' if ssl_context else 'off'})")
         async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
             await asyncio.Future()
-    except Exception as e:
-        logging.error(f"[VOICE] Voice signaling server on port {WS_AUDIO_PORT} FAILED to start: {e}.")
+    except Exception as e: logging.error(f"[VOICE] Voice signaling server FAILED to start: {e}.")
 
 def start_webrtc_server():
     global _ws_loop
-    if not WEBRTC_SUPPORTED:
-        logging.warning("[VOICE] aiortc/av/websockets not available - voice calling is disabled.")
-        return
+    if not WEBRTC_SUPPORTED: return
     try:
         _ws_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_ws_loop)
         _ws_loop.run_until_complete(_run_webrtc_server())
-    except Exception as e:
-        logging.error(f"[VOICE] Fatal error in voice server event loop: {e}")
+    except Exception as e: logging.error(f"[VOICE] Fatal error in voice server event loop: {e}")
 
 threading.Thread(target=start_webrtc_server, daemon=True).start()
 
@@ -667,10 +575,8 @@ def get_cached_sessions():
     if DB_SESSIONS_CACHE is None:
         with _db_cache_lock:
             if DB_SESSIONS_CACHE is None:
-                if (time.time() - _db_cache_last_failure) < DB_SESSIONS_RETRY_COOLDOWN:
-                    return None
-                try: 
-                    DB_SESSIONS_CACHE = get_database_sessions()
+                if (time.time() - _db_cache_last_failure) < DB_SESSIONS_RETRY_COOLDOWN: return None
+                try: DB_SESSIONS_CACHE = get_database_sessions()
                 except Exception as e:
                     logging.exception(f"DB failed: {e}")
                     _db_cache_last_failure = time.time()
@@ -678,8 +584,7 @@ def get_cached_sessions():
     return DB_SESSIONS_CACHE
 
 def _ensure_root_ca(ca_cert_path, ca_key_path):
-    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path):
-        return
+    if os.path.exists(ca_cert_path) and os.path.exists(ca_key_path): return
     try:
         key = rsa.generate_private_key(public_exponent=65537, key_size=4096)
         now = datetime.now(timezone.utc)
@@ -691,12 +596,9 @@ def _ensure_root_ca(ca_cert_path, ca_key_path):
         ski = x509.SubjectKeyIdentifier.from_public_key(key.public_key())
         cert = (
             x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(issuer)
-            .public_key(key.public_key())
+            .subject_name(subject).issuer_name(issuer).public_key(key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(now)
-            .not_valid_after(now + timedelta(days=3650))  
+            .not_valid_before(now).not_valid_after(now + timedelta(days=3650))  
             .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
             .add_extension(ski, critical=False)
             .add_extension(
@@ -706,23 +608,16 @@ def _ensure_root_ca(ca_cert_path, ca_key_path):
                     crl_sign=True, encipher_only=False, decipher_only=False,
                 ),
                 critical=True,
-            )
-            .sign(key, hashes.SHA384())
+            ).sign(key, hashes.SHA384())
         )
-        with open(ca_key_path, "wb") as f:
-            f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
-        with open(ca_cert_path, "wb") as f:
-            f.write(cert.public_bytes(serialization.Encoding.PEM))
-    except Exception as e:
-        logging.error(f"Failed to generate Root CA: {e}")
-        raise RuntimeError(f"Root CA generation failed: {e}")
+        with open(ca_key_path, "wb") as f: f.write(key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
+        with open(ca_cert_path, "wb") as f: f.write(cert.public_bytes(serialization.Encoding.PEM))
+    except Exception as e: raise RuntimeError(f"Root CA generation failed: {e}")
 
 def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip):
     try:
-        with open(ca_cert_path, "rb") as f:
-            ca_cert = x509.load_pem_x509_certificate(f.read())
-        with open(ca_key_path, "rb") as f:
-            ca_key = serialization.load_pem_private_key(f.read(), password=None)
+        with open(ca_cert_path, "rb") as f: ca_cert = x509.load_pem_x509_certificate(f.read())
+        with open(ca_key_path, "rb") as f: ca_key = serialization.load_pem_private_key(f.read(), password=None)
         server_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         now = datetime.now(timezone.utc)
         subject = x509.Name([
@@ -731,55 +626,39 @@ def _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
             x509.NameAttribute(NameOID.COMMON_NAME, "TDEUP 2026 Event Hub Server"),
         ])
         san_entries = [x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
-        try:
-            san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
-        except ValueError:
-            pass
+        try: san_entries.append(x509.IPAddress(ipaddress.ip_address(local_ip)))
+        except ValueError: pass
             
         try:
             for interface, snics in psutil.net_if_addrs().items():
                 for snic in snics:
                     if snic.family == socket.AF_INET and snic.address not in ["127.0.0.1", local_ip]:
-                        try:
-                            san_entries.append(x509.IPAddress(ipaddress.ip_address(snic.address)))
-                        except ValueError:
-                            pass
-        except Exception:
-            pass
+                        try: san_entries.append(x509.IPAddress(ipaddress.ip_address(snic.address)))
+                        except ValueError: pass
+        except Exception: pass
         
         ski = x509.SubjectKeyIdentifier.from_public_key(server_key.public_key())
         aki = x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key())
         cert = (
             x509.CertificateBuilder()
-            .subject_name(subject)
-            .issuer_name(ca_cert.subject)
-            .public_key(server_key.public_key())
+            .subject_name(subject).issuer_name(ca_cert.subject).public_key(server_key.public_key())
             .serial_number(x509.random_serial_number())
-            .not_valid_before(now)
-            .not_valid_after(now + timedelta(days=365)) 
+            .not_valid_before(now).not_valid_after(now + timedelta(days=365)) 
             .add_extension(x509.SubjectAlternativeName(san_entries), critical=False)
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
-            .add_extension(ski, critical=False)
-            .add_extension(aki, critical=False)
+            .add_extension(ski, critical=False).add_extension(aki, critical=False)
             .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False, key_encipherment=True, data_encipherment=False, key_agreement=False, key_cert_sign=False, crl_sign=False, encipher_only=False, decipher_only=False), critical=True)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
             .sign(ca_key, hashes.SHA256())
         )
-        with open(key_path, "wb") as f:
-            f.write(server_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
-        with open(cert_path, "wb") as f:
-            f.write(cert.public_bytes(serialization.Encoding.PEM))
-    except Exception as e:
-        logging.error(f"Failed to generate Server Certificate: {e}")
-        raise RuntimeError(f"Server Certificate generation failed: {e}")
+        with open(key_path, "wb") as f: f.write(server_key.private_bytes(encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.TraditionalOpenSSL, encryption_algorithm=serialization.NoEncryption()))
+        with open(cert_path, "wb") as f: f.write(cert.public_bytes(serialization.Encoding.PEM))
+    except Exception as e: raise RuntimeError(f"Server Certificate generation failed: {e}")
 
 def ensure_ssl_certificate(local_ip):
-    if not CRYPTOGRAPHY_AVAILABLE:
-        raise RuntimeError("Cryptography package required.")
-    try:
-        os.makedirs(CERT_DIR, exist_ok=True)
-    except OSError:
-        raise
+    if not CRYPTOGRAPHY_AVAILABLE: raise RuntimeError("Cryptography package required.")
+    try: os.makedirs(CERT_DIR, exist_ok=True)
+    except OSError: raise
     ca_cert_path = os.path.join(CERT_DIR, 'rootCA.pem')
     ca_key_path = os.path.join(CERT_DIR, 'rootCA.key')
     cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
@@ -790,97 +669,68 @@ def ensure_ssl_certificate(local_ip):
     try:
         for interface, snics in psutil.net_if_addrs().items():
             for snic in snics:
-                if snic.family == socket.AF_INET and snic.address != "127.0.0.1":
-                    current_system_ips.add(snic.address)
-    except Exception:
-        pass
+                if snic.family == socket.AF_INET and snic.address != "127.0.0.1": current_system_ips.add(snic.address)
+    except Exception: pass
     current_system_ips.add(local_ip)
 
     reuse_existing = False
     if os.path.exists(cert_path) and os.path.exists(key_path):
         try:
-            with open(cert_path, "rb") as f:
-                c = x509.load_pem_x509_certificate(f.read())
+            with open(cert_path, "rb") as f: c = x509.load_pem_x509_certificate(f.read())
             is_valid_time = c.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(days=30)
-            
             san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             cert_ips = {str(ip) for ip in san_ext.value.get_values_for_type(x509.IPAddress)}
-            
             all_ips_present = all(ip in cert_ips for ip in current_system_ips)
+            if is_valid_time and all_ips_present: reuse_existing = True
+        except Exception: reuse_existing = False
             
-            if is_valid_time and all_ips_present:
-                reuse_existing = True
-        except Exception:
-            reuse_existing = False
-            
-    if not reuse_existing:
-        _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
-    
+    if not reuse_existing: _write_server_cert(cert_path, key_path, ca_cert_path, ca_key_path, local_ip)
     return cert_path, key_path
 
 @app.before_request
-def _start_request_timer(): 
-    request._start_time = time.perf_counter()
+def _start_request_timer(): request._start_time = time.perf_counter()
 
 @app.after_request
 def log_request(response):
-    if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans':
-        return response
+    if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': return response
     try:
         global _current_sec_requests
-        with traffic_lock:
-            _current_sec_requests += 1
+        with traffic_lock: _current_sec_requests += 1
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
             try:
                 SERVER_METRICS["req_count"] += 1
-                if SERVER_METRICS["avg_process_ms"] == 0:
-                    SERVER_METRICS["avg_process_ms"] = duration_ms
-                else:
-                    SERVER_METRICS["avg_process_ms"] = (SERVER_METRICS["avg_process_ms"] * 0.9) + (duration_ms * 0.1)
-            finally:
-                metrics_lock.release()
-    except Exception:
-        pass
+                if SERVER_METRICS["avg_process_ms"] == 0: SERVER_METRICS["avg_process_ms"] = duration_ms
+                else: SERVER_METRICS["avg_process_ms"] = (SERVER_METRICS["avg_process_ms"] * 0.9) + (duration_ms * 0.1)
+            finally: metrics_lock.release()
+    except Exception: pass
     return response
 
 @app.errorhandler(Exception)
-def handle_global_exception(e):
-    return jsonify({"status": "error", "message": "An unexpected server fault occurred. Contact admin."}), 500
+def handle_global_exception(e): return jsonify({"status": "error", "message": "An unexpected server fault occurred. Contact admin."}), 500
 
 def _status_log_tag(status_code):
-    if status_code >= 500:
-        return "log_error"
-    if status_code >= 400:
-        return "log_warning"
+    if status_code >= 500: return "log_error"
+    if status_code >= 400: return "log_warning"
     return "log_success"
 
 _LOG_PREFIX_TAGS = (("[PING ERROR]", "log_error"), ("[ERROR]", "log_error"), ("[WARNING]", "log_warning"), ("[SUCCESS]", "log_success"), ("[CLIPBOARD]", "log_info"), ("[INFO]", "log_info"))
-
 def _guess_log_tag(message):
     for prefix, tag in _LOG_PREFIX_TAGS:
-        if message.startswith(prefix):
-            return tag
+        if message.startswith(prefix): return tag
     return "log_default"
 
 def log_event_clean(action_type, device_name, details, status_code):
     time_str = datetime.now().strftime('%H:%M:%S')
     status_tag = _status_log_tag(status_code)
-    if action_type == "REGISTER":
-        segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"REGISTER ", "log_register"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
-    elif action_type == "CHECKIN":
-        segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"CHECKIN  ", "log_checkin"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
-    else:
-        segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"{action_type} ", "log_default"), (f"[{status_code}]", status_tag)]
-    if gui_log_callback:
-        gui_log_callback(segments)
+    if action_type == "REGISTER": segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"REGISTER ", "log_register"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
+    elif action_type == "CHECKIN": segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"CHECKIN  ", "log_checkin"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
+    else: segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"{action_type} ", "log_default"), (f"[{status_code}]", status_tag)]
+    if gui_log_callback: gui_log_callback(segments)
     plain_msg = f"[{device_name}] {action_type}: {details} (status {status_code})"
-    if status_code >= 500:
-        logging.error(plain_msg)
-    elif status_code >= 400:
-        logging.warning(plain_msg)
-    else:
-        logging.info(plain_msg)
+    if status_code >= 500: logging.error(plain_msg)
+    elif status_code >= 400: logging.warning(plain_msg)
+    else: logging.info(plain_msg)
 
 def broadcast_scan(attendee, status, message, device_name, scan_time):
     att_dict = None
@@ -891,15 +741,12 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             "attendee_type": getattr(attendee.attendee_type, 'value', str(attendee.attendee_type)), "gender": getattr(attendee.gender, 'value', str(attendee.gender))
         }
     event = {"status": status, "message": message, "device": device_name, "timestamp": scan_time, "attendee": att_dict}
-    with scan_clients_lock:
-        clients_snapshot = list(SCAN_CLIENTS)
+    with scan_clients_lock: clients_snapshot = list(SCAN_CLIENTS)
     for q in clients_snapshot:
-        try:
-            q.put_nowait(event)
+        try: q.put_nowait(event)
         except Exception:
             with scan_clients_lock:
-                if q in SCAN_CLIENTS:
-                    SCAN_CLIENTS.remove(q)
+                if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
 
 def traffic_monitor_loop():
     global _current_sec_requests
@@ -913,8 +760,7 @@ def traffic_monitor_loop():
 def _compute_stats_snapshot(deep_scan=False):
     sessions = get_cached_sessions()
     mysql_factory = sessions.get('mysql') if sessions else None
-    if not mysql_factory:
-        return None
+    if not mysql_factory: return None
     session = mysql_factory()
     try:
         total_attendees = session.query(Attendee).count()
@@ -926,8 +772,7 @@ def _compute_stats_snapshot(deep_scan=False):
             chk_01 = session.query(Attendee).filter(Attendee.checkin_history.like('%"1 September"%')).count()
             result.update({"chk_30": chk_30, "chk_31": chk_31, "chk_01": chk_01, "total_scans": chk_30 + chk_31 + chk_01, "is_deep_scan": True})
         return result
-    finally:
-        session.close()
+    finally: session.close()
 
 def stats_refresher_loop():
     loop_counter = 0
@@ -949,8 +794,7 @@ def stats_refresher_loop():
                     STATS_CACHE["last_refreshed"] = time.time()
                     STATS_CACHE["last_error"] = None
         except Exception as e:
-            with stats_lock:
-                STATS_CACHE["last_error"] = str(e)
+            with stats_lock: STATS_CACHE["last_error"] = str(e)
         loop_counter += 1
         _global_shutdown_event.wait(3.0) 
 
@@ -965,28 +809,21 @@ _db_writer_threads = []
 
 def _submit_db_job(kind, payload):
     job = DBJob(kind=kind, payload=payload)
-    try:
-        DB_WRITE_QUEUE.put(job, timeout=1)
-    except queue.Full:
-        return 503, {"status": "error", "message": "System is very busy. Please wait a moment and try again."}
-    try:
-        return job.future.result(timeout=DB_JOB_TIMEOUT)
-    except concurrent.futures.TimeoutError:
-        return 504, {"status": "error", "message": "The request took too long. Please try again."}
-    except Exception:
-        return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
+    try: DB_WRITE_QUEUE.put(job, timeout=1)
+    except queue.Full: return 503, {"status": "error", "message": "System is very busy. Please wait a moment and try again."}
+    try: return job.future.result(timeout=DB_JOB_TIMEOUT)
+    except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "The request took too long. Please try again."}
+    except Exception: return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
 
 def _handle_checkin_job(payload):
     identifier = payload["identifier"]
     search_type = payload["search_type"]
     device_name = payload["device_name"]
     iso_timestamp = payload["iso_timestamp"]
-    if not identifier:
-        return 400, {"status": "error", "message": "Please scan a valid QR code or enter an ID."}
+    if not identifier: return 400, {"status": "error", "message": "Please scan a valid QR code or enter an ID."}
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory:
-        return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
+    if not mysql_factory: return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
     
     retries = 3
     while retries > 0:
@@ -1003,23 +840,17 @@ def _handle_checkin_job(payload):
                 return 404, {"status": "error", "message": f"Record not found. Please direct attendee to the Help Desk."}
             history = attendee.checkin_history
             if isinstance(history, str):
-                try:
-                    history = json.loads(history)
-                except Exception:
-                    history = {}
-            if not isinstance(history, dict):
-                history = {}
+                try: history = json.loads(history)
+                except Exception: history = {}
+            if not isinstance(history, dict): history = {}
             current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
             date_map = EVENT_DATE_LABELS
-            if current_date_str not in date_map:
-                return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
+            if current_date_str not in date_map: return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
             today_key = date_map[current_date_str]
             att_days = attendee.attendance_days or []
             if isinstance(att_days, str):
-                try:
-                    att_days = json.loads(att_days)
-                except Exception:
-                    att_days = []
+                try: att_days = json.loads(att_days)
+                except Exception: att_days = []
             if today_key not in att_days:
                 log_event_clean("CHECKIN", device_name, f"Denied (No pass {today_key})", 403)
                 broadcast_scan(attendee, "ERROR", f"Denied (No pass {today_key})", device_name, iso_timestamp)
@@ -1038,12 +869,9 @@ def _handle_checkin_job(payload):
             attendee.local_modified = True
             session.commit()
             with stats_lock:
-                if current_date_str == "2026-08-30":
-                    STATS_CACHE["chk_30"] += 1
-                elif current_date_str == "2026-08-31":
-                    STATS_CACHE["chk_31"] += 1
-                elif current_date_str == "2026-09-01":
-                    STATS_CACHE["chk_01"] += 1
+                if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
+                elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
+                elif current_date_str == "2026-09-01": STATS_CACHE["chk_01"] += 1
                 STATS_CACHE["total_scans"] += 1
                 STATS_CACHE["today_scans"] += 1
             success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
@@ -1062,10 +890,8 @@ def _handle_checkin_job(payload):
             log_event_clean("CHECKIN", device_name, "DB Error", 500)
             return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
         finally:
-            try:
-                session.close()
-            except Exception:
-                pass
+            try: session.close()
+            except Exception: pass
 
 def _handle_register_job(payload):
     data = payload["data"]
@@ -1074,19 +900,16 @@ def _handle_register_job(payload):
     mobile_number = payload["mobile_number"]
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory:
-        return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
+    if not mysql_factory: return 503, {"status": "error", "message": "Server database is disconnected. Please call tech support."}
     
     retries = 3
     while retries > 0:
         session = mysql_factory()
         try:
             existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
-            if existing_main:
-                return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
+            if existing_main: return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
             existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-            if existing_kiosk:
-                return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
+            if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
             def gen_id(att_type: str) -> str:
                 prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
                 for _ in range(5000):
@@ -1113,40 +936,27 @@ def _handle_register_job(payload):
             session.commit()
             with stats_lock:
                 STATS_CACHE["total_registrations"] += 1
-                if today_date == "2026-08-30":
-                    STATS_CACHE["chk_30"] += 1
-                    STATS_CACHE["total_scans"] += 1
-                    STATS_CACHE["today_scans"] += 1
-                elif today_date == "2026-08-31":
-                    STATS_CACHE["chk_31"] += 1
-                    STATS_CACHE["total_scans"] += 1
-                    STATS_CACHE["today_scans"] += 1
-                elif today_date == "2026-09-01":
-                    STATS_CACHE["chk_01"] += 1
-                    STATS_CACHE["total_scans"] += 1
-                    STATS_CACHE["today_scans"] += 1
+                if today_date == "2026-08-30": STATS_CACHE["chk_30"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                elif today_date == "2026-08-31": STATS_CACHE["chk_31"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+                elif today_date == "2026-09-01": STATS_CACHE["chk_01"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
             log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
             return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
         except IntegrityError:
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-            if existing:
-                return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
+            if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
             return 500, {"status": "error", "message": "Another registration is processing. Please try clicking submit again."}
         except OperationalError:
             session.rollback()
             retries -= 1
-            if retries == 0:
-                return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
+            if retries == 0: return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
             time.sleep(random.uniform(0.1, 0.4))
         except Exception:
             session.rollback()
             return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
         finally:
-            try:
-                session.close()
-            except Exception:
-                pass
+            try: session.close()
+            except Exception: pass
 
 def db_writer_loop(worker_id):
     while not _global_shutdown_event.is_set() and not _db_shutdown_event.is_set():
@@ -1156,23 +966,16 @@ def db_writer_loop(worker_id):
                 DB_WRITE_QUEUE.task_done()
                 break
             try:
-                if job.kind == "checkin":
-                    result = _handle_checkin_job(job.payload)
-                elif job.kind == "register":
-                    result = _handle_register_job(job.payload)
-                else:
-                    result = (500, {"status": "error", "message": "Unknown job payload type."})
-                if not job.future.done():
-                    job.future.set_result(result)
+                if job.kind == "checkin": result = _handle_checkin_job(job.payload)
+                elif job.kind == "register": result = _handle_register_job(job.payload)
+                else: result = (500, {"status": "error", "message": "Unknown job payload type."})
+                if not job.future.done(): job.future.set_result(result)
             except Exception as e:
-                if not job.future.done():
-                    job.future.set_exception(e)
+                if not job.future.done(): job.future.set_exception(e)
             finally:
                 DB_WRITE_QUEUE.task_done()
-        except queue.Empty:
-            continue
-        except Exception:
-            pass
+        except queue.Empty: continue
+        except Exception: pass
 
 def start_db_writers():
     _db_shutdown_event.clear()
@@ -1183,49 +986,40 @@ def start_db_writers():
 
 def stop_db_writers():
     _db_shutdown_event.set()
-    
     while not DB_WRITE_QUEUE.empty():
-        try:
-            DB_WRITE_QUEUE.get_nowait()
-        except queue.Empty:
-            break
-
+        try: DB_WRITE_QUEUE.get_nowait()
+        except queue.Empty: break
     for _ in range(len(_db_writer_threads)): 
-        try:
-            DB_WRITE_QUEUE.put(None, timeout=0.1)
-        except queue.Full:
-            pass
-        
-    for t in _db_writer_threads:
-        t.join(timeout=0.2) 
+        try: DB_WRITE_QUEUE.put(None, timeout=0.1)
+        except queue.Full: pass
+    for t in _db_writer_threads: t.join(timeout=0.2) 
     _db_writer_threads.clear()
 
+# --- FLASK ROUTES ---
 @app.route('/manifest.json')
-def serve_manifest():
-    return app.send_static_file('manifest.json')
+def serve_manifest(): return app.send_static_file('manifest.json')
 
 @app.route('/sw.js')
-def serve_service_worker():
-    return app.send_static_file('sw.js')
+def serve_service_worker(): return app.send_static_file('sw.js')
 
 @app.route('/')
-def index():
-    return render_template('index.html')
+def index(): return render_template('index.html')
 
 @app.route('/scanner')
-def scanner():
-    return render_template('check_in.html')
+def scanner(): return render_template('check_in.html')
 
 @app.route('/register')
-def register():
-    return render_template('registration.html')
+def register(): return render_template('registration.html')
 
 @app.route('/stats')
-def stats():
-    return render_template('network_stats.html')
+def stats(): return render_template('network_stats.html')
 
-@app.route('/api/status', methods=['POST'])
+# Fixed route to accept GET and POST so ping checks don't fail!
+@app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
+    if request.method == 'GET':
+        return jsonify({"status": "online", "version": "3.5"}), 200
+        
     ip = request.remote_addr
     data = request.json or {}
     reported_name = data.get('device_name', 'Unknown Device')
@@ -1233,10 +1027,8 @@ def get_server_status():
     battery = data.get('battery', 'N/A')
     active_page = data.get('page', '/')
 
-    if reported_name == "null":
-        reported_name = "Unknown Device"
-    if not device_id:
-        device_id = f"{ip}::{reported_name}"
+    if reported_name == "null": reported_name = "Unknown Device"
+    if not device_id: device_id = f"{ip}::{reported_name}"
         
     pending_msg = None
     with device_lock:
@@ -1251,7 +1043,6 @@ def get_server_status():
             'battery': battery,
             'page': active_page
         }
-        
     return jsonify({"test_mode": SERVER_TEST_MODE, "test_date": SERVER_TEST_DATE, "message": pending_msg, "canonical_name": display_name}), 200
 
 @app.route('/api/device/message', methods=['POST'])
@@ -1259,10 +1050,8 @@ def send_device_message():
     data = request.json or {}
     device_id = data.get('id')
     message = data.get('message', '').strip()
-    if not device_id or not message:
-        return jsonify({"status": "error", "message": "Missing device ID or message."}), 400
-    with device_lock:
-        DEVICE_MESSAGES[device_id] = message
+    if not device_id or not message: return jsonify({"status": "error", "message": "Missing device ID or message."}), 400
+    with device_lock: DEVICE_MESSAGES[device_id] = message
     return jsonify({"status": "success", "message": "Message queued for device."}), 200
 
 @app.route('/api/device/rename', methods=['POST'])
@@ -1270,17 +1059,13 @@ def rename_device():
     data = request.json or {}
     device_id = data.get('id') or data.get('ip')
     new_name = data.get('new_name', '').strip()
-    if not device_id or not new_name:
-        return jsonify({"status": "error", "message": "Missing device ID or new name."}), 400
+    if not device_id or not new_name: return jsonify({"status": "error", "message": "Missing device ID or new name."}), 400
     with device_lock:
         CUSTOM_DEVICE_NAMES[device_id] = new_name
-        if device_id in ACTIVE_DEVICES:
-            ACTIVE_DEVICES[device_id]['name'] = new_name
+        if device_id in ACTIVE_DEVICES: ACTIVE_DEVICES[device_id]['name'] = new_name
     try:
-        with open(DEVICE_NAMES_FILE, 'w') as f:
-            json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
-    except Exception:
-        pass
+        with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
+    except Exception: pass
     return jsonify({"status": "success", "message": "Device renamed."}), 200
 
 @app.route('/api/network-data', methods=['GET'])
@@ -1289,10 +1074,8 @@ def get_network_data():
     active_devices = {}
     with device_lock:
         for d_id, data in list(ACTIVE_DEVICES.items()):
-            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW:
-                active_devices[d_id] = data
-            else:
-                del ACTIVE_DEVICES[d_id]
+            if current_time - data['last_seen'] < DEVICE_ONLINE_WINDOW: active_devices[d_id] = data
+            else: del ACTIVE_DEVICES[d_id]
     with stats_lock:
         global_stats = {"total_scans": STATS_CACHE["total_scans"], "total_registrations": STATS_CACHE["total_registrations"], "today_scans": STATS_CACHE["today_scans"]}
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
@@ -1301,20 +1084,15 @@ def get_network_data():
 def stream_scans():
     def event_stream():
         q = queue.Queue(maxsize=100)
-        with scan_clients_lock:
-            SCAN_CLIENTS.append(q)
+        with scan_clients_lock: SCAN_CLIENTS.append(q)
         try:
             while True:
-                try:
-                    yield f"data: {json.dumps(q.get(timeout=15))}\n\n"
-                except queue.Empty:
-                    yield ": heartbeat\n\n"
-        except GeneratorExit:
-            pass 
+                try: yield f"data: {json.dumps(q.get(timeout=15))}\n\n"
+                except queue.Empty: yield ": heartbeat\n\n"
+        except GeneratorExit: pass 
         finally:
             with scan_clients_lock:
-                if q in SCAN_CLIENTS:
-                    SCAN_CLIENTS.remove(q)
+                if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
     return Response(event_stream(), mimetype='text/event-stream', headers={'Cache-Control': 'no-cache', 'Connection': 'keep-alive', 'X-Accel-Buffering': 'no'})
 
 @app.route('/api/checkin', methods=['POST'])
@@ -1334,10 +1112,8 @@ def process_registration():
     data = request.json or {}
     mobile_number = str(data.get('mobile', '')).strip()
     full_name = str(data.get('full_name', '')).strip()
-    if not full_name:
-        return jsonify({"status": "error", "message": "Full name is required."}), 400
-    if not mobile_number or len(mobile_number) < 10:
-        return jsonify({"status": "error", "message": "A valid 10-digit mobile number is required."}), 400
+    if not full_name: return jsonify({"status": "error", "message": "Full name is required."}), 400
+    if not mobile_number or len(mobile_number) < 10: return jsonify({"status": "error", "message": "A valid 10-digit mobile number is required."}), 400
     payload = {
         "data": data,
         "mobile_number": mobile_number,
@@ -1350,44 +1126,33 @@ def process_registration():
 @app.route('/api/check_mobile', methods=['GET'])
 def check_mobile():
     mobile_number = request.args.get('mobile', '').strip()
-    if not mobile_number:
-        return jsonify({"status": "error", "message": "Please enter a valid mobile number."}), 400
+    if not mobile_number: return jsonify({"status": "error", "message": "Please enter a valid mobile number."}), 400
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory:
-        return jsonify({"status": "error", "message": "System database disconnected."}), 503
+    if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
         em = session.query(Attendee).filter_by(mobile=mobile_number).first()
-        if em:
-            return jsonify({"status": "already_registered", "attendee_id": em.attendee_id}), 200
+        if em: return jsonify({"status": "already_registered", "attendee_id": em.attendee_id}), 200
         ek = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-        if ek:
-            return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
+        if ek: return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
         return jsonify({"status": "not_found"}), 200
-    except Exception:
-        return jsonify({"status": "error", "message": "Could not check mobile number right now. Try again."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Could not check mobile number right now. Try again."}), 500
     finally:
-        try:
-            session.close()
-        except Exception:
-            pass
+        try: session.close()
+        except Exception: pass
 
 @app.route('/api/pincode/<code>', methods=['GET'])
 def lookup_pincode(code):
     code = (code or '').strip()
-    if not code.isdigit() or len(code) != 6:
-        return jsonify({"status": "error", "message": "Enter a valid 6-digit pincode."}), 400
-    if not INDIAPINS_AVAILABLE:
-        return jsonify({"status": "unavailable", "message": "Pincode lookup not installed on this hub."}), 503
+    if not code.isdigit() or len(code) != 6: return jsonify({"status": "error", "message": "Enter a valid 6-digit pincode."}), 400
+    if not INDIAPINS_AVAILABLE: return jsonify({"status": "unavailable", "message": "Pincode lookup not installed on this hub."}), 503
     try:
         matches = indiapins.matching(code)
-        if not matches:
-            return jsonify({"status": "not_found"}), 200
+        if not matches: return jsonify({"status": "not_found"}), 200
         first = matches[0]
         return jsonify({"status": "success", "district": first.get("District", ""), "state": first.get("State", "")}), 200
-    except Exception:
-        return jsonify({"status": "error", "message": "Lookup failed."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Lookup failed."}), 500
 
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
@@ -1396,43 +1161,30 @@ def get_all_attendees():
     offset = max(0, (page - 1) * limit)
     sessions = get_cached_sessions() or {}
     mysql_factory = sessions.get('mysql')
-    if not mysql_factory:
-        return jsonify({"status": "error", "message": "System database disconnected."}), 503
+    if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
         main_att = session.query(Attendee).order_by(Attendee.created_at.asc(), Attendee.id.asc()).offset(offset).limit(limit).all()
         kiosk_att = []
         rem_limit = limit - len(main_att)
-        if rem_limit > 0:
-            kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(offset).limit(rem_limit).all()
+        if rem_limit > 0: kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(offset).limit(rem_limit).all()
         results = []
         for att in (main_att + kiosk_att):
             att_dict = {
-                "id": att.id,
-                "attendee_id": att.attendee_id,
-                "full_name": att.full_name,
-                "mobile": att.mobile,
-                "email": att.email,
+                "id": att.id, "attendee_id": att.attendee_id, "full_name": att.full_name, "mobile": att.mobile, "email": att.email,
                 "gender": att.gender.name if hasattr(att.gender, 'name') else str(att.gender),
                 "attendee_type": att.attendee_type.name if hasattr(att.attendee_type, 'name') else str(att.attendee_type),
-                "business_name": att.business_name,
-                "business_category": att.business_category,
-                "city": att.city,
-                "state": att.state,
-                "pincode": att.pincode,
-                "needs_cloud_sync": getattr(att, 'needs_cloud_sync', False),
+                "business_name": att.business_name, "business_category": att.business_category, "city": att.city, "state": att.state,
+                "pincode": att.pincode, "needs_cloud_sync": getattr(att, 'needs_cloud_sync', False),
                 "checkin_history": att.checkin_history if isinstance(att.checkin_history, dict) else {},
                 "created_at": att.created_at.isoformat() + "Z" if att.created_at else None
             }
             results.append(att_dict)
         return jsonify(results), 200
-    except Exception:
-        return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
+    except Exception: return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
     finally:
-        try:
-            session.close()
-        except Exception:
-            pass
+        try: session.close()
+        except Exception: pass
 
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
@@ -1441,18 +1193,14 @@ class WaitressHttpThread(threading.Thread):
         self.ctx = app.app_context()
         self.ctx.push()
     def run(self):
-        try:
-            self.server.run()
-        except Exception:
-            pass
-    def shutdown(self):
-        self.server.close()
+        try: self.server.run()
+        except Exception: pass
+    def shutdown(self): self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=100):
         super().__init__(daemon=True)  
-        if cheroot_wsgi is None:
-            raise RuntimeError("Cheroot required.")
+        if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context()
         self.ctx.push()
@@ -1460,12 +1208,9 @@ class HttpsFlaskThread(threading.Thread):
         self.server.keep_alive_timeout = 30
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
-        try:
-            self.server.start()
-        except Exception:
-            pass
-    def shutdown(self):
-        self.server.stop()
+        try: self.server.start()
+        except Exception: pass
+    def shutdown(self): self.server.stop()
 
 def get_local_ip():
     try:
@@ -1475,61 +1220,37 @@ def get_local_ip():
         s.close()
         return ip
     except Exception: 
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except Exception:
-            return "127.0.0.1"
+        try: return socket.gethostbyname(socket.gethostname())
+        except Exception: return "127.0.0.1"
 
 
-# --- ADVANCED VECTOR SPEEDOMETER GAUGE WIDGET ---
+# --- ADVANCED DYNAMIC SPEEDOMETER GAUGE WIDGET ---
 class SpeedometerGauge(QWidget):
     """
-    High-DPI circular/semi-circular Speedometer Gauge with anti-aliasing.
-    Renders cleanly on 720p, 1080p, 2K, and 4K displays.
+    High-DPI Speedometer. Features a dotted background track and 
+    a solid arc that changes color automatically based on load percentage.
     """
-    def __init__(self, subtext="CPU", unit="%", max_val=100, color_hex="#569CD6", parent=None):
+    def __init__(self, subtext="CPU", unit="%", max_val=100, good_is_high=False, parent=None):
         super().__init__(parent)
         self.subtext = subtext
         self.unit = unit
         self.max_val = max_val
         self.current_val = 0.0
         self.target_val = 0.0
-        self.color_hex = color_hex
-        self.setMinimumSize(68, 62)
+        self.good_is_high = good_is_high
+        self.setMinimumSize(60, 56)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        class AmountUsedVarProxy:
-            def __init__(self, outer): self.outer = outer
-            def set(self, v): self.outer.set_value(v)
-        self.amountusedvar = AmountUsedVarProxy(self)
-
-    def set_value(self, val):
-        self.current_val = float(val)
-        self.update()
 
     def set_target(self, val):
         self.target_val = float(val)
 
     def tick(self):
         if abs(self.target_val - self.current_val) > 0.1:
-            self.current_val += (self.target_val - self.current_val) * 0.18
+            self.current_val += (self.target_val - self.current_val) * 0.15
             self.update()
         elif self.current_val != self.target_val:
             self.current_val = self.target_val
             self.update()
-
-    def configure(self, bootstyle=None, subtext=None, amounttotal=None):
-        if amounttotal is not None:
-            self.max_val = float(amounttotal)
-        if subtext is not None:
-            self.subtext = subtext
-        if bootstyle is not None:
-            colors = {
-                "info": "#569CD6", "warning": "#D7BA7D", "danger": "#F44747",
-                "success": "#4EC9B0", "secondary": "#858585", "light": "#E0E0E0"
-            }
-            self.color_hex = colors.get(bootstyle, "#569CD6")
-        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1538,43 +1259,50 @@ class SpeedometerGauge(QWidget):
 
         w = self.width()
         h = self.height()
-
-        # Gauge dimensions
         diameter = min(w, h - 14)
         margin_x = (w - diameter) / 2.0
         margin_y = 2.0
         arc_rect = QRectF(margin_x + 4, margin_y + 4, diameter - 8, diameter - 8)
+        arc_width = max(3.5, diameter * 0.08)
 
-        # Background track arc (220 degrees: 200° down to -20°)
-        pen_bg = QPen(QColor("#2D2D30"), max(3.5, diameter * 0.08), Qt.SolidLine, Qt.RoundCap)
+        ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
+        
+        # Determine Dynamic Color based on load ratio
+        if self.good_is_high:
+            if ratio < 0.1: dynamic_color = QColor("#858585") # Idle
+            elif ratio < 0.6: dynamic_color = QColor("#D7BA7D") # Yellow
+            else: dynamic_color = QColor("#4EC9B0") # Green
+        else:
+            if ratio < 0.6: dynamic_color = QColor("#4EC9B0") # Green
+            elif ratio < 0.85: dynamic_color = QColor("#D7BA7D") # Yellow
+            else: dynamic_color = QColor("#F44747") # Red
+
+        # Dotted Background Track
+        pen_bg = QPen(QColor("#333333"), arc_width, Qt.DotLine, Qt.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(arc_rect, 200 * 16, -220 * 16)
 
-        # Active speed meter arc
-        ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
+        # Active Solid Foreground Track
         active_span = -int(220 * ratio * 16)
-
-        pen_fg = QPen(QColor(self.color_hex), max(3.5, diameter * 0.08), Qt.SolidLine, Qt.RoundCap)
+        pen_fg = QPen(dynamic_color, arc_width, Qt.SolidLine, Qt.RoundCap)
         painter.setPen(pen_fg)
-        if active_span != 0:
-            painter.drawArc(arc_rect, 200 * 16, active_span)
+        if active_span != 0: painter.drawArc(arc_rect, 200 * 16, active_span)
 
-        # Value text in center
-        painter.setPen(QColor("#FFFFFF"))
-        font_size = max(8, int(diameter * 0.22))
+        # Center Text
+        painter.setPen(dynamic_color)
+        font_size = max(9, int(diameter * 0.23))
         painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
         
         if self.max_val > 100 and ("MB" in self.unit or "ms" in self.subtext):
             val_text = f"{self.current_val:.1f}" if self.current_val < 100 else f"{int(round(self.current_val))}"
-        else:
-            val_text = str(int(round(self.current_val)))
+        else: val_text = str(int(round(self.current_val)))
             
         val_rect = QRectF(margin_x, margin_y + (diameter * 0.18), diameter, diameter * 0.45)
         painter.drawText(val_rect, Qt.AlignCenter, val_text)
 
-        # Bottom label subtext
+        # Bottom Subtext
         painter.setPen(QColor("#AAAAAA"))
-        sub_font_size = max(7, int(diameter * 0.14))
+        sub_font_size = max(8, int(diameter * 0.14))
         painter.setFont(QFont("Segoe UI", sub_font_size, QFont.Normal))
         lbl_rect = QRectF(0, h - 14, w, 14)
         painter.drawText(lbl_rect, Qt.AlignCenter, self.subtext)
@@ -1583,23 +1311,18 @@ class SpeedometerGauge(QWidget):
 class AnimatedMeter:
     def __init__(self, meter_widget):
         self.meter = meter_widget
-        self.current_val = 0.0
-        self.target_val = 0.0
-        self._last_int_val = -1
-    def set_target(self, val):
-        self.meter.set_target(val)
-    def tick(self):
-        self.meter.tick()
+    def set_target(self, val): self.meter.set_target(val)
+    def tick(self): self.meter.tick()
 
 
 class ServerHub(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 — Event Hub V3.5 (Responsive Speedometer PySide6)")
-        self.resize(1280, 780)
+        self.setWindowTitle("TDE UP 2026 — Event Hub V3.5 (Responsive Dashboard PySide6)")
+        self.resize(1300, 780)
         self.setMinimumSize(960, 580)
         
-        # Responsive, High-Pixel Visual Stylesheet
+        # Unified Responsive, Interactive CSS Stylesheet
         self.setStyleSheet("""
             QMainWindow, QWidget { 
                 background-color: #161618; 
@@ -1613,7 +1336,7 @@ class ServerHub(QMainWindow):
                 border-radius: 5px; 
                 margin-top: 8px; 
                 padding-top: 10px; 
-                background: #1E1E20; 
+                background: #1C1C1E; 
             }
             QGroupBox::title { 
                 subcontrol-origin: margin; 
@@ -1623,17 +1346,42 @@ class ServerHub(QMainWindow):
                 font-weight: bold; 
                 font-size: 11px;
             }
+            /* Universal Button Styles */
             QPushButton { 
                 background-color: #2D2D30; 
                 color: #FFF; 
                 border: 1px solid #3E3E42; 
-                border-radius: 3px; 
+                border-radius: 4px; 
                 padding: 4px 8px; 
                 font-weight: bold; 
                 font-size: 11px;
             }
             QPushButton:hover { background-color: #3E3E42; border-color: #569CD6; }
-            QPushButton:disabled { background-color: #202022; color: #555555; border-color: #2A2A2C; }
+            QPushButton:pressed { background-color: #1E1E22; border-color: #4EC9B0; }
+            QPushButton:disabled { background-color: #161618; color: #555555; border-color: #2A2A2C; }
+            
+            /* ID-Specific Colorful Sidebar Buttons */
+            QPushButton#btnStartEngine { background-color: #107C41; color: white; border: 1px solid #107C41; }
+            QPushButton#btnStartEngine:hover { background-color: #0c5e31; }
+            QPushButton#btnStartEngine:pressed { background-color: #084021; }
+            
+            QPushButton#btnStopEngine { background-color: transparent; color: #F44747; border: 1px solid #F44747; }
+            QPushButton#btnStopEngine:hover { background-color: rgba(244, 71, 71, 0.1); }
+            QPushButton#btnStopEngine:pressed { background-color: rgba(244, 71, 71, 0.2); }
+            
+            QPushButton#btnStartTunnel { background-color: #005A9E; color: white; border: 1px solid #005A9E; }
+            QPushButton#btnStartTunnel:hover { background-color: #004578; }
+            QPushButton#btnStartTunnel:pressed { background-color: #003358; }
+            
+            QPushButton#btnStopTunnel { background-color: transparent; color: #F44747; border: 1px solid #F44747; }
+            QPushButton#btnStopTunnel:hover { background-color: rgba(244, 71, 71, 0.1); }
+            QPushButton#btnStopTunnel:pressed { background-color: rgba(244, 71, 71, 0.2); }
+            
+            QPushButton#btnWhatsApp { background-color: #107C41; color: white; border: 1px solid #107C41; }
+            QPushButton#btnWhatsApp:hover { background-color: #0c5e31; }
+            QPushButton#btnWhatsApp:pressed { background-color: #084021; }
+
+            /* Table Styles */
             QTableWidget { 
                 background-color: #19191B; 
                 gridline-color: #28282B; 
@@ -1642,18 +1390,18 @@ class ServerHub(QMainWindow):
                 selection-background-color: #094771; 
                 font-size: 11px;
             }
-            QTableCornerButton::section {
-                background-color: #202022;
-                border: 1px solid #28282B;
-            }
+            QTableCornerButton::section { background-color: #202022; border: 1px solid #2D2D30; }
             QHeaderView::section { 
                 background-color: #202022; 
                 color: #569CD6; 
-                padding: 3px 6px; 
+                padding: 4px 6px; 
                 border: 1px solid #28282B; 
+                border-bottom: 2px solid #2D2D30;
                 font-weight: bold; 
                 font-size: 11px;
             }
+            
+            /* Log Area Styles */
             QPlainTextEdit { 
                 background-color: #141416; 
                 color: #D4D4D4; 
@@ -1662,10 +1410,10 @@ class ServerHub(QMainWindow):
                 border: 1px solid #2D2D30; 
                 border-radius: 4px;
             }
-            QTabWidget::pane { border: 1px solid #2D2D30; background: #1C1C1E; border-radius: 4px; }
-            QTabBar::tab { background: #252528; color: #888888; padding: 5px 12px; border: 1px solid #2D2D30; font-size: 11px; }
+            QTabWidget::pane { border: 1px solid #2D2D30; background: #1C1C1E; border-radius: 4px; top: -1px; }
+            QTabBar::tab { background: #252528; color: #888888; padding: 5px 12px; border: 1px solid #2D2D30; font-size: 11px; border-top-left-radius: 4px; border-top-right-radius: 4px; }
             QTabBar::tab:selected { background: #1C1C1E; color: #569CD6; font-weight: bold; border-bottom: none; }
-            QSplitter::handle { background-color: #222224; height: 3px; }
+            QSplitter::handle { background-color: #2D2D30; height: 4px; margin: 4px 0px; border-radius: 2px; }
         """)
 
         self.local_ip = get_local_ip()
@@ -1709,7 +1457,7 @@ class ServerHub(QMainWindow):
         # High-performance Qt Timers
         self.timer_gui_queue = QTimer(self)
         self.timer_gui_queue.timeout.connect(self.process_gui_queue)
-        self.timer_gui_queue.start(15)
+        self.timer_gui_queue.start(10) # Ultra-fast max 10ms caps freezing 
         
         self.timer_log_flush = QTimer(self)
         self.timer_log_flush.timeout.connect(self.flush_log_buffers)
@@ -1717,7 +1465,7 @@ class ServerHub(QMainWindow):
         
         self.timer_anim = QTimer(self)
         self.timer_anim.timeout.connect(self.animation_loop)
-        self.timer_anim.start(20)
+        self.timer_anim.start(16) # 60 FPS Gauge animations
         
         self.timer_hw = QTimer(self)
         self.timer_hw.timeout.connect(self.refresh_hw_meters)
@@ -1814,8 +1562,7 @@ class ServerHub(QMainWindow):
             muted = GROUP_CALL_WINDOW['mic_muted']
             btn.setText("Unmute My Mic (All)" if muted else "Mute My Mic (All)")
             if _ws_loop:
-                for ws in list(CONNECTED_WS.values()):
-                    asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": muted})), _ws_loop)
+                for ws in list(CONNECTED_WS.values()): asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": muted})), _ws_loop)
 
     def toggle_group_speaker(self, btn):
         global GROUP_CALL_WINDOW, _ws_loop
@@ -1824,8 +1571,7 @@ class ServerHub(QMainWindow):
             muted = GROUP_CALL_WINDOW['spk_muted']
             btn.setText("Unmute Speakers (All)" if muted else "Mute Speakers (All)")
             if _ws_loop:
-                for ws in list(CONNECTED_WS.values()):
-                    asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": muted})), _ws_loop)
+                for ws in list(CONNECTED_WS.values()): asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": muted})), _ws_loop)
 
     def end_group_call_ui(self):
         global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW, _ws_loop
@@ -1908,8 +1654,7 @@ class ServerHub(QMainWindow):
             state['mic_muted'] = not state['mic_muted']
             btn.setText("Unmute My Mic" if state['mic_muted'] else "Mute My Mic")
             ws = CONNECTED_WS.get(device_id)
-            if ws and _ws_loop:
-                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": state['mic_muted']})), _ws_loop)
+            if ws and _ws_loop: asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": state['mic_muted']})), _ws_loop)
 
     def toggle_speaker(self, device_id, btn):
         state = self.active_call_windows.get(device_id)
@@ -1917,8 +1662,7 @@ class ServerHub(QMainWindow):
             state['spk_muted'] = not state['spk_muted']
             btn.setText("Unmute Speaker" if state['spk_muted'] else "Mute Speaker")
             ws = CONNECTED_WS.get(device_id)
-            if ws and _ws_loop:
-                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": state['spk_muted']})), _ws_loop)
+            if ws and _ws_loop: asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": state['spk_muted']})), _ws_loop)
 
     def end_call_ui(self, device_id):
         ws = CONNECTED_WS.get(device_id)
@@ -1941,8 +1685,7 @@ class ServerHub(QMainWindow):
             sessions = get_cached_sessions() or {}
             self.SessionMySQL = sessions.get('mysql')
             self.SessionSQLite = sessions.get('sqlite')
-        except Exception:
-            pass
+        except Exception: pass
         finally:
             self._db_checked = True
 
@@ -1951,24 +1694,19 @@ class ServerHub(QMainWindow):
         try:
             session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
             return int((time.time() - start) * 1000), "ONLINE"
-        except Exception:
-            return 0, "OFFLINE"
+        except Exception: return 0, "OFFLINE"
 
     def _ping_cloud(self, session):
-        with self.cf_lock:
-            cf_url = self.cloudflare_url
-        if cf_url == "Offline" or cf_url == "Pending":
-            return 0, "OFFLINE"
+        with self.cf_lock: cf_url = self.cloudflare_url
+        if cf_url == "Offline" or cf_url == "Pending": return 0, "OFFLINE"
         start = time.time()
         try:
             session.get(f"{cf_url}/api/status", timeout=(3, 7), verify=False)
             return int((time.time() - start) * 1000), "ONLINE"
         except requests.exceptions.RequestException as e:
             err_msg = str(e)
-            if "Max retries exceeded" in err_msg or "NameResolutionError" in err_msg:
-                clean_msg = "DNS resolution pending or tunnel unreachable."
-            else:
-                clean_msg = err_msg[:100] + "..."
+            if "Max retries exceeded" in err_msg or "NameResolutionError" in err_msg: clean_msg = "DNS resolution pending or tunnel unreachable."
+            else: clean_msg = err_msg[:100] + "..."
             if getattr(self, "_last_ping_err", "") != clean_msg: 
                 self._append_log('cf', f"[PING ERROR] {clean_msg}")
                 self._last_ping_err = clean_msg
@@ -1984,10 +1722,8 @@ class ServerHub(QMainWindow):
                 future_cloud = self.ping_executor.submit(self._ping_cloud, session)
                 l_ms, l_stat = future_local.result(timeout=4)
                 c_ms, c_stat = future_cloud.result(timeout=9)
-                with network_latency_lock:
-                    NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
-            except Exception:
-                pass
+                with network_latency_lock: NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
+            except Exception: pass
             _global_shutdown_event.wait(3.0)
 
     def _append_log(self, widget_id, message, tag=None):
@@ -2003,7 +1739,7 @@ class ServerHub(QMainWindow):
     def flush_log_buffers(self):
         try:
             with self.log_lock:
-                CHUNK_SIZE = 1000
+                CHUNK_SIZE = 500
                 flask_logs = self.log_buffer_flask[:CHUNK_SIZE]
                 net_logs = self.log_buffer_network[:CHUNK_SIZE]
                 cf_logs = self.log_buffer_cf[:CHUNK_SIZE]
@@ -2013,8 +1749,7 @@ class ServerHub(QMainWindow):
             if flask_logs: self._write_logs_to_widget(self.log_flask, flask_logs)
             if net_logs: self._write_logs_to_widget(self.log_network, net_logs)
             if cf_logs: self._write_logs_to_widget(self.log_cf, cf_logs)
-        except Exception:
-            pass
+        except Exception: pass
 
     def _write_logs_to_widget(self, text_widget, log_batches):
         tag_colors = {
@@ -2037,21 +1772,18 @@ class ServerHub(QMainWindow):
         start_time = time.perf_counter()
         processed_count = 0
         try:
-            while time.perf_counter() - start_time < 0.02 and processed_count < 500:
+            while time.perf_counter() - start_time < 0.010 and processed_count < 200:
                 try: task = self.gui_queue.get_nowait()
                 except queue.Empty: break
                 try: task()
                 except Exception as e: logging.error(f"GUI task execution failed: {e}")
                 processed_count += 1
-        except Exception:
-            pass
+        except Exception: pass
 
     def animation_loop(self):
         try:
-            for anim_meter in self.animated_meters.values():
-                anim_meter.tick()
-        except Exception:
-            pass
+            for anim_meter in self.animated_meters.values(): anim_meter.tick()
+        except Exception: pass
 
     def clear_system_logs(self):
         with self.log_lock: self.log_buffer_flask.clear()
@@ -2074,8 +1806,7 @@ class ServerHub(QMainWindow):
         self._append_log('network', f"[CLIPBOARD] Copied: {text}")
 
     def open_browser(self, url): 
-        if url != "Offline" and url != "Pending":
-            webbrowser.open(url)
+        if url != "Offline" and url != "Pending": webbrowser.open(url)
         
     def toggle_fullscreen(self):
         if self.isFullScreen(): self.showNormal()
@@ -2083,9 +1814,9 @@ class ServerHub(QMainWindow):
 
     def _build_status_badge(self, parent_layout, initial_text, color):
         f = QFrame()
-        f.setStyleSheet("QFrame { background-color:#1E1E22; border: 1px solid #2D2D30; border-radius: 4px; padding: 2px 5px; }")
+        f.setStyleSheet("QFrame { background-color:#1E1E22; border: 1px solid #2D2D30; border-radius: 4px; padding: 2px 4px; }")
         l = QVBoxLayout(f)
-        l.setContentsMargins(4,2,4,2)
+        l.setContentsMargins(5,3,5,3)
         lbl = QLabel(initial_text)
         lbl.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px; border:none;")
         l.addWidget(lbl)
@@ -2096,8 +1827,7 @@ class ServerHub(QMainWindow):
         frame = QFrame()
         frame.setStyleSheet("QFrame { background: #1C1C1E; border: 1px solid #2D2D30; border-radius: 4px; }")
         v = QVBoxLayout(frame)
-        v.setContentsMargins(0,0,0,0)
-        v.setSpacing(0)
+        v.setContentsMargins(0,0,0,0); v.setSpacing(0)
         
         hdr = QFrame()
         hdr.setStyleSheet("background: #202023; border-bottom: 1px solid #2D2D30; border-top-left-radius: 4px; border-top-right-radius: 4px;")
@@ -2203,10 +1933,10 @@ class ServerHub(QMainWindow):
         main_layout.setContentsMargins(6, 6, 6, 6)
         main_layout.setSpacing(6)
         
-        # --- LEFT SIDEBAR SCROLLABLE WRAPPER ---
+        # --- LEFT SIDEBAR ---
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setFixedWidth(230)
+        sidebar_scroll.setFixedWidth(240)
         sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         sidebar = QWidget()
@@ -2215,109 +1945,89 @@ class ServerHub(QMainWindow):
         side_layout.setSpacing(6)
         
         lbl_net = QLabel("NETWORK & ROUTING")
-        lbl_net.setStyleSheet("color: #569CD6; font-size: 12px; font-weight: bold;")
+        lbl_net.setStyleSheet("color: #569CD6; font-size: 13px; font-weight: bold;")
         side_layout.addWidget(lbl_net)
         
         # 1. Engine Group
         grp_eng = QGroupBox("🌐 High-Speed Engine")
         l_eng = QVBoxLayout(grp_eng)
         l_eng.setContentsMargins(6, 6, 6, 6)
-        l_eng.setSpacing(4)
         
         self.btn_start_flask = QPushButton("▶ START ENGINE")
-        self.btn_start_flask.setStyleSheet("background-color: #107C41; color: white;")
+        self.btn_start_flask.setObjectName("btnStartEngine")
         self.btn_start_flask.clicked.connect(self.start_flask)
         self.btn_stop_flask = QPushButton("⏹ STOP ENGINE")
-        self.btn_stop_flask.setStyleSheet("background-color: transparent; border: 1px solid #F44747; color: #F44747;")
+        self.btn_stop_flask.setObjectName("btnStopEngine")
         self.btn_stop_flask.setEnabled(False)
         self.btn_stop_flask.clicked.connect(self.stop_flask)
-        l_eng.addWidget(self.btn_start_flask)
-        l_eng.addWidget(self.btn_stop_flask)
+        l_eng.addWidget(self.btn_start_flask); l_eng.addWidget(self.btn_stop_flask)
         
         lbl_qr_desc = QLabel("Network QR (iOS HTTPS):")
         lbl_qr_desc.setStyleSheet("font-size: 10px; color: #888888;")
         l_eng.addWidget(lbl_qr_desc)
         
-        self.lbl_flask_qr = QLabel()
-        self.lbl_flask_qr.setAlignment(Qt.AlignCenter)
-        l_eng.addWidget(self.lbl_flask_qr)
-        self.update_qr(self.lbl_flask_qr, "OFFLINE")
+        self.lbl_flask_qr = QLabel(); self.lbl_flask_qr.setAlignment(Qt.AlignCenter)
+        l_eng.addWidget(self.lbl_flask_qr); self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
         self.lbl_flask_link = QLabel("HTTPS Offline")
-        self.lbl_flask_link.setStyleSheet("color: #858585; font-size: 10px;")
-        self.lbl_flask_link.setAlignment(Qt.AlignCenter)
+        self.lbl_flask_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_flask_link.setAlignment(Qt.AlignCenter)
         l_eng.addWidget(self.lbl_flask_link)
         
         r1 = QHBoxLayout(); r1.setSpacing(3)
         b_cpy_s = QPushButton("Copy HTTPS"); b_cpy_s.clicked.connect(lambda: self.copy_to_clipboard(self.https_url))
         b_cpy_h = QPushButton("Copy HTTP"); b_cpy_h.clicked.connect(lambda: self.copy_to_clipboard(self.http_url))
-        r1.addWidget(b_cpy_s); r1.addWidget(b_cpy_h)
-        l_eng.addLayout(r1)
+        r1.addWidget(b_cpy_s); r1.addWidget(b_cpy_h); l_eng.addLayout(r1)
         
         r2 = QHBoxLayout(); r2.setSpacing(3)
         b_opn_s = QPushButton("Open Secure"); b_opn_s.clicked.connect(lambda: self.open_browser(self.https_url))
         b_opn_h = QPushButton("Open Local"); b_opn_h.clicked.connect(lambda: self.open_browser(self.http_url))
-        r2.addWidget(b_opn_s); r2.addWidget(b_opn_h)
-        l_eng.addLayout(r2)
+        r2.addWidget(b_opn_s); r2.addWidget(b_opn_h); l_eng.addLayout(r2)
         side_layout.addWidget(grp_eng)
         
         # 2. CF Tunnel Group
         grp_cf = QGroupBox("☁️ Cloudflare Tunnel")
         l_cf = QVBoxLayout(grp_cf)
         l_cf.setContentsMargins(6, 6, 6, 6)
-        l_cf.setSpacing(4)
         
         self.btn_start_cf = QPushButton("▶ START TUNNEL")
-        self.btn_start_cf.setStyleSheet("background-color: #094771; color: white;")
+        self.btn_start_cf.setObjectName("btnStartTunnel")
         self.btn_start_cf.setEnabled(False)
         self.btn_start_cf.clicked.connect(self.start_cf)
         self.btn_stop_cf = QPushButton("⏹ STOP TUNNEL")
-        self.btn_stop_cf.setStyleSheet("background-color: transparent; border: 1px solid #F44747; color: #F44747;")
+        self.btn_stop_cf.setObjectName("btnStopTunnel")
         self.btn_stop_cf.setEnabled(False)
         self.btn_stop_cf.clicked.connect(self.stop_cf)
-        l_cf.addWidget(self.btn_start_cf)
-        l_cf.addWidget(self.btn_stop_cf)
+        l_cf.addWidget(self.btn_start_cf); l_cf.addWidget(self.btn_stop_cf)
         
-        self.lbl_cf_qr = QLabel()
-        self.lbl_cf_qr.setAlignment(Qt.AlignCenter)
-        l_cf.addWidget(self.lbl_cf_qr)
-        self.update_qr(self.lbl_cf_qr, "OFFLINE")
+        self.lbl_cf_qr = QLabel(); self.lbl_cf_qr.setAlignment(Qt.AlignCenter)
+        l_cf.addWidget(self.lbl_cf_qr); self.update_qr(self.lbl_cf_qr, "OFFLINE")
         
         self.lbl_cf_link = QLabel("Tunnel Offline")
-        self.lbl_cf_link.setStyleSheet("color: #858585; font-size: 10px;")
-        self.lbl_cf_link.setAlignment(Qt.AlignCenter)
+        self.lbl_cf_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_cf_link.setAlignment(Qt.AlignCenter)
         l_cf.addWidget(self.lbl_cf_link)
         
         r3 = QHBoxLayout(); r3.setSpacing(3)
         b_cpy_cf = QPushButton("Copy URL"); b_cpy_cf.clicked.connect(lambda: self.copy_to_clipboard(self.cloudflare_url))
         b_opn_cf = QPushButton("Open URL"); b_opn_cf.clicked.connect(lambda: self.open_browser(self.cloudflare_url))
-        r3.addWidget(b_cpy_cf); r3.addWidget(b_opn_cf)
-        l_cf.addLayout(r3)
+        r3.addWidget(b_cpy_cf); r3.addWidget(b_opn_cf); l_cf.addLayout(r3)
         side_layout.addWidget(grp_cf)
         
         # 3. Simulator Group
         grp_test = QGroupBox("🧪 Simulator Engine")
-        l_test = QVBoxLayout(grp_test)
-        l_test.setContentsMargins(6, 6, 6, 6)
-        l_test.setSpacing(4)
-        self.chk_test = QCheckBox("Testing Mode OFF")
-        self.chk_test.stateChanged.connect(self.toggle_test_mode)
+        l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(6, 6, 6, 6)
+        self.chk_test = QCheckBox("Testing Mode OFF"); self.chk_test.stateChanged.connect(self.toggle_test_mode)
         l_test.addWidget(self.chk_test)
-        self.cb_test_date = QComboBox()
-        self.cb_test_date.addItems(["2026-08-30", "2026-08-31", "2026-09-01"])
-        self.cb_test_date.setEnabled(False)
-        self.cb_test_date.currentTextChanged.connect(self.on_test_date_changed)
+        self.cb_test_date = QComboBox(); self.cb_test_date.addItems(["2026-08-30", "2026-08-31", "2026-09-01"])
+        self.cb_test_date.setEnabled(False); self.cb_test_date.currentTextChanged.connect(self.on_test_date_changed)
         l_test.addWidget(self.cb_test_date)
         side_layout.addWidget(grp_test)
         
         # 4. Support Group
         grp_sup = QGroupBox("📞 Support")
-        l_sup = QVBoxLayout(grp_sup)
-        l_sup.setContentsMargins(6, 6, 6, 6)
-        l_sup.setSpacing(4)
+        l_sup = QVBoxLayout(grp_sup); l_sup.setContentsMargins(6, 6, 6, 6)
         l_sup.addWidget(QLabel("Contact: +91 8960446756"))
         b_chat = QPushButton("💬 Chat on WhatsApp")
-        b_chat.setStyleSheet("background-color: #107C41; color: white;")
+        b_chat.setObjectName("btnWhatsApp")
         b_chat.clicked.connect(lambda: self.open_browser("https://wa.me/918960446756"))
         l_sup.addWidget(b_chat)
         side_layout.addWidget(grp_sup)
@@ -2326,65 +2036,58 @@ class ServerHub(QMainWindow):
         sidebar_scroll.setWidget(sidebar)
         main_layout.addWidget(sidebar_scroll)
         
-        # --- RIGHT MAIN DASHBOARD ---
+        # --- RIGHT DASHBOARD ---
         content = QWidget()
         c_lay = QVBoxLayout(content)
         c_lay.setContentsMargins(4, 0, 0, 0)
-        c_lay.setSpacing(6)
+        c_lay.setSpacing(8)
         
-        # Header Row
+        # 1. Header & Meters Row
         hdr_row = QHBoxLayout()
-        hdr_row.setSpacing(6)
+        hdr_row.setSpacing(10)
         
         h_left = QVBoxLayout()
-        h_left.setSpacing(3)
+        h_left.setSpacing(4)
         lbl_h = QLabel("TDE UP 2026 — COMMAND CENTER")
-        lbl_h.setStyleSheet("color: #4EC9B0; font-size: 16px; font-weight: bold;")
+        lbl_h.setStyleSheet("color: #4EC9B0; font-size: 18px; font-weight: bold;")
         h_left.addWidget(lbl_h)
         
-        # Dynamic Badge Ribbon
         b_row = QHBoxLayout()
-        b_row.setSpacing(4)
-        self.lbl_stat_cf = self._build_status_badge(b_row, "● Cloudflare: OFFLINE", "#858585")
-        self.lbl_stat_sqlite = self._build_status_badge(b_row, "● SQLITE: MIRROR", "#569CD6")
-        self.lbl_stat_mysql = self._build_status_badge(b_row, "● MYSQL: CHECKING", "#569CD6")
-        self.lbl_stat_audio = self._build_status_badge(b_row, "● VOICE: CHECKING", "#569CD6")
+        b_row.setSpacing(5)
+        self.lbl_stat_cf = self._build_status_badge(b_row, "● CF: OFF", "#858585")
+        self.lbl_stat_sqlite = self._build_status_badge(b_row, "● LITE: WAIT", "#569CD6")
+        self.lbl_stat_mysql = self._build_status_badge(b_row, "● SQL: WAIT", "#569CD6")
+        self.lbl_stat_audio = self._build_status_badge(b_row, "● MIC: WAIT", "#569CD6")
         b_row.addStretch()
         h_left.addLayout(b_row)
         hdr_row.addLayout(h_left, stretch=1)
         
-        # SPEEDOMETER GAUGES
         hw_f = QHBoxLayout()
-        hw_f.setSpacing(4)
-        self.mini_meter_cpu = SpeedometerGauge("CPU", "%", 100, "#569CD6")
-        self.mini_meter_ram = SpeedometerGauge("RAM", "%", 100, "#D7BA7D")
-        self.mini_meter_net = SpeedometerGauge("OFFLINE", "MB/s", 100, "#858585")
-        self.mini_meter_api = SpeedometerGauge("API ms", "ms", 500, "#4EC9B0")
+        hw_f.setSpacing(5)
+        self.mini_meter_cpu = SpeedometerGauge("CPU", "%", 100, good_is_high=False)
+        self.mini_meter_ram = SpeedometerGauge("RAM", "%", 100, good_is_high=False)
+        self.mini_meter_net = SpeedometerGauge("OFFLINE", "MB/s", 100, good_is_high=True)
+        self.mini_meter_api = SpeedometerGauge("API ms", "ms", 500, good_is_high=False)
         hw_f.addWidget(self.mini_meter_cpu)
         hw_f.addWidget(self.mini_meter_ram)
         hw_f.addWidget(self.mini_meter_net)
         hw_f.addWidget(self.mini_meter_api)
         hdr_row.addLayout(hw_f)
         
-        # System Health Microcard
         sys_h = QFrame()
         sys_h.setStyleSheet("QFrame { background: #1C1C1E; border: 1px solid #2D2D30; border-radius: 4px; padding: 2px; }")
         s_lay = QGridLayout(sys_h)
-        s_lay.setContentsMargins(6, 4, 6, 4)
-        s_lay.setSpacing(2)
+        s_lay.setContentsMargins(8, 4, 8, 4)
+        s_lay.setSpacing(4)
         
         lbl_sh = QLabel("SYSTEM HEALTH")
-        lbl_sh.setStyleSheet("color: #777777; font-size: 9px; font-weight: bold;")
+        lbl_sh.setStyleSheet("color: #777777; font-size: 10px; font-weight: bold;")
         s_lay.addWidget(lbl_sh, 0, 0, 1, 2)
         
-        self.lbl_hdr_local_ping = QLabel("LAN: WAIT")
-        self.lbl_hdr_local_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size: 10px; border:none;")
-        self.lbl_hdr_cloud_ping = QLabel("WAN: WAIT")
-        self.lbl_hdr_cloud_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size: 10px; border:none;")
-        self.lbl_hdr_traffic = QLabel("Traffic: 0 req/s")
-        self.lbl_hdr_traffic.setStyleSheet("color:#569CD6; font-weight:bold; font-size: 10px; border:none;")
-        self.lbl_hdr_db_queue = QLabel("DB Q: 0")
-        self.lbl_hdr_db_queue.setStyleSheet("color:#C586C0; font-weight:bold; font-size: 10px; border:none;")
+        self.lbl_hdr_local_ping = QLabel("LAN: WAIT"); self.lbl_hdr_local_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size: 11px; border:none;")
+        self.lbl_hdr_cloud_ping = QLabel("WAN: WAIT"); self.lbl_hdr_cloud_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size: 11px; border:none;")
+        self.lbl_hdr_traffic = QLabel("Traffic: 0 req/s"); self.lbl_hdr_traffic.setStyleSheet("color:#569CD6; font-weight:bold; font-size: 11px; border:none;")
+        self.lbl_hdr_db_queue = QLabel("DB Q: 0"); self.lbl_hdr_db_queue.setStyleSheet("color:#C586C0; font-weight:bold; font-size: 11px; border:none;")
         
         s_lay.addWidget(self.lbl_hdr_local_ping, 1, 0)
         s_lay.addWidget(self.lbl_hdr_cloud_ping, 1, 1)
@@ -2392,68 +2095,59 @@ class ServerHub(QMainWindow):
         s_lay.addWidget(self.lbl_hdr_db_queue, 2, 1)
         hdr_row.addWidget(sys_h)
         
-        acts = QVBoxLayout()
-        acts.setSpacing(3)
+        acts = QVBoxLayout(); acts.setSpacing(3)
         b_ref = QPushButton("⟳ Refresh"); b_ref.clicked.connect(self.refresh_stats)
-        b_full = QPushButton("⛶ Full"); b_full.clicked.connect(self.toggle_fullscreen)
+        b_full = QPushButton("⛶ Fullscreen"); b_full.clicked.connect(self.toggle_fullscreen)
         acts.addWidget(b_ref); acts.addWidget(b_full)
         hdr_row.addLayout(acts)
-        
         c_lay.addLayout(hdr_row)
         
-        # --- COMPACT LIVE METRICS CARDS (Single/Dual Row) ---
+        # 2. 2x4 Metric Cards Grid
         self.stat_vars = {}
         grid = QGridLayout()
-        grid.setSpacing(4)
+        grid.setSpacing(6)
         grid.setContentsMargins(0, 0, 0, 0)
         
         def _mk(t, c):
-            f = QFrame()
-            f.setStyleSheet("QFrame { background:#1E1E22; border:1px solid #28282B; border-radius:4px; }")
-            l = QVBoxLayout(f)
-            l.setContentsMargins(4, 3, 4, 3)
-            l.setSpacing(1)
-            lbl_title = QLabel(t)
-            lbl_title.setStyleSheet("color: #777777; font-size: 9px; font-weight: bold; border:none;")
+            f = QFrame(); f.setStyleSheet("QFrame { background:#1E1E22; border:1px solid #28282B; border-radius:4px; }")
+            l = QVBoxLayout(f); l.setContentsMargins(5, 5, 5, 5); l.setSpacing(2)
+            lbl_title = QLabel(t); lbl_title.setStyleSheet("color: #858585; font-size: 10px; font-weight: bold; border:none;")
             l.addWidget(lbl_title, alignment=Qt.AlignCenter)
-            val = QLabel("0")
-            val.setStyleSheet(f"color:{c}; font-size:16px; font-weight:bold; border:none;")
+            val = QLabel("0"); val.setStyleSheet(f"color:{c}; font-size:20px; font-weight:bold; border:none;")
             l.addWidget(val, alignment=Qt.AlignCenter)
             return f, val
         
+        # Top Row
         f1, self.stat_vars["total_att"] = _mk("TOTAL ATTENDEES", "#569CD6"); grid.addWidget(f1, 0, 0)
-        f2, self.stat_vars["kiosk_reg"] = _mk("KIOSK REG", "#9CDCFE"); grid.addWidget(f2, 0, 1)
-        f3, self.stat_vars["sqlite_total"] = _mk("SQLITE MIRROR", "#4EC9B0"); grid.addWidget(f3, 0, 2)
+        f2, self.stat_vars["kiosk_reg"] = _mk("KIOSK REGISTRATIONS", "#9CDCFE"); grid.addWidget(f2, 0, 1)
+        f3, self.stat_vars["sqlite_total"] = _mk("SQLITE MIRROR SIZE", "#4EC9B0"); grid.addWidget(f3, 0, 2)
         f4, self.stat_vars["online_scanners"] = _mk("ACTIVE SCANNERS", "#D7BA7D"); grid.addWidget(f4, 0, 3)
-        f5, self.stat_vars["chk_today"] = _mk("TODAY CHECK-IN", "#4EC9B0"); grid.addWidget(f5, 0, 4)
-        f6, self.stat_vars["chk_30"] = _mk("30 Aug Check-in", "#CCCCCC"); grid.addWidget(f6, 0, 5)
-        f7, self.stat_vars["chk_31"] = _mk("31 Aug Check-in", "#CCCCCC"); grid.addWidget(f7, 0, 6)
-        f8, self.stat_vars["chk_01"] = _mk("01 Sept Check-in", "#CCCCCC"); grid.addWidget(f8, 0, 7)
+        # Bottom Row
+        f5, self.stat_vars["chk_today"] = _mk("TODAY CHECK-IN", "#4EC9B0"); grid.addWidget(f5, 1, 0)
+        f6, self.stat_vars["chk_30"] = _mk("30 Aug Check-in", "#CCCCCC"); grid.addWidget(f6, 1, 1)
+        f7, self.stat_vars["chk_31"] = _mk("31 Aug Check-in", "#CCCCCC"); grid.addWidget(f7, 1, 2)
+        f8, self.stat_vars["chk_01"] = _mk("01 Sept Check-in", "#CCCCCC"); grid.addWidget(f8, 1, 3)
         c_lay.addLayout(grid)
         
-        # --- SPLITTER: RESIZABLE DEVICES & LOGS ---
+        # 3. Main Splitter (Devices Table / Logs)
         main_splitter = QSplitter(Qt.Vertical)
         main_splitter.setChildrenCollapsible(False)
         
-        # 1. Connected Devices Container
+        # Container A: Devices
         dev_container = QWidget()
-        dev_layout = QVBoxLayout(dev_container)
-        dev_layout.setContentsMargins(0, 2, 0, 2)
-        dev_layout.setSpacing(3)
+        dev_layout = QVBoxLayout(dev_container); dev_layout.setContentsMargins(0, 4, 0, 0); dev_layout.setSpacing(4)
         
-        dev_hdr = QHBoxLayout()
-        dev_hdr.setSpacing(4)
+        dev_hdr = QHBoxLayout(); dev_hdr.setSpacing(6)
         self.lbl_devices_header = QLabel("📡 ACTIVE CONNECTED DEVICES (0) — Right-Click to Manage")
-        self.lbl_devices_header.setStyleSheet("color: #569CD6; font-weight:bold; font-size: 11px;")
+        self.lbl_devices_header.setStyleSheet("color: #569CD6; font-weight:bold; font-size: 12px;")
         dev_hdr.addWidget(self.lbl_devices_header)
         
-        self.lbl_stats_health = QLabel("")
-        self.lbl_stats_health.setStyleSheet("color:#D7BA7D; font-size: 10px;")
+        self.lbl_stats_health = QLabel(""); self.lbl_stats_health.setStyleSheet("color:#D7BA7D; font-size: 11px;")
         dev_hdr.addWidget(self.lbl_stats_health)
         dev_hdr.addStretch()
         
-        btn_bc = QPushButton("📢 Broadcast to All"); btn_bc.clicked.connect(self._prompt_broadcast_message)
-        btn_gc = QPushButton("📞 Group Call All"); btn_gc.clicked.connect(self._prompt_group_call)
+        btn_bc = QPushButton("📢 Broadcast"); btn_bc.clicked.connect(self._prompt_broadcast_message)
+        btn_gc = QPushButton("📞 Group Call"); btn_gc.clicked.connect(self._prompt_group_call)
         dev_hdr.addWidget(btn_bc); dev_hdr.addWidget(btn_gc)
         dev_layout.addLayout(dev_hdr)
         
@@ -2467,21 +2161,16 @@ class ServerHub(QMainWindow):
         dev_layout.addWidget(self.tree_devices)
         main_splitter.addWidget(dev_container)
         
-        # 2. Logs Console Container
+        # Container B: Logs
         log_container = QWidget()
-        log_layout = QVBoxLayout(log_container)
-        log_layout.setContentsMargins(0, 2, 0, 0)
-        log_layout.setSpacing(3)
+        log_layout = QVBoxLayout(log_container); log_layout.setContentsMargins(0, 4, 0, 0); log_layout.setSpacing(4)
         
-        log_h = QHBoxLayout()
-        log_h.setSpacing(4)
-        
+        log_h = QHBoxLayout(); log_h.setSpacing(6)
         self.log_flask = self._create_log_box(log_h, "📟 System & API Logs", self.clear_system_logs)
         
         tabs = QTabWidget()
         t1 = QWidget(); l1 = QVBoxLayout(t1); l1.setContentsMargins(0,0,0,0)
         self.log_network = self._create_log_box(l1, "Network Events", self.clear_network_logs)
-        
         t2 = QWidget(); l2 = QVBoxLayout(t2); l2.setContentsMargins(0,0,0,0)
         self.log_cf = self._create_log_box(l2, "Tunnel Status", self.clear_cf_logs)
         
@@ -2492,19 +2181,16 @@ class ServerHub(QMainWindow):
         log_layout.addLayout(log_h)
         main_splitter.addWidget(log_container)
         
-        # Proportional Split (35% Devices Table, 65% Logs)
-        main_splitter.setSizes([200, 360])
+        # Enhanced Layout Weight Distribution (Increases Log Console height slightly)
+        main_splitter.setSizes([450, 300])
         c_lay.addWidget(main_splitter, stretch=1)
         
         ftr = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
-        ftr.setStyleSheet("color: #D7BA7D; font-family: 'Consolas'; font-weight: bold; font-size: 10px;")
+        ftr.setStyleSheet("color: #D7BA7D; font-family: 'Consolas'; font-weight: bold; font-size: 11px;")
         ftr.setAlignment(Qt.AlignRight)
         c_lay.addWidget(ftr)
         
         main_layout.addWidget(content, stretch=1)
-
-    def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        pass
 
     def _set_stat(self, var_name, new_value):
         entry = self.stat_vars.get(var_name)
@@ -2522,7 +2208,7 @@ class ServerHub(QMainWindow):
 
     def toggle_test_mode(self, state):
         global SERVER_TEST_MODE
-        SERVER_TEST_MODE = (state == Qt.Checked.value)
+        SERVER_TEST_MODE = (state == Qt.CheckedState.value or state == 2)
         if SERVER_TEST_MODE:
             self.chk_test.setText("Testing Mode ON")
             self.cb_test_date.setEnabled(True)
@@ -2545,18 +2231,18 @@ class ServerHub(QMainWindow):
             c = snap_telemetry.get("cpu", 0)
             r = snap_telemetry.get("ram", 0)
             self.animated_meters["cpu"].set_target(c)
-            self.mini_meter_cpu.configure(bootstyle="success" if c < 60 else ("warning" if c < 85 else "danger"))
             self.animated_meters["ram"].set_target(r)
-            self.mini_meter_ram.configure(bootstyle="success" if r < 70 else ("warning" if r < 90 else "danger"))
 
             net_type = snap_telemetry.get("net_type", "Disconnected")
             if net_type in ["Disconnected", "Offline"]:
                 self.animated_meters["net"].set_target(0)
-                self.mini_meter_net.configure(bootstyle="danger", subtext="OFFLINE")
+                self.mini_meter_net.subtext = "OFFLINE"
             else:
                 mbps = snap_telemetry.get("total_mbps", 0.0)
-                cap = 1000 if mbps > 100 else 100
-                self.mini_meter_net.configure(amounttotal=cap, bootstyle="success" if mbps > 1.0 else "info", subtext=net_type.upper()[:7])
+                # Network max_val dynamic scaling
+                cap = 1000 if mbps > 100 else (100 if mbps > 10 else 10)
+                self.mini_meter_net.max_val = cap
+                self.mini_meter_net.subtext = net_type.upper()[:7]
                 self.animated_meters["net"].set_target(mbps)
 
             req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
@@ -2571,7 +2257,6 @@ class ServerHub(QMainWindow):
 
             proc_ms = int(snap_metrics["avg_process_ms"])
             self.animated_meters["api"].set_target(min(proc_ms, 500))
-            self.mini_meter_api.configure(bootstyle="success" if proc_ms < 100 else ("warning" if proc_ms < 300 else "danger"))
 
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms = snap_net["local_ms"]
@@ -2579,26 +2264,26 @@ class ServerHub(QMainWindow):
 
             if snap_net["local_status"] == "ONLINE": 
                 self.lbl_hdr_local_ping.setText(f"LAN: {loc_ms} ms")
-                self.lbl_hdr_local_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:10px; border:none;")
+                self.lbl_hdr_local_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:11px; border:none;")
             else: 
                 self.lbl_hdr_local_ping.setText("LAN: DOWN")
-                self.lbl_hdr_local_ping.setStyleSheet("color:#F44747; font-weight:bold; font-size:10px; border:none;")
+                self.lbl_hdr_local_ping.setStyleSheet("color:#F44747; font-weight:bold; font-size:11px; border:none;")
 
             if snap_net["cloud_status"] == "ONLINE": 
                 self.lbl_hdr_cloud_ping.setText(f"WAN: {c_ms} ms")
-                self.lbl_hdr_cloud_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:10px; border:none;")
+                self.lbl_hdr_cloud_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:11px; border:none;")
             else: 
                 self.lbl_hdr_cloud_ping.setText("WAN: DOWN")
-                self.lbl_hdr_cloud_ping.setStyleSheet("color:#D7BA7D; font-weight:bold; font-size:10px; border:none;")
+                self.lbl_hdr_cloud_ping.setStyleSheet("color:#D7BA7D; font-weight:bold; font-size:11px; border:none;")
                 
             t_color = "#569CD6" if req_sec < 50 else ("#D7BA7D" if req_sec < 200 else "#F44747")
             self.lbl_hdr_traffic.setText(f"Traffic: {req_sec} req/s")
-            self.lbl_hdr_traffic.setStyleSheet(f"color:{t_color}; font-weight:bold; font-size:10px; border:none;")
+            self.lbl_hdr_traffic.setStyleSheet(f"color:{t_color}; font-weight:bold; font-size:11px; border:none;")
             
             q_size = DB_WRITE_QUEUE.qsize()
             q_color = "#C586C0" if q_size < 100 else ("#D7BA7D" if q_size < 1000 else "#F44747")
             self.lbl_hdr_db_queue.setText(f"DB Q: {q_size}")
-            self.lbl_hdr_db_queue.setStyleSheet(f"color:{q_color}; font-weight:bold; font-size:10px; border:none;")
+            self.lbl_hdr_db_queue.setStyleSheet(f"color:{q_color}; font-weight:bold; font-size:11px; border:none;")
         except Exception:
             pass
 
@@ -2642,28 +2327,29 @@ class ServerHub(QMainWindow):
                 self.tree_devices.setItem(0, 6, QTableWidgetItem("empty_msg"))
 
             if not self._db_checked:
-                self.lbl_stat_mysql.setText("● MYSQL: CHECKING")
-                self.lbl_stat_mysql.setStyleSheet("color:#569CD6; font-weight:bold; border:none;")
-                self.lbl_stat_sqlite.setText("● SQLITE: MIRROR")
-                self.lbl_stat_sqlite.setStyleSheet("color:#569CD6; font-weight:bold; border:none;")
+                self.lbl_stat_mysql.setText("● SQL: WAIT")
+                self.lbl_stat_mysql.setStyleSheet("color:#569CD6; font-weight:bold; font-size:11px; border:none;")
+                self.lbl_stat_sqlite.setText("● LITE: WAIT")
+                self.lbl_stat_sqlite.setStyleSheet("color:#569CD6; font-weight:bold; font-size:11px; border:none;")
             else:
                 if self.SessionMySQL:
-                    self.lbl_stat_mysql.setText("● MYSQL: LIVE")
-                    self.lbl_stat_mysql.setStyleSheet("color:#4EC9B0; font-weight:bold; border:none;")
+                    self.lbl_stat_mysql.setText("● SQL: LIVE")
+                    self.lbl_stat_mysql.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:11px; border:none;")
                 else:
-                    self.lbl_stat_mysql.setText("● MYSQL: OFFLINE")
-                    self.lbl_stat_mysql.setStyleSheet("color:#F44747; font-weight:bold; border:none;")
+                    self.lbl_stat_mysql.setText("● SQL: ERR")
+                    self.lbl_stat_mysql.setStyleSheet("color:#F44747; font-weight:bold; font-size:11px; border:none;")
                 if self.SessionSQLite:
-                    self.lbl_stat_sqlite.setText("● SQLITE: ACTIVE")
-                    self.lbl_stat_sqlite.setStyleSheet("color:#4EC9B0; font-weight:bold; border:none;")
+                    self.lbl_stat_sqlite.setText("● LITE: SYNC")
+                    self.lbl_stat_sqlite.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:11px; border:none;")
                 else:
-                    self.lbl_stat_sqlite.setText("● SQLITE: FAULT")
-                    self.lbl_stat_sqlite.setStyleSheet("color:#F44747; font-weight:bold; border:none;")
+                    self.lbl_stat_sqlite.setText("● LITE: ERR")
+                    self.lbl_stat_sqlite.setStyleSheet("color:#F44747; font-weight:bold; font-size:11px; border:none;")
 
             audio_text, audio_style = global_audio.status_text()
+            short_audio = audio_text.replace("VOICE AUDIO", "MIC").replace("OFFLINE", "OFF")
             c = "#858585" if audio_style == "secondary" else ("#4EC9B0" if audio_style=="success" else ("#D7BA7D" if audio_style=="warning" else "#F44747"))
-            self.lbl_stat_audio.setText(audio_text)
-            self.lbl_stat_audio.setStyleSheet(f"color:{c}; font-weight:bold; border:none;")
+            self.lbl_stat_audio.setText(short_audio)
+            self.lbl_stat_audio.setStyleSheet(f"color:{c}; font-weight:bold; font-size:11px; border:none;")
 
             with stats_lock: snap = dict(STATS_CACHE)
             for k, v in zip(["total_att", "kiosk_reg", "sqlite_total", "chk_30", "chk_31", "chk_01", "chk_today", "chk_total"], 
@@ -2728,13 +2414,13 @@ class ServerHub(QMainWindow):
     def _animate_cf_connecting(self, tick=0):
         if not self._cf_connecting: return
         self.lbl_stat_cf.setText(f"● CF: CONNECTING{'.' * (tick % 4)}")
-        self.lbl_stat_cf.setStyleSheet("color:#D7BA7D; font-weight:bold; border:none;")
+        self.lbl_stat_cf.setStyleSheet("color:#D7BA7D; font-weight:bold; font-size:11px; border:none;")
         QTimer.singleShot(450, lambda: self._animate_cf_connecting(tick + 1))
 
     def _mark_cf_live(self): 
         self._cf_connecting = False
-        self.lbl_stat_cf.setText("● Cloudflare: LIVE")
-        self.lbl_stat_cf.setStyleSheet("color:#4EC9B0; font-weight:bold; border:none;")
+        self.lbl_stat_cf.setText("● CF: LIVE")
+        self.lbl_stat_cf.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:11px; border:none;")
 
     def start_cf(self):
         if not self.http_thread:
@@ -2750,7 +2436,11 @@ class ServerHub(QMainWindow):
 
         def _run_cf():
             try:
-                proc = subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
+                proc = subprocess.Popen(
+                    ["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], 
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, 
+                    creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
+                )
                 with self.cf_lock: self.cf_process = proc
                 url_found = False
                 for line in proc.stdout:
@@ -2776,27 +2466,43 @@ class ServerHub(QMainWindow):
             except Exception as e: 
                 self.gui_queue.put(self.stop_cf)
                 self._append_log('cf', f"[ERROR] Tunnel failed: {e}")
+            finally:
+                with self.cf_lock: is_active = (self.cf_process is not None)
+                if is_active: self.gui_queue.put(self.stop_cf)
+                
         threading.Thread(target=_run_cf, daemon=True).start()
         
     def stop_cf(self):
+        if not self.btn_stop_cf.isEnabled() and self.cloudflare_url == "Offline": return
+        
         self.btn_stop_cf.setEnabled(False)
         self._cf_connecting = False  
         self.btn_start_cf.setEnabled(True if self.http_thread else False)
-        self.lbl_stat_cf.setText("● Cloudflare: OFFLINE")
-        self.lbl_stat_cf.setStyleSheet("color:#858585; font-weight:bold; border:none;")
+        
+        self.lbl_stat_cf.setText("● CF: OFF")
+        self.lbl_stat_cf.setStyleSheet("color:#858585; font-weight:bold; font-size:11px; border:none;")
+        
         with self.cf_lock:
             proc = self.cf_process
             self.cf_process = None
             self.cloudflare_url = "Offline"
+            
         if proc:
+            # Full recursive process tree kill
             try: 
-                if platform.system() == "Windows": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else: proc.terminate()
-            except Exception: pass
+                parent = psutil.Process(proc.pid)
+                for child in parent.children(recursive=True): child.kill()
+                parent.kill()
+            except Exception:
+                try:
+                    if platform.system() == "Windows": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)
+                    else: proc.terminate()
+                except Exception: pass
+                
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.setText("Tunnel Offline")
         self.lbl_cf_link.setStyleSheet("color:#858585; font-size:10px;")
-        self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
+        self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed successfully.")
 
     def closeEvent(self, event):
         try:
