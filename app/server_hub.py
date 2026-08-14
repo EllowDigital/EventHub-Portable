@@ -54,7 +54,7 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Optional Imports
+# --- Optional Imports ---
 try:
     import sounddevice as sd
     import soundfile as sf
@@ -150,6 +150,7 @@ def _telemetry_worker():
             eth_iface = next((i for i in up_ifaces if 'ethernet' in i.lower() or 'eth' in i.lower()), None)
             usb_iface = next((i for i in up_ifaces if 'usb' in i.lower()), None)
             wifi_iface = next((i for i in up_ifaces if 'wi-fi' in i.lower() or 'wireless' in i.lower() or 'wlan' in i.lower()), None)
+            
             if eth_iface: active_iface, iface_type = eth_iface, "Ethernet"
             elif usb_iface: active_iface, iface_type = usb_iface, "USB Eth"
             elif wifi_iface: active_iface, iface_type = wifi_iface, "Wi-Fi"
@@ -170,6 +171,7 @@ def _telemetry_worker():
                 ul_mb = current_io.bytes_sent / 1048576
             last_io, last_time = current_io, current_time
             if active_iface and active_iface in stats: link_speed = stats[active_iface].speed
+            
             with _telemetry_lock:
                 TELEMETRY_DATA.update({
                     "cpu": cpu, "ram": ram, "net_type": iface_type,
@@ -715,6 +717,7 @@ def _status_log_tag(status_code):
     return "log_success"
 
 _LOG_PREFIX_TAGS = (("[PING ERROR]", "log_error"), ("[ERROR]", "log_error"), ("[WARNING]", "log_warning"), ("[SUCCESS]", "log_success"), ("[CLIPBOARD]", "log_info"), ("[INFO]", "log_info"))
+
 def _guess_log_tag(message):
     for prefix, tag in _LOG_PREFIX_TAGS:
         if message.startswith(prefix): return tag
@@ -1014,7 +1017,7 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
-# Fixed route to accept GET and POST so ping checks don't fail!
+# Healthcheck must accept GET for system pinger
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     if request.method == 'GET':
@@ -1293,9 +1296,11 @@ class SpeedometerGauge(QWidget):
         font_size = max(9, int(diameter * 0.23))
         painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
         
-        if self.max_val > 100 and ("MB" in self.unit or "ms" in self.subtext):
-            val_text = f"{self.current_val:.1f}" if self.current_val < 100 else f"{int(round(self.current_val))}"
-        else: val_text = str(int(round(self.current_val)))
+        # Display explicit float formatting if it's Network or API ms.
+        if "MB" in self.unit or self.max_val <= 10.0:
+            val_text = f"{self.current_val:.1f}"
+        else: 
+            val_text = str(int(round(self.current_val)))
             
         val_rect = QRectF(margin_x, margin_y + (diameter * 0.18), diameter, diameter * 0.45)
         painter.drawText(val_rect, Qt.AlignCenter, val_text)
@@ -1318,7 +1323,7 @@ class AnimatedMeter:
 class ServerHub(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 — Event Hub V3.5 (Responsive Dashboard PySide6)")
+        self.setWindowTitle("TDE UP 2026 — Event Hub V3.6 (Enterprise PySide6 Dashboard)")
         self.resize(1300, 780)
         self.setMinimumSize(960, 580)
         
@@ -1406,7 +1411,7 @@ class ServerHub(QMainWindow):
                 background-color: #141416; 
                 color: #D4D4D4; 
                 font-family: 'Consolas', monospace; 
-                font-size: 11px; 
+                font-size: 8px; /* Greatly reduced log font size per request */
                 border: 1px solid #2D2D30; 
                 border-radius: 4px;
             }
@@ -1457,7 +1462,7 @@ class ServerHub(QMainWindow):
         # High-performance Qt Timers
         self.timer_gui_queue = QTimer(self)
         self.timer_gui_queue.timeout.connect(self.process_gui_queue)
-        self.timer_gui_queue.start(10) # Ultra-fast max 10ms caps freezing 
+        self.timer_gui_queue.start(10) 
         
         self.timer_log_flush = QTimer(self)
         self.timer_log_flush.timeout.connect(self.flush_log_buffers)
@@ -1465,7 +1470,7 @@ class ServerHub(QMainWindow):
         
         self.timer_anim = QTimer(self)
         self.timer_anim.timeout.connect(self.animation_loop)
-        self.timer_anim.start(16) # 60 FPS Gauge animations
+        self.timer_anim.start(16) 
         
         self.timer_hw = QTimer(self)
         self.timer_hw.timeout.connect(self.refresh_hw_meters)
@@ -1692,7 +1697,7 @@ class ServerHub(QMainWindow):
     def _ping_local(self, session):
         start = time.time()
         try:
-            session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=2)
+            session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=1.5)
             return int((time.time() - start) * 1000), "ONLINE"
         except Exception: return 0, "OFFLINE"
 
@@ -1701,7 +1706,7 @@ class ServerHub(QMainWindow):
         if cf_url == "Offline" or cf_url == "Pending": return 0, "OFFLINE"
         start = time.time()
         try:
-            session.get(f"{cf_url}/api/status", timeout=(3, 7), verify=False)
+            session.get(f"{cf_url}/api/status", timeout=(2.0, 5.0), verify=False)
             return int((time.time() - start) * 1000), "ONLINE"
         except requests.exceptions.RequestException as e:
             err_msg = str(e)
@@ -1931,7 +1936,7 @@ class ServerHub(QMainWindow):
         self.setCentralWidget(central)
         main_layout = QHBoxLayout(central)
         main_layout.setContentsMargins(6, 6, 6, 6)
-        main_layout.setSpacing(6)
+        main_layout.setSpacing(8)
         
         # --- LEFT SIDEBAR ---
         sidebar_scroll = QScrollArea()
@@ -1951,7 +1956,8 @@ class ServerHub(QMainWindow):
         # 1. Engine Group
         grp_eng = QGroupBox("🌐 High-Speed Engine")
         l_eng = QVBoxLayout(grp_eng)
-        l_eng.setContentsMargins(6, 6, 6, 6)
+        l_eng.setContentsMargins(8, 12, 8, 8)
+        l_eng.setSpacing(6)
         
         self.btn_start_flask = QPushButton("▶ START ENGINE")
         self.btn_start_flask.setObjectName("btnStartEngine")
@@ -1973,12 +1979,12 @@ class ServerHub(QMainWindow):
         self.lbl_flask_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_flask_link.setAlignment(Qt.AlignCenter)
         l_eng.addWidget(self.lbl_flask_link)
         
-        r1 = QHBoxLayout(); r1.setSpacing(3)
+        r1 = QHBoxLayout(); r1.setSpacing(4)
         b_cpy_s = QPushButton("Copy HTTPS"); b_cpy_s.clicked.connect(lambda: self.copy_to_clipboard(self.https_url))
         b_cpy_h = QPushButton("Copy HTTP"); b_cpy_h.clicked.connect(lambda: self.copy_to_clipboard(self.http_url))
         r1.addWidget(b_cpy_s); r1.addWidget(b_cpy_h); l_eng.addLayout(r1)
         
-        r2 = QHBoxLayout(); r2.setSpacing(3)
+        r2 = QHBoxLayout(); r2.setSpacing(4)
         b_opn_s = QPushButton("Open Secure"); b_opn_s.clicked.connect(lambda: self.open_browser(self.https_url))
         b_opn_h = QPushButton("Open Local"); b_opn_h.clicked.connect(lambda: self.open_browser(self.http_url))
         r2.addWidget(b_opn_s); r2.addWidget(b_opn_h); l_eng.addLayout(r2)
@@ -1987,7 +1993,8 @@ class ServerHub(QMainWindow):
         # 2. CF Tunnel Group
         grp_cf = QGroupBox("☁️ Cloudflare Tunnel")
         l_cf = QVBoxLayout(grp_cf)
-        l_cf.setContentsMargins(6, 6, 6, 6)
+        l_cf.setContentsMargins(8, 12, 8, 8)
+        l_cf.setSpacing(6)
         
         self.btn_start_cf = QPushButton("▶ START TUNNEL")
         self.btn_start_cf.setObjectName("btnStartTunnel")
@@ -2006,7 +2013,7 @@ class ServerHub(QMainWindow):
         self.lbl_cf_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_cf_link.setAlignment(Qt.AlignCenter)
         l_cf.addWidget(self.lbl_cf_link)
         
-        r3 = QHBoxLayout(); r3.setSpacing(3)
+        r3 = QHBoxLayout(); r3.setSpacing(4)
         b_cpy_cf = QPushButton("Copy URL"); b_cpy_cf.clicked.connect(lambda: self.copy_to_clipboard(self.cloudflare_url))
         b_opn_cf = QPushButton("Open URL"); b_opn_cf.clicked.connect(lambda: self.open_browser(self.cloudflare_url))
         r3.addWidget(b_cpy_cf); r3.addWidget(b_opn_cf); l_cf.addLayout(r3)
@@ -2014,7 +2021,7 @@ class ServerHub(QMainWindow):
         
         # 3. Simulator Group
         grp_test = QGroupBox("🧪 Simulator Engine")
-        l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(6, 6, 6, 6)
+        l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(8, 12, 8, 8); l_test.setSpacing(6)
         self.chk_test = QCheckBox("Testing Mode OFF"); self.chk_test.stateChanged.connect(self.toggle_test_mode)
         l_test.addWidget(self.chk_test)
         self.cb_test_date = QComboBox(); self.cb_test_date.addItems(["2026-08-30", "2026-08-31", "2026-09-01"])
@@ -2024,7 +2031,7 @@ class ServerHub(QMainWindow):
         
         # 4. Support Group
         grp_sup = QGroupBox("📞 Support")
-        l_sup = QVBoxLayout(grp_sup); l_sup.setContentsMargins(6, 6, 6, 6)
+        l_sup = QVBoxLayout(grp_sup); l_sup.setContentsMargins(8, 12, 8, 8); l_sup.setSpacing(6)
         l_sup.addWidget(QLabel("Contact: +91 8960446756"))
         b_chat = QPushButton("💬 Chat on WhatsApp")
         b_chat.setObjectName("btnWhatsApp")
@@ -2181,8 +2188,8 @@ class ServerHub(QMainWindow):
         log_layout.addLayout(log_h)
         main_splitter.addWidget(log_container)
         
-        # Enhanced Layout Weight Distribution (Increases Log Console height slightly)
-        main_splitter.setSizes([450, 300])
+        # Massive Layout Weight Distribution adjustment to explicitly give the log console more vertical room
+        main_splitter.setSizes([350, 400])
         c_lay.addWidget(main_splitter, stretch=1)
         
         ftr = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
@@ -2251,8 +2258,9 @@ class ServerHub(QMainWindow):
                     SERVER_METRICS["avg_process_ms"] = 0.0
                     SERVER_METRICS["req_count"] = 0
                 elif req_sec == 0:
-                    SERVER_METRICS["avg_process_ms"] *= 0.5
-                    if SERVER_METRICS["avg_process_ms"] < 1.0: SERVER_METRICS["avg_process_ms"] = 0.0
+                    # Decay latency smoothly if no traffic
+                    SERVER_METRICS["avg_process_ms"] *= 0.85 
+                    if SERVER_METRICS["avg_process_ms"] < 0.5: SERVER_METRICS["avg_process_ms"] = 0.0
                 snap_metrics = dict(SERVER_METRICS)
 
             proc_ms = int(snap_metrics["avg_process_ms"])
@@ -2488,7 +2496,6 @@ class ServerHub(QMainWindow):
             self.cloudflare_url = "Offline"
             
         if proc:
-            # Full recursive process tree kill
             try: 
                 parent = psutil.Process(proc.pid)
                 for child in parent.children(recursive=True): child.kill()
