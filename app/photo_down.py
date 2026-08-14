@@ -1,4 +1,5 @@
 import os
+import sys
 import ctypes
 import requests
 from requests.adapters import HTTPAdapter
@@ -8,10 +9,12 @@ from logging.handlers import RotatingFileHandler
 import threading
 import queue
 from datetime import datetime, timezone
-import tkinter as tk
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-from ttkbootstrap.widgets.scrolled import ScrolledText
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                               QGridLayout, QLabel, QPushButton, QFrame, QProgressBar, 
+                               QTextEdit, QMessageBox)
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QIcon, QTextCursor
 
 try:
     from app.schema import Attendee, DownloadedPhoto, get_database_sessions
@@ -21,7 +24,7 @@ except ModuleNotFoundError:
 def global_exception_handler(*args):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
 
-tk.Tk.report_callback_exception = global_exception_handler
+sys.excepthook = global_exception_handler
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PHOTOS_DIR = os.path.join(BASE_DIR, 'attendee_photos')
@@ -31,7 +34,24 @@ os.makedirs(PHOTOS_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 MAX_LOG_LINES = 2000
 
-class TkinterLogHandler(logging.Handler):
+# Theme Colors Map
+COLORS = {
+    "PRIMARY": "#375a7f",
+    "INFO": "#0dcaf0",
+    "SUCCESS": "#00bc8c",
+    "WARNING": "#f39c12",
+    "DANGER": "#e74c3c",
+    "SECONDARY": "#888888",
+    "BG_DARK": "#141414",
+    "CARD_BG": "#242424",
+    "BORDER": "#333333",
+    "TEXT": "#e0e0e0"
+}
+
+# ==============================================================================
+# LOG HANDLER
+# ==============================================================================
+class QtLogHandler(logging.Handler):
     def __init__(self, gui_queue):
         super().__init__()
         self.gui_queue = gui_queue
@@ -53,6 +73,9 @@ logging.basicConfig(
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
 
+# ==============================================================================
+# CORE PHOTO MANAGER
+# ==============================================================================
 class PhotoDownloadManager:
     def __init__(self):
         self.SessionMySQL = None
@@ -219,117 +242,185 @@ class PhotoDownloadManager:
             session.close()
             self.is_running = False
 
-class PhotoDownloaderGUI(ttk.Window):
+# ==============================================================================
+# PYSIDE6 UI
+# ==============================================================================
+class PhotoDownloaderGUI(QMainWindow):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Offline Photo Engine")
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        ww, wh = max(1000, min(1280, int(sw * 0.8))), max(650, min(800, int(sh * 0.8)))
-        self.geometry(f"{ww}x{wh}+{(sw - ww) // 2}+{(sh - wh) // 2 - 20}")
-        self.minsize(950, 650)
+        super().__init__()
+        self.setWindowTitle("TDE UP 2026 — Offline Photo Engine")
+        self.resize(1000, 700)
+        self.setMinimumSize(950, 650)
         
         icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
         if os.path.exists(icon_path):
-            try:
-                self.iconbitmap(icon_path)
-            except tk.TclError:
-                pass
+            try: self.setWindowIcon(QIcon(icon_path))
+            except: pass
 
         self.gui_queue = queue.Queue()
         self.manager = PhotoDownloadManager()
-        self._configure_custom_styles()
-        self.build_ui()
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
         
-        gui_logger = TkinterLogHandler(self.gui_queue)
+        self._apply_stylesheet()
+        self.build_ui()
+        
+        gui_logger = QtLogHandler(self.gui_queue)
         gui_logger.setFormatter(logging.Formatter('%(message)s'))
         logging.getLogger().addHandler(gui_logger)
         
-        self.after(50, self._process_gui_queue)
-        self.after(200, self.refresh_stats_async)
+        # Async Queue Processor
+        self.queue_timer = QTimer(self)
+        self.queue_timer.timeout.connect(self._process_gui_queue)
+        self.queue_timer.start(50)
+        
+        QTimer.singleShot(200, self.refresh_stats_async)
 
-    def _configure_custom_styles(self):
-        colors = self.style.colors
-        self.CARD_BG = colors.get("dark")
-        self.SOFT_BORDER = self._mix_hex(self.CARD_BG, colors.get("fg"), 0.08)
-        self.style.configure("Card.TFrame", background=self.CARD_BG, bordercolor=self.SOFT_BORDER, borderwidth=1, relief="solid")
-
-    def _hex_to_rgb(self, hex_color):
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-    
-    def _rgb_to_hex(self, rgb):
-        return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
-    
-    def _mix_hex(self, c_a, c_b, w):
-        return self._rgb_to_hex(a + (b - a) * w for a, b in zip(self._hex_to_rgb(c_a), self._hex_to_rgb(c_b)))
+    def _apply_stylesheet(self):
+        self.setStyleSheet(f"""
+            QMainWindow, QWidget {{ background-color: {COLORS['BG_DARK']}; color: {COLORS['TEXT']}; font-family: 'Segoe UI', Arial; }}
+            QFrame#Card {{ background-color: {COLORS['CARD_BG']}; border: 1px solid {COLORS['BORDER']}; border-radius: 6px; }}
+            QLabel {{ background: transparent; }}
+            QTextEdit {{ background-color: {COLORS['BG_DARK']}; color: {COLORS['TEXT']}; border: none; font-family: 'Consolas', monospace; font-size: 11pt; }}
+            QPushButton {{ background-color: #333; color: white; border: 1px solid #555; padding: 6px 12px; border-radius: 4px; font-weight: bold; }}
+            QPushButton:hover {{ background-color: #444; }}
+            QPushButton:disabled {{ background-color: #222; color: #666; border: 1px solid #333; }}
+            QProgressBar {{ border: 1px solid {COLORS['BORDER']}; border-radius: 4px; background-color: {COLORS['BG_DARK']}; text-align: center; color: white; font-weight: bold; }}
+            QProgressBar::chunk {{ background-color: {COLORS['SUCCESS']}; width: 20px; }}
+            QScrollBar:vertical {{ background: {COLORS['BG_DARK']}; width: 14px; }}
+            QScrollBar::handle:vertical {{ background: #444; min-height: 20px; border-radius: 7px; margin: 2px; }}
+        """)
 
     def build_ui(self):
-        main_frame = ttk.Frame(self, padding=30)
-        main_frame.pack(fill=BOTH, expand=True)
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(30, 30, 30, 30)
 
-        header = ttk.Frame(main_frame)
-        header.pack(fill=X, pady=(0, 25))
-        title_box = ttk.Frame(header)
-        title_box.pack(side=LEFT)
-        ttk.Label(title_box, text="📸 Smart Photo Downloader & Syncer", font="-size 24 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
-        ttk.Label(title_box, text="SAVES CLOUDINARY CREDITS BY AUTO-DETECTING LOCAL FILES", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W, pady=(2, 0))
-        ttk.Button(header, text="⟳ Refresh Stats", bootstyle="outline-info", command=self.refresh_stats_async).pack(side=RIGHT, ipady=4)
-
-        cards_frame = ttk.Frame(main_frame)
-        cards_frame.pack(fill=X, pady=(0, 25))
-        cards_frame.columnconfigure((0, 1, 2, 3), weight=1, uniform="stat_cards")
+        # HEADER
+        header = QHBoxLayout()
+        title_box = QVBoxLayout()
+        t1 = QLabel("📸 Smart Photo Downloader & Syncer")
+        t1.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        t1.setStyleSheet(f"color: {COLORS['PRIMARY']};")
+        t2 = QLabel("SAVES CLOUDINARY CREDITS BY AUTO-DETECTING LOCAL FILES")
+        t2.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        t2.setStyleSheet(f"color: {COLORS['SECONDARY']};")
+        title_box.addWidget(t1)
+        title_box.addWidget(t2)
         
+        btn_refresh = QPushButton("⟳ Refresh Stats")
+        btn_refresh.setStyleSheet(f"border: 1px solid {COLORS['INFO']}; color: {COLORS['INFO']}; background: transparent; padding: 8px 16px;")
+        btn_refresh.clicked.connect(self.refresh_stats_async)
+        
+        header.addLayout(title_box)
+        header.addStretch()
+        header.addWidget(btn_refresh, 0, Qt.AlignBottom)
+        main_layout.addLayout(header)
+        main_layout.addSpacing(25)
+
+        # STAT CARDS
+        cards_frame = QHBoxLayout()
         self.stat_vars = {}
-        self._create_stat_card(cards_frame, 0, "📸", "TOTAL PROFILES", "0", INFO, "total")
-        self._create_stat_card(cards_frame, 1, "💾", "FULLY SYNCED", "0", SUCCESS, "synced")
-        self._create_stat_card(cards_frame, 2, "🔍", "LOCAL FILES UNLINKED", "0", WARNING, "pending_db_sync")
-        self._create_stat_card(cards_frame, 3, "☁️", "CLOUD DOWNLOADS", "0", DANGER, "pending_download")
+        self._create_stat_card(cards_frame, "📸", "TOTAL PROFILES", "0", COLORS["INFO"], "total")
+        self._create_stat_card(cards_frame, "💾", "FULLY SYNCED", "0", COLORS["SUCCESS"], "synced")
+        self._create_stat_card(cards_frame, "🔍", "LOCAL FILES UNLINKED", "0", COLORS["WARNING"], "pending_db_sync")
+        self._create_stat_card(cards_frame, "☁️", "CLOUD DOWNLOADS", "0", COLORS["DANGER"], "pending_download")
+        main_layout.addLayout(cards_frame)
+        main_layout.addSpacing(25)
 
-        controls_frame = ttk.Frame(main_frame, style="Card.TFrame", padding=20)
-        controls_frame.pack(fill=X, pady=(0, 20))
-        self.btn_start = ttk.Button(controls_frame, text="▶ Start Processing Pipeline", bootstyle=SUCCESS, width=25, command=self.start_download)
-        self.btn_start.pack(side=LEFT, padx=(0, 10), ipady=4)
-        self.btn_stop = ttk.Button(controls_frame, text="⏹ Stop", bootstyle=DANGER, width=10, command=self.stop_download, state=DISABLED)
-        self.btn_stop.pack(side=LEFT, padx=(0, 20), ipady=4)
-
-        self.progress_var = ttk.DoubleVar()
-        self.progress = ttk.Progressbar(controls_frame, variable=self.progress_var, maximum=100, bootstyle=SUCCESS)
-        self.progress.pack(side=LEFT, fill=X, expand=True, padx=10)
-        self.lbl_progress_text = ttk.Label(controls_frame, text="0 / 0", font="-weight bold -size 11", background=self.CARD_BG, width=12, anchor=E)
-        self.lbl_progress_text.pack(side=LEFT, padx=10)
-
-        log_hdr = ttk.Frame(main_frame)
-        log_hdr.pack(fill=X, pady=(0, 5))
-        ttk.Label(log_hdr, text="📟 PROCESSING LOG (STDOUT)", font="-size 11 -weight bold", foreground="gray").pack(side=LEFT)
-        ttk.Button(log_hdr, text="Clear", bootstyle="secondary-link", command=self.clear_log).pack(side=RIGHT)
-
-        log_frame = ttk.Frame(main_frame, style="Card.TFrame", padding=4)
-        log_frame.pack(fill=BOTH, expand=True)
-
-        self.log_box = ScrolledText(log_frame, autohide=True, wrap="word")
-        self.log_box.pack(fill=BOTH, expand=True)
-        self.log_box.text.configure(state="disabled", font=("Consolas", 11), bg="#141414", fg="#cccccc", borderwidth=0, padx=10, pady=10)
+        # CONTROLS
+        controls_frame = QFrame()
+        controls_frame.setObjectName("Card")
+        ctrl_layout = QHBoxLayout(controls_frame)
+        ctrl_layout.setContentsMargins(20, 20, 20, 20)
         
-        self.log_box.text.tag_config("INFO", foreground="#cccccc")
-        self.log_box.text.tag_config("SUCCESS", foreground="#4CD37E", font=("Consolas", 11, "bold"))
-        self.log_box.text.tag_config("WARNING", foreground="#FFB454", font=("Consolas", 11, "bold"))
-        self.log_box.text.tag_config("ERROR", foreground="#FF6B6B", font=("Consolas", 11, "bold"))
+        self.btn_start = QPushButton("▶ Start Processing Pipeline")
+        self.btn_start.setFixedWidth(200)
+        self.btn_start.setStyleSheet(f"background-color: {COLORS['SUCCESS']}; color: white; padding: 10px;")
+        self.btn_start.clicked.connect(self.start_download)
         
+        self.btn_stop = QPushButton("⏹ Stop")
+        self.btn_stop.setFixedWidth(100)
+        self.btn_stop.setStyleSheet(f"background-color: transparent; color: {COLORS['DANGER']}; border: 1px solid {COLORS['DANGER']}; padding: 10px;")
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.stop_download)
+        
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        
+        self.lbl_progress_text = QLabel("0 / 0")
+        self.lbl_progress_text.setFixedWidth(100)
+        self.lbl_progress_text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.lbl_progress_text.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        
+        ctrl_layout.addWidget(self.btn_start)
+        ctrl_layout.addWidget(self.btn_stop)
+        ctrl_layout.addSpacing(10)
+        ctrl_layout.addWidget(self.progress, 1)
+        ctrl_layout.addWidget(self.lbl_progress_text)
+        main_layout.addWidget(controls_frame)
+        main_layout.addSpacing(20)
+
+        # LOGS
+        log_hdr = QHBoxLayout()
+        lbl_log = QLabel("📟 PROCESSING LOG (STDOUT)")
+        lbl_log.setStyleSheet(f"color: {COLORS['SECONDARY']}; font-weight: bold; font-size: 11px;")
+        btn_clear = QPushButton("Clear")
+        btn_clear.setStyleSheet("background: transparent; color: #888; border: none; text-decoration: underline;")
+        btn_clear.clicked.connect(self.clear_log)
+        
+        log_hdr.addWidget(lbl_log)
+        log_hdr.addStretch()
+        log_hdr.addWidget(btn_clear)
+        main_layout.addLayout(log_hdr)
+        
+        log_frame = QFrame()
+        log_frame.setObjectName("Card")
+        log_lyt = QVBoxLayout(log_frame)
+        log_lyt.setContentsMargins(10, 10, 10, 10)
+        
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.document().setMaximumBlockCount(MAX_LOG_LINES)
+        log_lyt.addWidget(self.log_box)
+        main_layout.addWidget(log_frame, 1)
+
         self.log("Photo Engine ready. Run a stat refresh to detect unlinked local files.", "SUCCESS")
 
-    def _create_stat_card(self, parent, column, icon, title, initial_value, style, var_name):
-        outer = ttk.Frame(parent, borderwidth=1, relief="solid")
-        outer.grid(row=0, column=column, sticky=NSEW, padx=8)
-        ttk.Frame(outer, bootstyle=style, width=4).pack(side=LEFT, fill=Y)
-        inner = ttk.Frame(outer, padding=(18, 16))
-        inner.pack(side=LEFT, fill=BOTH, expand=True)
-        top_row = ttk.Frame(inner)
-        top_row.pack(fill=X, anchor=W)
-        ttk.Label(top_row, text=icon, font="-size 12").pack(side=LEFT, padx=(0, 6))
-        ttk.Label(top_row, text=title, font="-size 9 -weight bold", bootstyle=style).pack(side=LEFT)
-        val_lbl = ttk.Label(inner, text=initial_value, font="-size 28 -weight bold")
-        val_lbl.pack(anchor=W, pady=(10, 0))
-        self.stat_vars[var_name] = {"label": val_lbl, "style": style}
+    def _create_stat_card(self, parent_layout, icon, title, initial_value, color, var_name):
+        card = QFrame()
+        card.setObjectName("Card")
+        lyt = QHBoxLayout(card)
+        lyt.setContentsMargins(0, 0, 0, 0)
+        
+        stripe = QWidget()
+        stripe.setFixedWidth(5)
+        stripe.setStyleSheet(f"background-color: {color}; border-top-left-radius: 4px; border-bottom-left-radius: 4px;")
+        lyt.addWidget(stripe)
+        
+        inner = QVBoxLayout()
+        inner.setContentsMargins(15, 15, 15, 15)
+        
+        top_row = QHBoxLayout()
+        icon_lbl = QLabel(icon)
+        icon_lbl.setStyleSheet("border: none; font-size: 14px;")
+        t_lbl = QLabel(title)
+        t_lbl.setStyleSheet(f"color: {color}; font-weight: bold; border: none; font-size: 11px;")
+        top_row.addWidget(icon_lbl)
+        top_row.addWidget(t_lbl)
+        top_row.addStretch()
+        
+        val_lbl = QLabel(initial_value)
+        val_lbl.setFont(QFont("Segoe UI", 28, QFont.Bold))
+        val_lbl.setStyleSheet(f"color: {color}; border: none;")
+        
+        inner.addLayout(top_row)
+        inner.addWidget(val_lbl)
+        lyt.addLayout(inner)
+        
+        parent_layout.addWidget(card)
+        self.stat_vars[var_name] = {"label": val_lbl, "color": color}
 
     def log(self, message, level="INFO"):
         self.gui_queue.put(("log", {"msg": message, "level": level}))
@@ -337,44 +428,38 @@ class PhotoDownloaderGUI(ttk.Window):
     def animate_stat_flash(self, var_name):
         data = self.stat_vars[var_name]
         lbl = data["label"]
-        original_style = data["style"]
-        lbl.configure(bootstyle="light")
-        self.after(150, lambda: lbl.configure(bootstyle=original_style))
+        original_color = data["color"]
+        lbl.setStyleSheet(f"color: white; border: none;")
+        QTimer.singleShot(150, lambda: lbl.setStyleSheet(f"color: {original_color}; border: none;") if lbl else None)
 
     def _process_gui_queue(self):
         for _ in range(100):
             try:
                 kind, payload = self.gui_queue.get_nowait()
-                if kind == "log":
-                    self._append_log(payload["msg"], payload["level"])
-                elif kind == "stats":
-                    self._apply_stats(payload)
-                elif kind == "progress":
-                    self._apply_progress(payload["current"], payload["total"])
-                elif kind == "finished":
-                    self._apply_finished(payload["success"])
+                if kind == "log": self._append_log(payload["msg"], payload["level"])
+                elif kind == "stats": self._apply_stats(payload)
+                elif kind == "progress": self._apply_progress(payload["current"], payload["total"])
+                elif kind == "finished": self._apply_finished(payload["success"])
             except queue.Empty:
                 break
-            except Exception as e:
-                print(f"GUI Queue Error: {e}")
-        self.after(30, self._process_gui_queue)
 
     def _append_log(self, message, level):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_msg = f"[{timestamp}] {message}\n"
-        self.log_box.text.configure(state="normal")
-        self.log_box.text.insert(END, formatted_msg, level)
-        self.log_box.text.see(END)
-        lc = int(self.log_box.text.index('end-1c').split('.')[0])
-        if lc > MAX_LOG_LINES: 
-            self.log_box.text.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
-            
-        self.log_box.text.configure(state="disabled")
+        color_map = {
+            "INFO": "#cccccc",
+            "SUCCESS": COLORS["SUCCESS"],
+            "WARNING": COLORS["WARNING"],
+            "ERROR": COLORS["DANGER"]
+        }
+        color = color_map.get(level, "#cccccc")
+        html_msg = f'<span style="color: {color};">[{timestamp}] {message}</span><br>'
+        
+        self.log_box.moveCursor(QTextCursor.End)
+        self.log_box.insertHtml(html_msg)
+        self.log_box.moveCursor(QTextCursor.End)
 
     def clear_log(self):
-        self.log_box.text.configure(state="normal")
-        self.log_box.text.delete("1.0", END)
-        self.log_box.text.configure(state="disabled")
+        self.log_box.clear()
 
     def refresh_stats_async(self):
         def _fetch():
@@ -386,21 +471,21 @@ class PhotoDownloaderGUI(ttk.Window):
         for key in ["total", "synced", "pending_db_sync", "pending_download"]:
             new_val = str(stats[key] if key == "total" or key == "synced" else len(stats[key]))
             lbl = self.stat_vars[key]["label"]
-            if lbl.cget("text") != new_val:
-                lbl.configure(text=new_val)
+            if lbl.text() != new_val:
+                lbl.setText(new_val)
                 self.animate_stat_flash(key)
         
         pending_total = len(stats["pending_db_sync"]) + len(stats["pending_download"])
-        self.progress_var.set(0)
-        self.lbl_progress_text.configure(text=f"0 / {pending_total}")
+        self.progress.setValue(0)
+        self.lbl_progress_text.setText(f"0 / {pending_total}")
 
     def _proxy_update_progress(self, current, total):
         self.gui_queue.put(("progress", {"current": current, "total": total}))
 
     def _apply_progress(self, current, total):
-        percent = (current / total) * 100 if total > 0 else 0
-        self.progress_var.set(percent)
-        self.lbl_progress_text.configure(text=f"{current} / {total}")
+        percent = int((current / total) * 100) if total > 0 else 0
+        self.progress.setValue(percent)
+        self.lbl_progress_text.setText(f"{current} / {total}")
         if current % 10 == 0 or current == total:
             self.refresh_stats_async()
 
@@ -408,16 +493,20 @@ class PhotoDownloaderGUI(ttk.Window):
         self.gui_queue.put(("finished", {"success": success}))
 
     def _apply_finished(self, success):
-        self.btn_start.configure(state=NORMAL)
-        self.btn_stop.configure(state=DISABLED)
-        self.progress_var.set(100 if success else 0)
+        self.btn_start.setEnabled(True)
+        self.btn_stop.setEnabled(False)
+        self.btn_start.setStyleSheet(f"background-color: {COLORS['SUCCESS']}; color: white; padding: 10px;")
+        self.btn_stop.setStyleSheet(f"background-color: transparent; color: {COLORS['DANGER']}; border: 1px solid {COLORS['DANGER']}; padding: 10px;")
+        self.progress.setValue(100 if success else 0)
         self.refresh_stats_async()
 
     def start_download(self):
-        if self.manager.is_running:
-            return
-        self.btn_start.configure(state=DISABLED)
-        self.btn_stop.configure(state=NORMAL)
+        if self.manager.is_running: return
+        self.btn_start.setEnabled(False)
+        self.btn_start.setStyleSheet(f"background-color: transparent; color: {COLORS['SUCCESS']}; border: 1px solid {COLORS['SUCCESS']}; padding: 10px;")
+        self.btn_stop.setEnabled(True)
+        self.btn_stop.setStyleSheet(f"background-color: {COLORS['DANGER']}; color: white; padding: 10px;")
+        
         threading.Thread(
             target=self.manager.process_photos, 
             args=(self._proxy_update_progress, self._proxy_download_finished), 
@@ -428,23 +517,24 @@ class PhotoDownloaderGUI(ttk.Window):
         if self.manager.is_running:
             self.log("Canceling process... finishing current file.", "WARNING")
             self.manager.cancel_requested = True
-            self.btn_stop.configure(state=DISABLED)
+            self.btn_stop.setEnabled(False)
 
-    def on_close(self):
+    def closeEvent(self, event):
         if self.manager.is_running:
             self.manager.cancel_requested = True
             self.log("Waiting for background processes to exit...", "WARNING")
-            self.update_idletasks()
-            self.after(500, self.destroy)
+            QTimer.singleShot(500, self.close)
+            event.ignore()
         else:
-            self.destroy()
+            event.accept()
 
 if __name__ == "__main__":
     if os.name == 'nt':
         try:
             my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.photos")
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
-        except Exception:
-            pass
-    app = PhotoDownloaderGUI()
-    app.mainloop()
+        except Exception: pass
+    app = QApplication(sys.argv)
+    window = PhotoDownloaderGUI()
+    window.show()
+    sys.exit(app.exec())
