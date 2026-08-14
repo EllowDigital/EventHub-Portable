@@ -18,7 +18,7 @@ from datetime import datetime
 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                                QGridLayout, QLabel, QPushButton, QFrame, QGroupBox, QLineEdit, 
-                               QDialog, QMessageBox, QFileDialog, QScrollArea, QSizePolicy)
+                               QDialog, QMessageBox, QFileDialog, QScrollArea, QSizePolicy, QSplitter)
 from PySide6.QtCore import Qt, QTimer, QSize
 from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QImage, QKeySequence, QShortcut
 
@@ -258,7 +258,7 @@ class GateDisplay(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TDE UP 2026 — Gate Terminal")
-        self.resize(1440, 900)
+        self.resize(1500, 950) # Improved default scale for 2K/4K adaptation
         self.setMinimumSize(1280, 750)
         
         icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
@@ -307,7 +307,7 @@ class GateDisplay(QMainWindow):
     def apply_theme(self):
         t = THEMES[self.current_theme]
         self.setStyleSheet(f"""
-            QMainWindow, QWidget {{ background-color: {t['BG']}; color: {t['TEXT']}; font-family: 'Segoe UI', Arial; }}
+            QMainWindow, QWidget {{ background-color: {t['BG']}; color: {t['TEXT']}; font-family: 'Segoe UI', Arial; font-size: 10pt; }}
             QFrame#Card {{ background-color: {t['CARD_BG']}; border: 1px solid {t['BORDER']}; border-radius: 8px; }}
             QLabel {{ background: transparent; border: none; }}
             QLineEdit {{ 
@@ -316,7 +316,7 @@ class GateDisplay(QMainWindow):
                 color: {t['TEXT']}; 
                 border-radius: 4px; 
                 padding: 10px; 
-                font-size: 14px; 
+                font-size: 11pt; 
             }}
             QLineEdit:focus {{ border: 1px solid {t['PRIMARY']}; }}
             QPushButton {{ 
@@ -329,8 +329,9 @@ class GateDisplay(QMainWindow):
             }}
             QPushButton:hover {{ background-color: {t['BORDER']}; }}
             #Pill {{ border: 1px solid {t['BORDER']}; border-radius: 18px; background-color: {t['CARD_BG']}; }}
-            #BigBanner {{ border-radius: 8px; padding: 15px; font-weight: bold; font-size: 32px; }}
+            #BigBanner {{ border-radius: 8px; padding: 15px; font-weight: bold; font-size: 26pt; }}
             #RecentCard {{ border: 1px solid {t['BORDER']}; border-radius: 6px; }}
+            QSplitter::handle {{ background-color: {t['BORDER']}; width: 2px; }}
         """)
 
     def build_ui(self):
@@ -371,7 +372,7 @@ class GateDisplay(QMainWindow):
         self.net_dot = QLabel("●")
         self.net_dot.setStyleSheet(f"color: {THEMES['darkly']['WARNING']}; font-size: 16px;")
         self.lbl_hub_status = QLabel("Connecting...")
-        self.lbl_hub_status.setStyleSheet("font-weight: bold; font-size: 12px;")
+        self.lbl_hub_status.setStyleSheet("font-weight: bold; font-size: 10pt;")
         net_lyt.addWidget(self.net_dot)
         net_lyt.addWidget(self.lbl_hub_status)
         
@@ -389,12 +390,11 @@ class GateDisplay(QMainWindow):
         self.test_banner.hide()
         main_layout.addWidget(self.test_banner)
         
-        # CONTENT SPLIT
-        content = QWidget()
-        content_lyt = QHBoxLayout(content)
-        content_lyt.setContentsMargins(30, 30, 30, 30)
+        # SPLITTER (Responsive Left/Right adaptation)
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setContentsMargins(30, 30, 30, 30)
         
-        # --- LEFT PANEL ---
+        # --- LEFT PANEL (Scan Profile) ---
         left_panel = QWidget()
         left_lyt = QVBoxLayout(left_panel)
         left_lyt.setContentsMargins(0, 0, 15, 0)
@@ -476,9 +476,9 @@ class GateDisplay(QMainWindow):
         self.bottom_banner.setStyleSheet(f"background-color: {THEMES['darkly']['SECONDARY']}; color: white;")
         left_lyt.addWidget(self.bottom_banner)
 
-        # --- RIGHT PANEL ---
+        # --- RIGHT PANEL (Controls & Recent) ---
         right_panel = QWidget()
-        right_panel.setFixedWidth(440)
+        right_panel.setMinimumWidth(380) # Protect from over-shrinking
         right_lyt = QVBoxLayout(right_panel)
         right_lyt.setContentsMargins(15, 0, 0, 0)
         
@@ -502,7 +502,7 @@ class GateDisplay(QMainWindow):
         self.ent_id.returnPressed.connect(lambda: self.manual_scan('id'))
         
         btn_proc = QPushButton("PROCESS MANUAL SCAN")
-        btn_proc.setStyleSheet(f"background-color: {THEMES['darkly']['SUCCESS']}; color: white; padding: 12px; font-size: 14px;")
+        btn_proc.setStyleSheet(f"background-color: {THEMES['darkly']['SUCCESS']}; color: white; padding: 12px; font-size: 11pt;")
         btn_proc.clicked.connect(self.handle_manual_submit)
         
         lookup_lyt.addWidget(self.ent_phone)
@@ -527,7 +527,7 @@ class GateDisplay(QMainWindow):
             val.setStyleSheet(f"color: {color};")
             val.setAlignment(Qt.AlignCenter)
             lbl = QLabel(title.upper())
-            lbl.setStyleSheet("color: gray; font-weight: bold; font-size: 11px;")
+            lbl.setStyleSheet("color: gray; font-weight: bold; font-size: 9pt;")
             lbl.setAlignment(Qt.AlignCenter)
             f_lyt.addWidget(val)
             f_lyt.addWidget(lbl)
@@ -542,16 +542,18 @@ class GateDisplay(QMainWindow):
         lbl_ra.setStyleSheet(f"color: {THEMES['darkly']['PRIMARY']};")
         right_lyt.addWidget(lbl_ra)
         
+        # Scroll area not necessarily needed since we limit to 5, but we ensure proper alignment.
         self.list_frame = QWidget()
         self.list_lyt = QVBoxLayout(self.list_frame)
         self.list_lyt.setContentsMargins(0, 0, 0, 0)
         self.list_lyt.setSpacing(8)
-        self.list_lyt.setAlignment(Qt.AlignTop)
-        right_lyt.addWidget(self.list_frame, 1)
+        self.list_lyt.setAlignment(Qt.AlignTop) # CRITICAL: Prevents stretching/overlapping
+        right_lyt.addWidget(self.list_frame, 1) # 1 stretches to push it up
 
-        content_lyt.addWidget(left_panel, 1)
-        content_lyt.addWidget(right_panel)
-        main_layout.addWidget(content)
+        self.splitter.addWidget(left_panel)
+        self.splitter.addWidget(right_panel)
+        self.splitter.setSizes([950, 450])
+        main_layout.addWidget(self.splitter, 1)
 
     def handle_manual_submit(self):
         id_val = self.ent_id.text().strip()
@@ -716,25 +718,29 @@ class GateDisplay(QMainWindow):
     def add_recent_scan(self, name, att_id, style, time_str):
         card = QFrame()
         card.setObjectName("RecentCard")
+        # Ensure it maintains a strict height so text never overlaps natively.
+        card.setMinimumHeight(65)
+        card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        
         t = THEMES[self.current_theme]
         bg_color = t.get(style, t['SECONDARY'])
         card.setStyleSheet(f"background-color: {bg_color}; color: white; border-radius: 6px;")
         
         lyt = QVBoxLayout(card)
-        lyt.setContentsMargins(15, 10, 15, 10)
+        lyt.setContentsMargins(15, 8, 15, 8)
         
         top = QHBoxLayout()
         n = QLabel(f"👤 {name}")
-        n.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        n.setFont(QFont("Segoe UI", 11, QFont.Bold))
         n.setStyleSheet("border: none; background: transparent;")
         tm = QLabel(time_str)
-        tm.setStyleSheet("border: none; background: transparent;")
+        tm.setStyleSheet("border: none; background: transparent; font-size: 9pt;")
         top.addWidget(n); top.addStretch(); top.addWidget(tm)
         lyt.addLayout(top)
         
         bot = QHBoxLayout()
         i = QLabel(att_id)
-        i.setStyleSheet("border: none; background: transparent;")
+        i.setStyleSheet("border: none; background: transparent; font-size: 9pt;")
         st = QLabel("✓ OK" if style=="SUCCESS" else "⚠ WARN")
         st.setFont(QFont("Segoe UI", 10, QFont.Bold))
         st.setStyleSheet("border: none; background: transparent;")
@@ -965,7 +971,7 @@ if __name__ == "__main__":
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
         except Exception: pass
         
-    # High DPI Scaling
+    # High DPI Scaling Setup for Crisp UI on 2K/4K Monitors
     if hasattr(Qt, 'AA_EnableHighDpiScaling'): QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     if hasattr(Qt, 'AA_UseHighDpiPixmaps'): QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
         
