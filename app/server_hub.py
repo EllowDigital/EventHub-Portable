@@ -1017,11 +1017,11 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
-# Healthcheck must accept GET for system pinger
+# Healthcheck must accept GET for system pinger to work!
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     if request.method == 'GET':
-        return jsonify({"status": "online", "version": "3.5"}), 200
+        return jsonify({"status": "online", "version": "3.6"}), 200
         
     ip = request.remote_addr
     data = request.json or {}
@@ -1248,6 +1248,7 @@ class SpeedometerGauge(QWidget):
         self.target_val = float(val)
 
     def tick(self):
+        # Allow instant drops or rises without heavy lagging
         if abs(self.target_val - self.current_val) > 0.1:
             self.current_val += (self.target_val - self.current_val) * 0.15
             self.update()
@@ -1386,6 +1387,27 @@ class ServerHub(QMainWindow):
             QPushButton#btnWhatsApp:hover { background-color: #0c5e31; }
             QPushButton#btnWhatsApp:pressed { background-color: #084021; }
 
+            /* Test Mode Form Inputs - Fixed Dropdown Visibility */
+            QComboBox {
+                background-color: #2D2D30;
+                color: #FFFFFF;
+                border: 1px solid #3E3E42;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QComboBox:disabled { background-color: #1C1C1E; color: #555555; }
+            QComboBox::drop-down { border-left: 1px solid #3E3E42; width: 20px; }
+            QComboBox QAbstractItemView {
+                background-color: #252528;
+                color: #FFFFFF;
+                border: 1px solid #3E3E42;
+                selection-background-color: #094771;
+            }
+            QCheckBox { color: #D4D4D4; font-size: 11px; font-weight: bold; }
+            QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #3E3E42; border-radius: 3px; background-color: #1C1C1E; }
+            QCheckBox::indicator:checked { background-color: #4EC9B0; border: 1px solid #4EC9B0; }
+
             /* Table Styles */
             QTableWidget { 
                 background-color: #19191B; 
@@ -1411,7 +1433,7 @@ class ServerHub(QMainWindow):
                 background-color: #141416; 
                 color: #D4D4D4; 
                 font-family: 'Consolas', monospace; 
-                font-size: 8px; /* Greatly reduced log font size per request */
+                font-size: 8pt; 
                 border: 1px solid #2D2D30; 
                 border-radius: 4px;
             }
@@ -1462,7 +1484,7 @@ class ServerHub(QMainWindow):
         # High-performance Qt Timers
         self.timer_gui_queue = QTimer(self)
         self.timer_gui_queue.timeout.connect(self.process_gui_queue)
-        self.timer_gui_queue.start(10) 
+        self.timer_gui_queue.start(10) # 10ms processing cap prevents freezes
         
         self.timer_log_flush = QTimer(self)
         self.timer_log_flush.timeout.connect(self.flush_log_buffers)
@@ -1470,7 +1492,7 @@ class ServerHub(QMainWindow):
         
         self.timer_anim = QTimer(self)
         self.timer_anim.timeout.connect(self.animation_loop)
-        self.timer_anim.start(16) 
+        self.timer_anim.start(16) # Smooth 60FPS gauges
         
         self.timer_hw = QTimer(self)
         self.timer_hw.timeout.connect(self.refresh_hw_meters)
@@ -1852,7 +1874,6 @@ class ServerHub(QMainWindow):
         pt = QPlainTextEdit()
         pt.setReadOnly(True)
         pt.setMaximumBlockCount(MAX_LOG_LINES)
-        pt.setStyleSheet("background: #141416; border:none; padding: 4px;")
         v.addWidget(pt)
         
         parent_layout.addWidget(frame)
@@ -2022,10 +2043,15 @@ class ServerHub(QMainWindow):
         # 3. Simulator Group
         grp_test = QGroupBox("🧪 Simulator Engine")
         l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(8, 12, 8, 8); l_test.setSpacing(6)
-        self.chk_test = QCheckBox("Testing Mode OFF"); self.chk_test.stateChanged.connect(self.toggle_test_mode)
+        
+        self.chk_test = QCheckBox("Testing Mode OFF")
+        self.chk_test.toggled.connect(self.toggle_test_mode)
         l_test.addWidget(self.chk_test)
-        self.cb_test_date = QComboBox(); self.cb_test_date.addItems(["2026-08-30", "2026-08-31", "2026-09-01"])
-        self.cb_test_date.setEnabled(False); self.cb_test_date.currentTextChanged.connect(self.on_test_date_changed)
+        
+        self.cb_test_date = QComboBox()
+        self.cb_test_date.addItems(["2026-08-30", "2026-08-31", "2026-09-01"])
+        self.cb_test_date.setEnabled(False)
+        self.cb_test_date.currentTextChanged.connect(self.on_test_date_changed)
         l_test.addWidget(self.cb_test_date)
         side_layout.addWidget(grp_test)
         
@@ -2188,8 +2214,8 @@ class ServerHub(QMainWindow):
         log_layout.addLayout(log_h)
         main_splitter.addWidget(log_container)
         
-        # Massive Layout Weight Distribution adjustment to explicitly give the log console more vertical room
-        main_splitter.setSizes([350, 400])
+        # Increase the log weight significantly, per user request.
+        main_splitter.setSizes([250, 550])
         c_lay.addWidget(main_splitter, stretch=1)
         
         ftr = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
@@ -2213,9 +2239,9 @@ class ServerHub(QMainWindow):
         pix = QPixmap.fromImage(qim).scaled(75, 75, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         label.setPixmap(pix)
 
-    def toggle_test_mode(self, state):
+    def toggle_test_mode(self, is_checked):
         global SERVER_TEST_MODE
-        SERVER_TEST_MODE = (state == Qt.CheckedState.value or state == 2)
+        SERVER_TEST_MODE = is_checked
         if SERVER_TEST_MODE:
             self.chk_test.setText("Testing Mode ON")
             self.cb_test_date.setEnabled(True)
