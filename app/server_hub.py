@@ -26,7 +26,7 @@ import html
 import sys
 from datetime import datetime, timezone, timedelta
 
-# --- High-DPI Environment Flags (Must be set before QApplication) ---
+# --- High-DPI Environment Flags ---
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
@@ -131,7 +131,9 @@ TELEMETRY_DATA = {
     "cpu": 0, "ram": 0, "net_type": "Disconnected",
     "dl_mbps": 0.0, "ul_mbps": 0.0, "total_mbps": 0.0,
     "iface_name": "N/A", "link_speed": 0,
-    "total_dl_mb": 0.0, "total_ul_mb": 0.0
+    "total_dl_mb": 0.0, "total_ul_mb": 0.0,
+    "cpu_ghz_used": 0.0, "cpu_ghz_total": 0.0,
+    "ram_gb_used": 0.0, "ram_gb_total": 0.0
 }
 _telemetry_lock = threading.Lock()
 _global_shutdown_event = threading.Event()
@@ -144,18 +146,30 @@ def _telemetry_worker():
     while not _global_shutdown_event.is_set():
         try:
             cpu = int(psutil.cpu_percent(interval=None))
-            ram = int(psutil.virtual_memory().percent)
+            vmem = psutil.virtual_memory()
+            ram = int(vmem.percent)
+            ram_gb_used = (vmem.total - vmem.available) / (1024**3)
+            ram_gb_total = vmem.total / (1024**3)
+            
+            try:
+                freq = psutil.cpu_freq()
+                cpu_ghz_used = freq.current / 1000.0 if freq else 0.0
+                cpu_ghz_total = freq.max / 1000.0 if freq else 0.0
+                if cpu_ghz_total == 0.0: cpu_ghz_total = cpu_ghz_used
+            except:
+                cpu_ghz_used = cpu_ghz_total = 0.0
+
             stats = psutil.net_if_stats()
             up_ifaces = [iface for iface, s in stats.items() if s.isup and iface != 'lo' and not iface.startswith('Loopback')]
             eth_iface = next((i for i in up_ifaces if 'ethernet' in i.lower() or 'eth' in i.lower()), None)
             usb_iface = next((i for i in up_ifaces if 'usb' in i.lower()), None)
             wifi_iface = next((i for i in up_ifaces if 'wi-fi' in i.lower() or 'wireless' in i.lower() or 'wlan' in i.lower()), None)
             
-            if eth_iface: active_iface, iface_type = eth_iface, "Ethernet"
-            elif usb_iface: active_iface, iface_type = usb_iface, "USB Eth"
-            elif wifi_iface: active_iface, iface_type = wifi_iface, "Wi-Fi"
-            elif up_ifaces: active_iface, iface_type = up_ifaces[0], "Network"
-            else: active_iface, iface_type = None, "Offline"
+            if eth_iface: active_iface, iface_type = eth_iface, "ETHERNET"
+            elif usb_iface: active_iface, iface_type = usb_iface, "USB ETH"
+            elif wifi_iface: active_iface, iface_type = wifi_iface, "WI-FI"
+            elif up_ifaces: active_iface, iface_type = up_ifaces[0], "NETWORK"
+            else: active_iface, iface_type = None, "OFFLINE"
             
             dl_mbps = ul_mbps = total_mbps = dl_mb = ul_mb = 0.0
             link_speed = 0
@@ -164,7 +178,6 @@ def _telemetry_worker():
             if last_io and current_io:
                 elapsed = current_time - last_time
                 if elapsed > 0:
-                    # Divides by 1,048,576 to explicitly calculate True Megabytes (MB/s)
                     dl_mbps = ((current_io.bytes_recv - last_io.bytes_recv) / 1048576) / elapsed
                     ul_mbps = ((current_io.bytes_sent - last_io.bytes_sent) / 1048576) / elapsed
                     total_mbps = dl_mbps + ul_mbps
@@ -178,7 +191,9 @@ def _telemetry_worker():
                     "cpu": cpu, "ram": ram, "net_type": iface_type,
                     "dl_mbps": dl_mbps, "ul_mbps": ul_mbps, "total_mbps": total_mbps,
                     "iface_name": active_iface or "N/A", "link_speed": link_speed,
-                    "total_dl_mb": dl_mb, "total_ul_mb": ul_mb
+                    "total_dl_mb": dl_mb, "total_ul_mb": ul_mb,
+                    "cpu_ghz_used": cpu_ghz_used, "cpu_ghz_total": cpu_ghz_total,
+                    "ram_gb_used": ram_gb_used, "ram_gb_total": ram_gb_total
                 })
         except Exception as e:
             logging.debug(f"Telemetry Worker Error: {e}")
@@ -1231,8 +1246,9 @@ def get_local_ip():
 # --- ADVANCED DYNAMIC SPEEDOMETER GAUGE WIDGET ---
 class SpeedometerGauge(QWidget):
     """
-    High-DPI Speedometer. Features a dotted background track and 
-    a solid arc that changes color automatically based on load percentage.
+    High-DPI Speedometer. Features a dotted background track, 
+    a solid arc that changes color automatically based on load percentage,
+    and a dynamic subtext for explicitly showing GHz, GB, MB/s or ms.
     """
     def __init__(self, subtext="CPU", unit="%", max_val=100, good_is_high=False, parent=None):
         super().__init__(parent)
@@ -1242,11 +1258,16 @@ class SpeedometerGauge(QWidget):
         self.current_val = 0.0
         self.target_val = 0.0
         self.good_is_high = good_is_high
-        self.setMinimumSize(60, 56)
+        self.setMinimumSize(70, 60)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
     def set_target(self, val):
         self.target_val = float(val)
+        
+    def set_subtext(self, new_subtext):
+        if self.subtext != new_subtext:
+            self.subtext = new_subtext
+            self.update()
 
     def tick(self):
         diff = self.target_val - self.current_val
@@ -1273,6 +1294,7 @@ class SpeedometerGauge(QWidget):
 
         ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
         
+        # Determine Dynamic Color based on load ratio
         if self.good_is_high:
             if ratio < 0.1: dynamic_color = QColor("#858585") # Idle
             elif ratio < 0.6: dynamic_color = QColor("#D7BA7D") # Yellow
@@ -1282,12 +1304,12 @@ class SpeedometerGauge(QWidget):
             elif ratio < 0.85: dynamic_color = QColor("#D7BA7D") # Yellow
             else: dynamic_color = QColor("#F44747") # Red
 
-        # Dotted Background
+        # Dotted Background Track
         pen_bg = QPen(QColor("#333333"), arc_width, Qt.DotLine, Qt.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(arc_rect, 200 * 16, -220 * 16)
 
-        # Active Solid Track
+        # Active Solid Foreground Track
         active_span = -int(220 * ratio * 16)
         pen_fg = QPen(dynamic_color, arc_width, Qt.SolidLine, Qt.RoundCap)
         painter.setPen(pen_fg)
@@ -1298,7 +1320,7 @@ class SpeedometerGauge(QWidget):
         font_size = max(9, int(diameter * 0.23))
         painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
         
-        # Keep perfect float accuracy for Network MB/s and low latency ms
+        # Display explicit float formatting if it's Network or API ms.
         if "MB" in self.unit or self.max_val <= 10.0:
             val_text = f"{self.current_val:.1f}"
         else: 
@@ -1307,9 +1329,9 @@ class SpeedometerGauge(QWidget):
         val_rect = QRectF(margin_x, margin_y + (diameter * 0.18), diameter, diameter * 0.45)
         painter.drawText(val_rect, Qt.AlignCenter, val_text)
 
-        # Bottom Subtext
+        # Bottom Subtext (dynamically scaled to fit string length)
         painter.setPen(QColor("#AAAAAA"))
-        sub_font_size = max(8, int(diameter * 0.14))
+        sub_font_size = max(7, int(diameter * 0.11))
         painter.setFont(QFont("Segoe UI", sub_font_size, QFont.Normal))
         lbl_rect = QRectF(0, h - 14, w, 14)
         painter.drawText(lbl_rect, Qt.AlignCenter, self.subtext)
@@ -1319,6 +1341,7 @@ class AnimatedMeter:
     def __init__(self, meter_widget):
         self.meter = meter_widget
     def set_target(self, val): self.meter.set_target(val)
+    def set_subtext(self, text): self.meter.set_subtext(text)
     def tick(self): self.meter.tick()
 
 
@@ -1334,6 +1357,7 @@ class ServerHub(QMainWindow):
         if os.path.exists(app_icon_path):
             self.setWindowIcon(QIcon(app_icon_path))
         
+        # Unified Responsive, Interactive CSS Stylesheet
         self.setStyleSheet("""
             QMainWindow, QWidget { 
                 background-color: #161618; 
@@ -1357,6 +1381,7 @@ class ServerHub(QMainWindow):
                 font-weight: bold; 
                 font-size: 11px;
             }
+            /* Universal Button Styles */
             QPushButton { 
                 background-color: #2D2D30; 
                 color: #FFF; 
@@ -1370,6 +1395,7 @@ class ServerHub(QMainWindow):
             QPushButton:pressed { background-color: #1E1E22; border-color: #4EC9B0; }
             QPushButton:disabled { background-color: #161618; color: #555555; border-color: #2A2A2C; }
             
+            /* ID-Specific Colorful Sidebar Buttons */
             QPushButton#btnStartEngine { background-color: #107C41; color: white; border: 1px solid #107C41; }
             QPushButton#btnStartEngine:hover { background-color: #0c5e31; }
             QPushButton#btnStartEngine:pressed { background-color: #084021; }
@@ -1405,6 +1431,7 @@ class ServerHub(QMainWindow):
                 color: #FFFFFF;
                 border: 1px solid #3E3E42;
                 selection-background-color: #094771;
+                selection-color: #FFFFFF;
             }
             
             QCheckBox { color: #D4D4D4; font-size: 11px; font-weight: bold; }
@@ -2048,8 +2075,7 @@ class ServerHub(QMainWindow):
         l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(8, 12, 8, 8); l_test.setSpacing(6)
         
         self.chk_test = QCheckBox("Testing Mode OFF")
-        # Fixed: Use 'toggled' instead of 'stateChanged' for proper boolean logic
-        self.chk_test.toggled.connect(self.toggle_test_mode)
+        self.chk_test.toggled.connect(self.toggle_test_mode) # FIXED logical toggle
         l_test.addWidget(self.chk_test)
         
         self.cb_test_date = QComboBox()
@@ -2218,8 +2244,8 @@ class ServerHub(QMainWindow):
         log_layout.addLayout(log_h)
         main_splitter.addWidget(log_container)
         
-        # Huge Splitter weights to make logs massive vertically.
-        main_splitter.setSizes([200, 600])
+        # Give the log console max possible weight (70% logs / 30% table)
+        main_splitter.setSizes([200, 700])
         c_lay.addWidget(main_splitter, stretch=1)
         
         ftr = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
@@ -2267,19 +2293,29 @@ class ServerHub(QMainWindow):
             with _telemetry_lock: snap_telemetry = dict(TELEMETRY_DATA)
             c = snap_telemetry.get("cpu", 0)
             r = snap_telemetry.get("ram", 0)
+            
+            # --- Dynamic Metric Subtext Generation ---
+            cpu_curr = snap_telemetry.get("cpu_ghz_used", 0.0)
+            cpu_max = snap_telemetry.get("cpu_ghz_total", 0.0)
+            ram_used = snap_telemetry.get("ram_gb_used", 0.0)
+            ram_total = snap_telemetry.get("ram_gb_total", 0.0)
+            
             self.animated_meters["cpu"].set_target(c)
+            self.animated_meters["cpu"].set_subtext(f"CPU: {cpu_curr:.1f}/{cpu_max:.1f} GHz")
+            
             self.animated_meters["ram"].set_target(r)
+            self.animated_meters["ram"].set_subtext(f"RAM: {ram_used:.1f}/{ram_total:.1f} GB")
 
             net_type = snap_telemetry.get("net_type", "Disconnected")
             if net_type in ["Disconnected", "Offline"]:
                 self.animated_meters["net"].set_target(0)
-                self.mini_meter_net.subtext = "OFFLINE"
+                self.animated_meters["net"].set_subtext("OFFLINE")
             else:
                 mbps = snap_telemetry.get("total_mbps", 0.0)
                 cap = 1000 if mbps > 100 else (100 if mbps > 10 else 10)
                 self.mini_meter_net.max_val = cap
-                self.mini_meter_net.subtext = net_type.upper()[:7]
                 self.animated_meters["net"].set_target(mbps)
+                self.animated_meters["net"].set_subtext(f"{net_type[:7]}: {mbps:.1f} MB/s")
 
             req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
             with metrics_lock: 
@@ -2293,6 +2329,7 @@ class ServerHub(QMainWindow):
 
             proc_ms = int(snap_metrics["avg_process_ms"])
             self.animated_meters["api"].set_target(min(proc_ms, 500))
+            self.animated_meters["api"].set_subtext(f"API: {proc_ms} ms")
 
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms = snap_net["local_ms"]
@@ -2490,6 +2527,7 @@ class ServerHub(QMainWindow):
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             def finalize_tunnel(t_url):
                                 time.sleep(30)
+                                if self.cf_process is None: return # Handled by stop early
                                 with self.cf_lock: self.cloudflare_url = t_url
                                 self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
                                 self.gui_queue.put(lambda u=t_url: (self.lbl_cf_link.setText(u), self.lbl_cf_link.setStyleSheet("color:#569CD6; font-size:10px;")))

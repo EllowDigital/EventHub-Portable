@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-EventHub Portable — Central Launcher
+EventHub Portable — Central Launcher (PySide6 Edition)
 TENT DECOR EXPO UP 2026
 
-Single entry point for the whole offline kit. 
+Single entry point for the whole offline kit.
 Auto-installs dependencies, verifies system health, captures tool logs, 
 and manages tool processes with Voice & Audio feedback.
 """
@@ -23,18 +23,13 @@ import json
 import sqlite3
 import platform
 from datetime import datetime
-import tkinter as tk
 
 # ==============================================================================
-# BANNER SLIDESHOW IMAGES (EDIT THIS LIST)
+# BANNER SLIDESHOW IMAGES
 # ==============================================================================
-# Add or remove image filenames here. 
-# Ensure these files are placed inside the folder: app/assets/main-banner's/
 BANNER_IMAGES = [
     "eventhub-banner.png",
     "eventhub-banner0.png",
-    # "eventhub-banner1.png",
-    # "eventhub-banner2.png",
     "tdeup2025-team.png"
 ]
 
@@ -60,7 +55,6 @@ except ImportError:
 # AUTO-ADMINISTRATOR ELEVATION (WINDOWS) — STEALTH MODE
 # ==============================================================================
 def is_admin():
-    """Check if the script is currently running with Administrator privileges."""
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
@@ -79,78 +73,20 @@ if os.name == 'nt' and not is_admin():
 # ==============================================================================
 # 24/7 STABILITY: GLOBAL CRASH HANDLER
 # ==============================================================================
-def global_exception_handler(*args):
-    print(f"Uncaught GUI Exception intercepted. App remains running: {args}")
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    print(f"Uncaught GUI Exception intercepted. App remains running: {exc_value}")
 
-tk.Tk.report_callback_exception = global_exception_handler
-
-try:
-    import ttkbootstrap as ttk
-    from ttkbootstrap.constants import *
-    from ttkbootstrap.widgets.scrolled import ScrolledText
-    from tkinter import messagebox, simpledialog
-    from PIL import Image, ImageTk, ImageOps
-    import pymysql
-except ImportError:
-    pass 
+sys.excepthook = global_exception_handler
 
 # ==============================================================================
-# PATHS & CONFIG
+# FIRST-RUN BOOTSTRAP (PYSIDE6)
 # ==============================================================================
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_DIR = os.path.join(ROOT_DIR, "app")
-ASSETS_DIR = os.path.join(APP_DIR, "assets")
-BANNER_DIR = os.path.join(ASSETS_DIR, "main-banner's")
-ICON_PATH = os.path.join(ASSETS_DIR, "EventHub.ico")
-
 REQUIREMENTS_FILE = os.path.join(ROOT_DIR, "requirements.txt")
-CONFIG_DIR = os.path.join(APP_DIR, "config")
-SCHEMA_CONFIG = os.path.join(CONFIG_DIR, "schema.json")
-SECRETS_CONFIG = os.path.join(CONFIG_DIR, "secrets.json")
-EXE_DIR = os.path.join(ROOT_DIR, "exe-files")
 
-MIN_PYTHON = (3, 9)
-MAX_LOG_LINES = 2000 
-
-# ==============================================================================
-# ENVIRONMENT INJECTION (PERMANENT)
-# ==============================================================================
-def inject_cloudflared_path():
-    cf_paths = [r"C:\Program Files\cloudflared", r"C:\Program Files (x86)\cloudflared"]
-    current_path = os.environ.get("PATH", "")
-    
-    valid_path = None
-    for path in cf_paths:
-        if os.path.exists(path):
-            valid_path = path
-            if path not in current_path:
-                os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
-            break
-
-    if valid_path and os.name == 'nt':
-        try:
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
-            sys_path, _ = winreg.QueryValueEx(key, "Path")
-            
-            if valid_path.lower() not in sys_path.lower():
-                new_path = valid_path + os.pathsep + sys_path
-                winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
-                
-                HWND_BROADCAST = 0xFFFF
-                WM_SETTINGCHANGE = 0x001A
-                SMTO_ABORTIFHUNG = 0x0002
-                ctypes.windll.user32.SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", SMTO_ABORTIFHUNG, 5000, None)
-            
-            winreg.CloseKey(key)
-        except Exception:
-            pass 
-
-# ==============================================================================
-# FIRST-RUN BOOTSTRAP
-# ==============================================================================
 def _bootstrap_first_run():
     try:
-        import ttkbootstrap 
+        import PySide6
         import pymysql
         return
     except ImportError:
@@ -176,40 +112,114 @@ def _bootstrap_first_run():
 
 _bootstrap_first_run()
 
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                               QHBoxLayout, QLabel, QPushButton, QFrame, 
+                               QTextEdit, QGridLayout, QMessageBox, QInputDialog, QSpacerItem, QSizePolicy)
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QIcon, QFont, QPixmap, QTextCursor, QColor
+import pymysql
+
+# ==============================================================================
+# PATHS & CONFIG
+# ==============================================================================
+APP_DIR = os.path.join(ROOT_DIR, "app")
+ASSETS_DIR = os.path.join(APP_DIR, "assets")
+BANNER_DIR = os.path.join(ASSETS_DIR, "main-banner's")
+ICON_PATH = os.path.join(ASSETS_DIR, "EventHub.ico")
+CONFIG_DIR = os.path.join(APP_DIR, "config")
+SCHEMA_CONFIG = os.path.join(CONFIG_DIR, "schema.json")
+SECRETS_CONFIG = os.path.join(CONFIG_DIR, "secrets.json")
+EXE_DIR = os.path.join(ROOT_DIR, "exe-files")
+
+MIN_PYTHON = (3, 9)
+MAX_LOG_LINES = 2000 
+
+# ==============================================================================
+# ENVIRONMENT INJECTION (PERMANENT)
+# ==============================================================================
+def inject_cloudflared_path():
+    cf_paths = [r"C:\Program Files\cloudflared", r"C:\Program Files (x86)\cloudflared"]
+    current_path = os.environ.get("PATH", "")
+    valid_path = None
+    for path in cf_paths:
+        if os.path.exists(path):
+            valid_path = path
+            if path not in current_path:
+                os.environ["PATH"] = path + os.pathsep + os.environ["PATH"]
+            break
+
+    if valid_path and os.name == 'nt':
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE)
+            sys_path, _ = winreg.QueryValueEx(key, "Path")
+            
+            if valid_path.lower() not in sys_path.lower():
+                new_path = valid_path + os.pathsep + sys_path
+                winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
+                HWND_BROADCAST = 0xFFFF
+                WM_SETTINGCHANGE = 0x001A
+                SMTO_ABORTIFHUNG = 0x0002
+                ctypes.windll.user32.SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, "Environment", SMTO_ABORTIFHUNG, 5000, None)
+            winreg.CloseKey(key)
+        except Exception:
+            pass 
+
 # ==============================================================================
 # TOOL REGISTRY
 # ==============================================================================
 TOOLS = [
-    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Central control server.", "bootstyle": PRIMARY},
-    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Live access monitor.", "bootstyle": INFO},
-    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "Walk-in registration desk.", "bootstyle": SUCCESS},
-    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Database synchronization engine.", "bootstyle": WARNING},
-    {"key": "photos", "icon": "🖼️", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Offline photo cache.", "bootstyle": SECONDARY},
-    {"key": "explorer", "icon": "🔍", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Profile search directory.", "bootstyle": SECONDARY},
-    {"key": "handbook", "icon": "📖", "label": "Digital Handbook", "script": "handbook.py", "desc": "Troubleshooting reference guide.", "bootstyle": PRIMARY},
+    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Central control server.", "bootstyle": "primary"},
+    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Live access monitor.", "bootstyle": "info"},
+    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "Walk-in registration desk.", "bootstyle": "success"},
+    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Database synchronization engine.", "bootstyle": "warning"},
+    {"key": "photos", "icon": "🖼️", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Offline photo cache.", "bootstyle": "secondary"},
+    {"key": "explorer", "icon": "🔍", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Profile search directory.", "bootstyle": "secondary"},
+    {"key": "handbook", "icon": "📖", "label": "Digital Handbook", "script": "handbook.py", "desc": "Troubleshooting reference guide.", "bootstyle": "primary"},
 ]
 
 # ==============================================================================
-# MAIN GUI APPLICATION
+# PYSIDE6 GUI APPLICATION
 # ==============================================================================
-class LauncherApp(ttk.Window):
-    def __init__(self):
-        super().__init__(themename="darkly", title="EventHub Portable — Central Launcher (Administrator)")
-        
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        ww, wh = max(1100, min(1400, int(sw * 0.85))), max(750, min(1000, int(sh * 0.85)))
-        self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
-        self.minsize(1100, 780)
+class BannerLabel(QLabel):
+    """Custom QLabel to handle smooth resizing of the slideshow banner."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self._pixmap = None
 
-        # Set custom window icon if it exists
+    def setOriginalPixmap(self, pixmap):
+        self._pixmap = pixmap
+        self.update_pixmap()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.update_pixmap()
+
+    def update_pixmap(self):
+        if self._pixmap and not self._pixmap.isNull():
+            w = self.width() - 4
+            h = min(320, self.height() - 4)
+            if w > 10 and h > 10:
+                scaled = self._pixmap.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.setPixmap(scaled)
+
+class LauncherApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("EventHub Portable — Central Launcher (Administrator)")
+        
+        screen = QApplication.primaryScreen().geometry()
+        sw, sh = screen.width(), screen.height()
+        ww, wh = max(1100, min(1400, int(sw * 0.85))), max(750, min(1000, int(sh * 0.85)))
+        self.setGeometry(max(0, (sw - ww) // 2), max(0, (sh - wh) // 2 - 15), ww, wh)
+        self.setMinimumSize(1100, 780)
+
         if os.path.exists(ICON_PATH):
-            try:
-                self.iconbitmap(ICON_PATH)
-            except Exception:
-                pass
+            self.setWindowIcon(QIcon(ICON_PATH))
 
         inject_cloudflared_path()
 
+        # Core state
         self.gui_queue = queue.Queue()
         self.processes = {}      
         self.tool_widgets = {}   
@@ -217,21 +227,28 @@ class LauncherApp(ttk.Window):
         self.cached_cf_path = None
         self.sound_enabled = True
         
-        # --- SLIDESHOW VARIABLES ---
+        # Slideshow state
         self.slideshow_images = []
-        self.current_image_original = None
         self.current_image_index = 0
-        self.slideshow_interval = 4000  # Change image every 4000 ms (4 seconds)
+        self.slideshow_interval = 4000  
 
-        self._configure_custom_styles()
+        self.apply_stylesheet()
         self.build_ui()
 
-        # Staggered startup for smooth UI loading
-        self.after(50, self._process_gui_queue)
-        self.after(500, self.check_system_health)
-        self.after(800, self._run_schema_script_async)
-        self.after(1000, self._setup_network_firewall_async)
-        self.after(2000, self._poll_processes)
+        # Queue Polling Timer
+        self.queue_timer = QTimer(self)
+        self.queue_timer.timeout.connect(self._process_gui_queue)
+        self.queue_timer.start(30)
+
+        # Process Polling Timer
+        self.process_timer = QTimer(self)
+        self.process_timer.timeout.connect(self._poll_processes)
+        self.process_timer.start(2000)
+
+        # Staggered startup
+        QTimer.singleShot(500, self.check_system_health)
+        QTimer.singleShot(800, self._run_schema_script_async)
+        QTimer.singleShot(1000, self._setup_network_firewall_async)
 
         self.log(
             "System initialized with Administrator Privileges. Ready for operations.", 
@@ -239,69 +256,75 @@ class LauncherApp(ttk.Window):
             speak_text="Central Launcher Initialized. System ready for operations."
         )
 
-    def _configure_custom_styles(self):
-        colors = self.style.colors
-        self.CARD_BG = colors.get("dark")
-        self.SOFT_BORDER = self._mix_hex(self.CARD_BG, colors.get("fg"), 0.08)
-        self.style.configure("Card.TFrame", background=self.CARD_BG, bordercolor=self.SOFT_BORDER, borderwidth=1, relief="solid")
+    def apply_stylesheet(self):
+        self.setStyleSheet("""
+            QMainWindow { background-color: #222222; color: #ffffff; }
+            QWidget { font-family: 'Segoe UI', Arial, sans-serif; }
+            QLabel { color: #dddddd; }
+            QFrame.Card { background-color: #2b2b2b; border: 1px solid #3d3d3d; border-radius: 6px; }
+            QFrame.Card QLabel { border: none; }
+            QPushButton { border-radius: 4px; font-weight: bold; padding: 6px 12px; }
+            QPushButton.Outline { background-color: transparent; border: 1px solid #555; color: #ccc; }
+            QPushButton.Outline:hover { background-color: #444; }
+            QTextEdit { background-color: #141414; color: #cccccc; font-family: 'Consolas', monospace; font-size: 11pt; border: 1px solid #3d3d3d; border-radius: 6px; }
+            QScrollBar:vertical { background: #222; width: 12px; margin: 0px; }
+            QScrollBar::handle:vertical { background: #555; min-height: 20px; border-radius: 6px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
 
-    def _hex_to_rgb(self, hex_color):
-        hex_color = hex_color.lstrip('#')
-        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    def _get_button_style(self, style_name):
+        styles = {
+            "primary": "background-color: #3498db; color: white; border: none;",
+            "success": "background-color: #2ecc71; color: white; border: none;",
+            "info": "background-color: #1abc9c; color: white; border: none;",
+            "warning": "background-color: #f39c12; color: white; border: none;",
+            "danger": "background-color: #e74c3c; color: white; border: none;",
+            "secondary": "background-color: #555555; color: white; border: none;"
+        }
+        hover_styles = {
+            "primary": "QPushButton:hover { background-color: #2980b9; }",
+            "success": "QPushButton:hover { background-color: #27ae60; }",
+            "info": "QPushButton:hover { background-color: #16a085; }",
+            "warning": "QPushButton:hover { background-color: #d35400; }",
+            "danger": "QPushButton:hover { background-color: #c0392b; }",
+            "secondary": "QPushButton:hover { background-color: #444444; }"
+        }
+        base = styles.get(style_name, styles["secondary"])
+        hover = hover_styles.get(style_name, hover_styles["secondary"])
+        return f"QPushButton {{ {base} }} {hover}"
 
-    def _rgb_to_hex(self, rgb):
-        return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
-
-    def _mix_hex(self, c_a, c_b, w):
-        return self._rgb_to_hex(a + (b - a) * w for a, b in zip(self._hex_to_rgb(c_a), self._hex_to_rgb(c_b)))
+    def _get_color_hex(self, style_name):
+        return {"success": "#2ecc71", "info": "#1abc9c", "warning": "#f39c12", "danger": "#e74c3c", "secondary": "#888888"}.get(style_name, "#757575")
 
     # --------------------------------------------------------------------------
-    # TTS & AUDIO NOTIFICATION ENGINE
+    # TTS & AUDIO ENGINE
     # --------------------------------------------------------------------------
     def play_sound(self, status, speak_text=""):
-        if not self.sound_enabled:
-            return
+        if not self.sound_enabled: return
             
         def _play():
             if HAS_WINSOUND:
                 try:
-                    if status == "SUCCESS":
-                        winsound.Beep(2000, 100)  
-                    elif status == "WARNING":
-                        winsound.Beep(1000, 100) 
-                        time.sleep(0.05)
-                        winsound.Beep(1000, 100)
-                    else:
-                        winsound.Beep(400, 150)
-                        winsound.Beep(300, 300)
-                except Exception:
-                    self.bell() 
+                    if status == "SUCCESS": winsound.Beep(2000, 100)  
+                    elif status == "WARNING": winsound.Beep(1000, 100); time.sleep(0.05); winsound.Beep(1000, 100)
+                    else: winsound.Beep(400, 150); winsound.Beep(300, 300)
+                except Exception: QApplication.beep() 
             else:
-                self.bell()
-                if status != "SUCCESS":
-                    time.sleep(0.2)
-                    self.bell()
+                QApplication.beep()
+                if status != "SUCCESS": time.sleep(0.2); QApplication.beep()
 
             if speak_text:
                 try:
                     if platform.system() == "Windows":
                         safe_text = speak_text.replace("'", "")
-                        ps_script = (
-                            f"Add-Type -AssemblyName System.Speech; "
-                            f"$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                            f"$synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); "
-                            f"$synth.Rate = 0; "
-                            f"$synth.Speak('{safe_text}');"
-                        )
+                        ps_script = f"Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.SelectVoiceByHints([System.Speech.Synthesis.VoiceGender]::Female); $synth.Rate = 0; $synth.Speak('{safe_text}');"
                         subprocess.run(["powershell", "-Command", ps_script], creationflags=subprocess.CREATE_NO_WINDOW)
                     elif HAS_TTS:
                         engine = pyttsx3.init()
                         for voice in engine.getProperty('voices'):
                             if any(x in voice.name.lower() for x in ['female', 'zira', 'samantha']):
-                                engine.setProperty('voice', voice.id)
-                                break
-                        engine.say(speak_text)
-                        engine.runAndWait()
+                                engine.setProperty('voice', voice.id); break
+                        engine.say(speak_text); engine.runAndWait()
                 except Exception as e:
                     self.gui_queue.put(("log", {"msg": f"TTS Error: {e}", "level": "ERROR"}))
 
@@ -310,307 +333,266 @@ class LauncherApp(ttk.Window):
     def toggle_sound(self):
         self.sound_enabled = not self.sound_enabled
         if self.sound_enabled:
-            self.btn_sound.configure(text="🔊 Voice Enabled", bootstyle="outline-success")
+            self.btn_sound.setText("🔊 Voice Enabled")
+            self.btn_sound.setStyleSheet("QPushButton { border: 1px solid #2ecc71; color: #2ecc71; background: transparent; }")
             self.play_sound("SUCCESS", "Audio alerts enabled.")
         else:
-            self.btn_sound.configure(text="🔇 Muted", bootstyle="outline-secondary")
+            self.btn_sound.setText("🔇 Muted")
+            self.btn_sound.setStyleSheet("QPushButton { border: 1px solid #555; color: #888; background: transparent; }")
 
     # --------------------------------------------------------------------------
-    # UI CONSTRUCTION (RESPONSIVE GRID)
+    # UI CONSTRUCTION
     # --------------------------------------------------------------------------
     def build_ui(self):
-        main_container = ttk.Frame(self, padding=25)
-        main_container.pack(fill=BOTH, expand=True)
+        main_widget = QWidget()
+        self.setCentralWidget(main_widget)
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setContentsMargins(25, 25, 25, 25)
 
         # -- Header --
-        header_frame = ttk.Frame(main_container)
-        header_frame.pack(fill=X, pady=(0, 20))
+        header_layout = QHBoxLayout()
+        main_layout.addLayout(header_layout)
 
-        title_box = ttk.Frame(header_frame)
-        title_box.pack(side=LEFT)
-        ttk.Label(title_box, text="EventHub Portable", font="-size 26 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
-        ttk.Label(title_box, text="CENTRAL LAUNCHER • TDE UP 2026", font="-size 10 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
+        title_layout = QVBoxLayout()
+        title_lbl = QLabel("EventHub Portable")
+        title_lbl.setStyleSheet("font-size: 26px; font-weight: bold; color: #3498db;")
+        sub_lbl = QLabel("CENTRAL LAUNCHER • TDE UP 2026")
+        sub_lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #888;")
+        title_layout.addWidget(title_lbl)
+        title_layout.addWidget(sub_lbl)
+        header_layout.addLayout(title_layout)
+        header_layout.addStretch()
 
-        action_box = ttk.Frame(header_frame)
-        action_box.pack(side=RIGHT)
-        
-        self.btn_sound = ttk.Button(action_box, text="🔊 Voice Enabled", bootstyle="outline-success", command=self.toggle_sound)
-        self.btn_sound.pack(side=LEFT, padx=10, ipady=4)
-        
-        ttk.Button(action_box, text="⟳ Refresh Health Check", bootstyle="outline-info", command=self.check_system_health).pack(side=LEFT, padx=5, ipady=4)
-        ttk.Button(action_box, text="🛑 Stop All Active Tools", bootstyle=DANGER, command=self.stop_all_tools).pack(side=LEFT, padx=5, ipady=4)
+        self.btn_sound = QPushButton("🔊 Voice Enabled")
+        self.btn_sound.setStyleSheet("QPushButton { border: 1px solid #2ecc71; color: #2ecc71; background: transparent; }")
+        self.btn_sound.clicked.connect(self.toggle_sound)
+        btn_refresh = QPushButton("⟳ Refresh Health Check")
+        btn_refresh.setProperty("class", "Outline")
+        btn_refresh.clicked.connect(self.check_system_health)
+        btn_stop = QPushButton("🛑 Stop All Active Tools")
+        btn_stop.setStyleSheet(self._get_button_style("danger"))
+        btn_stop.clicked.connect(self.stop_all_tools)
 
-        # -- System Health Panel (Responsive Cards) --
-        ttk.Label(main_container, text="⚙️ SYSTEM HEALTH", font="-size 11 -weight bold", foreground="gray").pack(anchor=W, pady=(0, 5))
-        health_grid = ttk.Frame(main_container)
-        health_grid.pack(fill=X, pady=(0, 20))
-        health_grid.columnconfigure((0, 1, 2, 3), weight=1, uniform="health")
+        header_layout.addWidget(self.btn_sound)
+        header_layout.addWidget(btn_refresh)
+        header_layout.addWidget(btn_stop)
+
+        # -- System Health --
+        lbl_health = QLabel("⚙️ SYSTEM HEALTH")
+        lbl_health.setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
+        main_layout.addWidget(lbl_health)
         
+        health_grid = QGridLayout()
+        main_layout.addLayout(health_grid)
         self._build_health_card(health_grid, 0, "python", "🐍 PYTHON VER", "Checking...")
         self._build_health_card(health_grid, 1, "cloudflared", "☁️ CLOUDFLARED", "Checking...")
         self._build_health_card(health_grid, 2, "deps", "📦 DEPENDENCIES", "Checking...")
         self._build_health_card(health_grid, 3, "config", "⚙️ CONFIGURATION", "Checking...")
 
-        # -- Main Split Content (Responsive Grid) --
-        split_frame = ttk.Frame(main_container)
-        split_frame.pack(fill=BOTH, expand=True)
-        split_frame.columnconfigure(0, weight=4) # Left takes ~40% space
-        split_frame.columnconfigure(1, weight=6) # Right takes ~60% space
-        split_frame.rowconfigure(0, weight=1)
+        # -- Main Split --
+        split_layout = QHBoxLayout()
+        main_layout.addLayout(split_layout, stretch=1)
 
-        # Left Column: DB Health + Tools 
-        left_col = ttk.Frame(split_frame)
-        left_col.grid(row=0, column=0, sticky=NSEW, padx=(0, 25))
+        # Left Column (Tools)
+        left_col = QVBoxLayout()
+        split_layout.addLayout(left_col, stretch=4)
 
-        ttk.Label(left_col, text="🗄️ DATABASE HEALTH", font="-size 11 -weight bold", foreground="gray").pack(anchor=W, pady=(0, 5))
-        db_grid = ttk.Frame(left_col)
-        db_grid.pack(fill=X, pady=(0, 20))
-        db_grid.columnconfigure((0, 1), weight=1, uniform="db")
-        
-        self._build_db_status_card(db_grid, 0, "mysql_db", "🐬 MYSQL (PRIMARY)", "Checking...")
-        self._build_db_status_card(db_grid, 1, "sqlite_db", "💾 SQLITE (MIRROR)", "Checking...")
+        lbl_db = QLabel("🗄️ DATABASE HEALTH")
+        lbl_db.setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
+        left_col.addWidget(lbl_db)
 
-        ttk.Label(left_col, text="🛠️ APPLICATION TOOLS", font="-size 11 -weight bold", foreground="gray").pack(anchor=W, pady=(0, 5))
+        db_grid = QGridLayout()
+        left_col.addLayout(db_grid)
+        self._build_health_card(db_grid, 0, "mysql_db", "🐬 MYSQL (PRIMARY)", "Checking...")
+        self._build_health_card(db_grid, 1, "sqlite_db", "💾 SQLITE (MIRROR)", "Checking...")
+
+        lbl_tools = QLabel("🛠️ APPLICATION TOOLS")
+        lbl_tools.setStyleSheet("font-size: 11px; font-weight: bold; color: #888; margin-top: 10px;")
+        left_col.addWidget(lbl_tools)
+
         for tool in TOOLS:
             self._build_tool_card(left_col, tool)
-            
-        btn_row = ttk.Frame(left_col)
-        btn_row.pack(fill=X, side=BOTTOM, pady=(10, 0))
-        ttk.Button(btn_row, text="📁 Open Root Folder", bootstyle="outline-secondary", command=lambda: self.open_folder(ROOT_DIR)).pack(side=LEFT, fill=X, expand=True, padx=(0, 5), ipady=6)
-        ttk.Button(btn_row, text="⚙️ Open Configs", bootstyle="outline-secondary", command=lambda: self.open_folder(CONFIG_DIR)).pack(side=LEFT, fill=X, expand=True, padx=(5, 0), ipady=6)
 
-        # Right Column: Banner & Logs
-        right_col = ttk.Frame(split_frame)
-        right_col.grid(row=0, column=1, sticky=NSEW)
-        right_col.columnconfigure(0, weight=1)
-        right_col.rowconfigure(1, weight=1)
+        left_col.addStretch()
 
-        self.team_card = ttk.Frame(right_col, style="Card.TFrame", padding=2) 
-        self.team_card.grid(row=0, column=0, sticky=EW, pady=(0, 15))
-        self.team_card.pack_propagate(False) 
+        btn_row = QHBoxLayout()
+        btn_root = QPushButton("📁 Open Root Folder")
+        btn_root.setProperty("class", "Outline")
+        btn_root.clicked.connect(lambda: self.open_folder(ROOT_DIR))
+        btn_conf = QPushButton("⚙️ Open Configs")
+        btn_conf.setProperty("class", "Outline")
+        btn_conf.clicked.connect(lambda: self.open_folder(CONFIG_DIR))
+        btn_row.addWidget(btn_root)
+        btn_row.addWidget(btn_conf)
+        left_col.addLayout(btn_row)
+
+        # Right Column (Banner & Logs)
+        right_col = QVBoxLayout()
+        split_layout.addLayout(right_col, stretch=6)
+
+        self.team_card = QFrame()
+        self.team_card.setProperty("class", "Card")
+        team_layout = QVBoxLayout(self.team_card)
+        team_layout.setContentsMargins(2, 2, 2, 2)
         
-        self.lbl_team_photo = ttk.Label(self.team_card, background=self.CARD_BG, anchor=CENTER)
-        self.lbl_team_photo.pack(fill=BOTH, expand=True)
+        self.lbl_team_photo = BannerLabel()
+        team_layout.addWidget(self.lbl_team_photo)
+        right_col.addWidget(self.team_card, stretch=4)
 
-        # --- LOAD SLIDESHOW IMAGES FROM THE GLOBAL BANNER_IMAGES LIST ---
+        # Load Slideshow
         for img_name in BANNER_IMAGES:
             img_path = os.path.join(BANNER_DIR, img_name)
             if os.path.exists(img_path):
-                try:
-                    self.slideshow_images.append(Image.open(img_path))
-                except Exception as e:
-                    self.log(f"Could not open image '{img_name}': {e}", "WARNING")
+                try: self.slideshow_images.append(QPixmap(img_path))
+                except Exception as e: self.log(f"Could not load '{img_name}': {e}", "WARNING")
 
         if self.slideshow_images:
-            self.current_image_original = self.slideshow_images[0]
-            self.team_card.bind("<Configure>", self._resize_team_banner)
+            self.lbl_team_photo.setOriginalPixmap(self.slideshow_images[0])
             if len(self.slideshow_images) > 1:
-                self.after(self.slideshow_interval, self._next_slide)
+                self.slideshow_timer = QTimer(self)
+                self.slideshow_timer.timeout.connect(self._next_slide)
+                self.slideshow_timer.start(self.slideshow_interval)
         else:
-            self.team_card.configure(height=100) 
-            self.lbl_team_photo.configure(
-                text=f"📸 Place images in:\n{BANNER_DIR}", 
-                font="-size 10 -slant italic", 
-                foreground="gray",
-                justify=CENTER
-            )
+            self.lbl_team_photo.setText(f"📸 Place images in:\n{BANNER_DIR}")
 
-        log_wrapper = ttk.Frame(right_col)
-        log_wrapper.grid(row=1, column=0, sticky=NSEW)
-        log_wrapper.rowconfigure(1, weight=1)
-        log_wrapper.columnconfigure(0, weight=1)
-        
-        log_hdr = ttk.Frame(log_wrapper)
-        log_hdr.grid(row=0, column=0, sticky=EW, pady=(0, 5))
-        ttk.Label(log_hdr, text="📟 ACTIVITY LOG (STDOUT)", font="-size 11 -weight bold", foreground="gray").pack(side=LEFT)
-        ttk.Button(log_hdr, text="Clear Logs", bootstyle="secondary-link", command=self.clear_log).pack(side=RIGHT)
+        log_hdr_layout = QHBoxLayout()
+        lbl_log = QLabel("📟 ACTIVITY LOG (STDOUT)")
+        lbl_log.setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
+        btn_clear = QPushButton("Clear Logs")
+        btn_clear.setStyleSheet("background: transparent; color: #3498db; text-decoration: underline; border: none;")
+        btn_clear.clicked.connect(self.clear_log)
+        log_hdr_layout.addWidget(lbl_log)
+        log_hdr_layout.addStretch()
+        log_hdr_layout.addWidget(btn_clear)
+        right_col.addLayout(log_hdr_layout)
 
-        log_frame = ttk.Frame(log_wrapper, style="Card.TFrame", padding=4)
-        log_frame.grid(row=1, column=0, sticky=NSEW)
-
-        self.log_box = ScrolledText(log_frame, autohide=True, wrap="word")
-        self.log_box.pack(fill=BOTH, expand=True)
-        self.log_box.text.configure(state="disabled", font=("Consolas", 11), bg="#141414", borderwidth=0, padx=10, pady=10)
-        
-        self.log_box.text.tag_config("INFO", foreground="#cccccc")
-        self.log_box.text.tag_config("SUCCESS", foreground="#4CD37E", font=("Consolas", 11, "bold"))
-        self.log_box.text.tag_config("WARNING", foreground="#FFB454", font=("Consolas", 11, "bold"))
-        self.log_box.text.tag_config("ERROR", foreground="#FF6B6B", font=("Consolas", 11, "bold"))
-        self.log_box.text.tag_config("TOOL", foreground="#5DADE2") 
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        right_col.addWidget(self.log_box, stretch=6)
 
     def _next_slide(self):
-        """Advances the slideshow to the next image in the queue."""
         if not self.slideshow_images: return
-        
         self.current_image_index = (self.current_image_index + 1) % len(self.slideshow_images)
-        self.current_image_original = self.slideshow_images[self.current_image_index]
-        
-        # Apply to the last known width
-        w = getattr(self, '_last_banner_w', self.team_card.winfo_width())
-        if w > 10:
-            self._apply_image_to_banner(w)
-            
-        self.after(self.slideshow_interval, self._next_slide)
+        self.lbl_team_photo.setOriginalPixmap(self.slideshow_images[self.current_image_index])
 
-    def _resize_team_banner(self, event):
-        """Handles resizing events effectively without spamming recalculations."""
-        if not self.current_image_original or event.width <= 10: return
-        if hasattr(self, '_last_banner_w') and abs(self._last_banner_w - event.width) < 15: return
+    def _build_health_card(self, parent_layout, column, key, title, initial_val):
+        card = QFrame()
+        card.setProperty("class", "Card")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 12, 12, 12)
         
-        self._last_banner_w = event.width
-        self._apply_image_to_banner(event.width)
+        top = QHBoxLayout()
+        dot = QLabel()
+        dot.setFixedSize(10, 10)
+        dot.setStyleSheet("background-color: #757575; border-radius: 5px;")
+        top.addWidget(dot)
+        
+        lbl_title = QLabel(title)
+        lbl_title.setStyleSheet("font-size: 10px; font-weight: bold; color: #888;")
+        top.addWidget(lbl_title)
+        top.addStretch()
+        layout.addLayout(top)
+        
+        val_lbl = QLabel(initial_val)
+        val_lbl.setStyleSheet("font-size: 14px; font-weight: bold; color: #aaa;")
+        layout.addWidget(val_lbl)
+        
+        parent_layout.addWidget(card, 0, column)
+        self.health_widgets[key] = {"label": val_lbl, "dot": dot}
 
-    def _apply_image_to_banner(self, width):
-        """Processes and dynamically applies the loaded original image to perfectly fit the banner label without cropping."""
-        if not self.current_image_original or width <= 10: return
-        try:
-            original_w, original_h = self.current_image_original.size
-            
-            # Maximum allowed dimensions
-            max_w = width - 4
-            max_h = 320
-            
-            # Calculate the scaling ratio to keep aspect ratio perfectly without cropping
-            ratio = min(max_w / original_w, max_h / original_h)
-            new_w = int(original_w * ratio)
-            new_h = int(original_h * ratio)
-            
-            # Set container height to exactly match the scaled image height
-            self.team_card.configure(height=new_h + 4)
-            
-            # Use basic resize (instead of ImageOps.fit) so it doesn't crop edges
-            img = self.current_image_original.resize((new_w, new_h), Image.Resampling.LANCZOS)
-            
-            photo = ImageTk.PhotoImage(img)
-            self.lbl_team_photo.configure(image=photo)
-            self.lbl_team_photo.image = photo 
-        except Exception as e: 
-            pass
+    def _build_tool_card(self, parent_layout, tool):
+        card = QFrame()
+        card.setProperty("class", "Card")
+        layout = QHBoxLayout(card)
+        layout.setContentsMargins(14, 10, 14, 10)
 
-    def _build_health_card(self, parent, column, key, title, initial_val):
-        card = ttk.Frame(parent, style="Card.TFrame", padding=(16, 12))
-        card.grid(row=0, column=column, sticky=NSEW, padx=6)
-        
-        top = ttk.Frame(card, style="Card.TFrame")
-        top.pack(fill=X)
-        
-        canvas = tk.Canvas(top, width=12, height=12, bg=self.CARD_BG, highlightthickness=0)
-        dot = canvas.create_oval(2, 2, 10, 10, fill="#757575", outline="")
-        canvas.pack(side=LEFT, padx=(0, 6))
-        
-        ttk.Label(top, text=title, font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT)
-        
-        val_lbl = ttk.Label(card, text=initial_val, font="-size 12 -weight bold", background=self.CARD_BG, foreground="gray")
-        val_lbl.pack(anchor=W, pady=(6, 0))
-        
-        self.health_widgets[key] = {"label": val_lbl, "canvas": canvas, "dot": dot}
+        icon_lbl = QLabel(tool["icon"])
+        icon_lbl.setStyleSheet("font-size: 24px;")
+        layout.addWidget(icon_lbl)
 
-    def _build_db_status_card(self, parent, column, key, title, initial_val):
-        card = ttk.Frame(parent, style="Card.TFrame", padding=(16, 12))
-        card.grid(row=0, column=column, sticky=NSEW, padx=(0, 10) if column == 0 else (0, 0))
-        
-        top = ttk.Frame(card, style="Card.TFrame")
-        top.pack(fill=X)
-        
-        canvas = tk.Canvas(top, width=12, height=12, bg=self.CARD_BG, highlightthickness=0)
-        dot = canvas.create_oval(2, 2, 10, 10, fill="#757575", outline="")
-        canvas.pack(side=LEFT, padx=(0, 6))
-        
-        ttk.Label(top, text=title, font="-size 9 -weight bold", background=self.CARD_BG, foreground="gray").pack(side=LEFT)
-        
-        val_lbl = ttk.Label(card, text=initial_val, font="-size 12 -weight bold", background=self.CARD_BG, foreground="gray")
-        val_lbl.pack(anchor=W, pady=(6, 0))
-        
-        self.health_widgets[key] = {"label": val_lbl, "canvas": canvas, "dot": dot}
+        text_layout = QVBoxLayout()
+        lbl_title = QLabel(tool["label"])
+        lbl_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #ddd;")
+        lbl_desc = QLabel(tool["desc"])
+        lbl_desc.setStyleSheet("font-size: 11px; color: #888;")
+        text_layout.addWidget(lbl_title)
+        text_layout.addWidget(lbl_desc)
+        layout.addLayout(text_layout, stretch=1)
 
-    def _build_tool_card(self, parent, tool):
-        card = ttk.Frame(parent, style="Card.TFrame", padding=14)
-        card.pack(fill=X, pady=5)
+        status_lbl = QLabel("⚫ IDLE")
+        status_lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
+        status_lbl.setFixedWidth(80)
+        status_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(status_lbl)
 
-        inner = ttk.Frame(card, style="Card.TFrame")
-        inner.pack(fill=BOTH, expand=True)
+        btn = QPushButton("Launch Tool")
+        btn.setStyleSheet(self._get_button_style(tool["bootstyle"]))
+        btn.setFixedWidth(120)
+        btn.clicked.connect(lambda checked=False, t=tool: self.launch_tool(t))
+        layout.addWidget(btn)
 
-        ttk.Label(inner, text=tool["icon"], font="-size 20", background=self.CARD_BG).grid(row=0, column=0, rowspan=2, padx=(5, 18), sticky=W)
-        ttk.Label(inner, text=tool["label"], font="-size 12 -weight bold", background=self.CARD_BG).grid(row=0, column=1, sticky=W)
-        
-        ttk.Label(inner, text=tool["desc"], font="-size 9", background=self.CARD_BG, foreground="gray", wraplength=220).grid(row=1, column=1, sticky=W)
-
-        status_lbl = ttk.Label(inner, text="⚫ IDLE", font="-size 10 -weight bold", background=self.CARD_BG, foreground="gray", width=12, anchor=CENTER)
-        status_lbl.grid(row=0, column=2, rowspan=2, padx=10)
-
-        btn = ttk.Button(inner, text="Launch Tool", bootstyle=tool["bootstyle"], width=16, command=lambda t=tool: self.launch_tool(t))
-        btn.grid(row=0, column=3, rowspan=2)
-
-        inner.columnconfigure(1, weight=1)
+        parent_layout.addWidget(card)
         self.tool_widgets[tool["key"]] = {"button": btn, "status": status_lbl}
 
     # --------------------------------------------------------------------------
-    # ANIMATIONS & THREAD-SAFE UI UPDATES
+    # THREAD-SAFE UI UPDATES & LOGGING
     # --------------------------------------------------------------------------
-    def _animate_pulse(self, widget, property_name, target_color, fallback="gray"):
-        """Creates a smooth bright flash before settling on the new status color."""
-        try:
-            widget.configure(**{property_name: "white"})
-            self.after(150, lambda: widget.configure(**{property_name: target_color}) if widget.winfo_exists() else None)
-        except Exception:
-            pass
-
     def log(self, message, level="INFO", speak_text=None):
         self.gui_queue.put(("log", {"msg": message, "level": level}))
-        if speak_text:
-            self.play_sound(level, speak_text)
+        if speak_text: self.play_sound(level, speak_text)
 
     def _process_gui_queue(self):
-        for _ in range(100):
+        for _ in range(50):
             try:
                 kind, payload = self.gui_queue.get_nowait()
                 
                 if kind == "log":
                     self._append_log(payload["msg"], payload["level"])
-                    
                 elif kind == "update_health":
-                    w = self.health_widgets.get(payload["key"])
-                    if w:
-                        color = getattr(self.style.colors, payload["style"], "#757575")
-                        w["label"].configure(text=payload["text"])
-                        self._animate_pulse(w["label"], "foreground", color)
-                        
-                        w["canvas"].itemconfig(w["dot"], fill="white")
-                        w["canvas"].coords(w["dot"], 1, 1, 11, 11)
-                        self.after(150, lambda cv=w["canvas"], dt=w["dot"], c=color: (cv.itemconfig(dt, fill=c), cv.coords(dt, 2, 2, 10, 10)) if cv.winfo_exists() else None)
-                        
+                    self._update_health_ui(payload["key"], payload["text"], payload["style"])
                 elif kind == "prompt_cf_token":
                     self._prompt_and_install_cf_service()
                 elif kind == "python_done":
-                    messagebox.showinfo("Python Update Complete", "Python 3.14.6 installed. Please restart the app.", parent=self)
-                    
+                    QMessageBox.information(self, "Python Update Complete", "Python updated. Please restart.")
             except queue.Empty:
                 break
-            except Exception as e:
+            except Exception:
                 pass
-                
-        self.after(30, self._process_gui_queue) 
+
+    def _update_health_ui(self, key, text, style):
+        w = self.health_widgets.get(key)
+        if not w: return
+        
+        color = self._get_color_hex(style)
+        w["label"].setText(text)
+        w["label"].setStyleSheet("color: white; font-size: 14px; font-weight: bold;")
+        QTimer.singleShot(150, lambda: w["label"].setStyleSheet(f"color: {color}; font-size: 14px; font-weight: bold;") if w["label"] else None)
+
+        w["dot"].setStyleSheet("background-color: white; border-radius: 5px;")
+        QTimer.singleShot(150, lambda: w["dot"].setStyleSheet(f"background-color: {color}; border-radius: 5px;") if w["dot"] else None)
 
     def _append_log(self, message, level):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_msg = f"[{timestamp}] {message}\n"
-        self.log_box.text.configure(state="normal")
-        self.log_box.text.insert(END, formatted_msg, level)
-        self.log_box.text.see(END)
+        colors = {"INFO": "#cccccc", "SUCCESS": "#2ecc71", "WARNING": "#f39c12", "ERROR": "#e74c3c", "TOOL": "#3498db"}
+        color = colors.get(level, "#ffffff")
+        bold = "font-weight: bold;" if level in ["SUCCESS", "WARNING", "ERROR"] else ""
         
-        lc = int(self.log_box.text.index('end-1c').split('.')[0])
-        if lc > MAX_LOG_LINES: 
-            self.log_box.text.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
-            
-        self.log_box.text.configure(state="disabled")
+        html = f'<span style="color: {color}; {bold}">[{timestamp}] {message}</span>'
+        self.log_box.append(html)
+        
+        doc = self.log_box.document()
+        if doc.blockCount() > MAX_LOG_LINES:
+            cursor = QTextCursor(doc)
+            cursor.movePosition(QTextCursor.Start)
+            for _ in range(doc.blockCount() - MAX_LOG_LINES):
+                cursor.movePosition(QTextCursor.Down, QTextCursor.KeepAnchor)
+            cursor.removeSelectedText()
 
     def clear_log(self):
-        self.log_box.text.configure(state="normal")
-        self.log_box.text.delete("1.0", END)
-        self.log_box.text.configure(state="disabled")
+        self.log_box.clear()
 
     # --------------------------------------------------------------------------
-    # ASYNC SYSTEM/NETWORK RULES & SCHEMA INIT
+    # ASYNC INIT & SYSTEM CHECKS
     # --------------------------------------------------------------------------
     def _run_schema_script_async(self):
         threading.Thread(target=self._schema_task, daemon=True).start()
@@ -622,14 +604,9 @@ class LauncherApp(ttk.Window):
             try:
                 flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 res = subprocess.run([sys.executable, schema_script], capture_output=True, text=True, cwd=APP_DIR, creationflags=flags)
-                if res.returncode == 0:
-                    self.log("Schema initialization completed successfully.", "SUCCESS")
-                else:
-                    self.log(f"Schema initialization failed: {res.stderr.strip() or res.stdout.strip()}", "ERROR")
-            except Exception as e:
-                self.log(f"Error running schema script: {e}", "ERROR")
-        else:
-            self.log("Schema script not found. Skipping initialization.", "WARNING")
+                if res.returncode == 0: self.log("Schema initialization completed successfully.", "SUCCESS")
+                else: self.log(f"Schema initialization failed: {res.stderr.strip() or res.stdout.strip()}", "ERROR")
+            except Exception as e: self.log(f"Error running schema script: {e}", "ERROR")
 
     def _setup_network_firewall_async(self):
         threading.Thread(target=self._network_firewall_task, daemon=True).start()
@@ -637,49 +614,33 @@ class LauncherApp(ttk.Window):
     def _network_firewall_task(self):
         if os.name != "nt": return
         flags = subprocess.CREATE_NO_WINDOW
-        
         self.log("Verifying EventHub firewall configurations...", "INFO")
-        ps_fw_cmd = (
-            "$rule = Get-NetFirewallRule -DisplayName 'EventHub Ports' -ErrorAction SilentlyContinue; "
-            "if (-not $rule) { New-NetFirewallRule -DisplayName 'EventHub Ports' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001 | Out-Null; Write-Output 'CREATED' } else { Write-Output 'EXISTS' }"
-        )
+        ps_fw_cmd = ("$rule = Get-NetFirewallRule -DisplayName 'EventHub Ports' -ErrorAction SilentlyContinue; "
+                     "if (-not $rule) { New-NetFirewallRule -DisplayName 'EventHub Ports' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001 | Out-Null; Write-Output 'CREATED' } else { Write-Output 'EXISTS' }")
         try:
             res = subprocess.run(["powershell", "-Command", ps_fw_cmd], capture_output=True, text=True, creationflags=flags)
-            if "CREATED" in res.stdout:
-                self.log("Added new inbound firewall rule for ports 5000, 5001.", "SUCCESS")
-            else:
-                self.log("Firewall rules for ports 5000 and 5001 are already configured.", "INFO")
-        except Exception as e:
-            self.log(f"Failed to configure firewall: {e}", "ERROR")
+            if "CREATED" in res.stdout: self.log("Added inbound firewall rule for ports 5000, 5001.", "SUCCESS")
+        except Exception as e: self.log(f"Failed to configure firewall: {e}", "ERROR")
 
-        self.log("Flushing DNS and renewing IP configuration...", "WARNING")
         try:
             subprocess.run(["ipconfig", "/flushdns"], capture_output=True, creationflags=flags)
             subprocess.run(["ipconfig", "/renew"], capture_output=True, creationflags=flags)
             self.log("Network configuration reset successfully.", "SUCCESS")
-        except Exception as e:
-            self.log(f"Failed to reset network: {e}", "ERROR")
+        except Exception as e: self.log(f"Failed to reset network: {e}", "ERROR")
 
-    # --------------------------------------------------------------------------
-    # SYSTEM HEALTH & VERSION CHECKS
-    # --------------------------------------------------------------------------
     def _set_health(self, key, text, style):
         self.gui_queue.put(("update_health", {"key": key, "text": text, "style": style}))
 
     def check_system_health(self):
-        self.log("Running system health & version checks...", "INFO")
-        
+        self.log("Running system health checks...", "INFO")
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         if sys.version_info[:2] < MIN_PYTHON:
             self._set_health("python", f"v{py_ver} ⚠", "warning")
             self._offer_python_install()
-        else:
-            self._set_health("python", f"v{py_ver} ✓", "success")
+        else: self._set_health("python", f"v{py_ver} ✓", "success")
 
-        if os.path.isfile(SCHEMA_CONFIG) and os.path.isfile(SECRETS_CONFIG):
-            self._set_health("config", "Valid ✓", "success")
-        else:
-            self._set_health("config", "Missing ⚠", "warning")
+        if os.path.isfile(SCHEMA_CONFIG) and os.path.isfile(SECRETS_CONFIG): self._set_health("config", "Valid ✓", "success")
+        else: self._set_health("config", "Missing ⚠", "warning")
 
         self._set_health("deps", "Verifying...", "warning")
         threading.Thread(target=self._install_requirements_thread, daemon=True).start()
@@ -696,62 +657,44 @@ class LauncherApp(ttk.Window):
             self._set_health("mysql_db", "Missing Config", "warning")
             self._set_health("sqlite_db", "Missing Config", "warning")
             return
-
         try:
             with open(SCHEMA_CONFIG, 'r') as f: config = json.load(f)
         except Exception:
-            self._set_health("mysql_db", "Invalid JSON", "danger")
-            self._set_health("sqlite_db", "Invalid JSON", "danger")
-            return
+            self._set_health("mysql_db", "Invalid JSON", "danger"); self._set_health("sqlite_db", "Invalid JSON", "danger"); return
 
         my_conf = config.get("mysql", {})
         if my_conf.get("enabled"):
             try:
                 start_t = time.perf_counter()
                 conn = pymysql.connect(host=my_conf.get("host", "localhost"), user=my_conf.get("user", "root"), password=my_conf.get("password", ""), database=my_conf.get("database", "eventhub_db"), port=my_conf.get("port", 3306), connect_timeout=2)
-                conn.ping(reconnect=False)
-                conn.close()
+                conn.ping(reconnect=False); conn.close()
                 ms = int((time.perf_counter() - start_t) * 1000)
                 self._set_health("mysql_db", f"Online ✓ ({ms}ms)", "success" if ms < 100 else "warning")
-            except Exception:
-                self._set_health("mysql_db", "Offline ⚠", "danger")
-        else:
-            self._set_health("mysql_db", "Disabled", "secondary")
+            except Exception: self._set_health("mysql_db", "Offline ⚠", "danger")
+        else: self._set_health("mysql_db", "Disabled", "secondary")
 
         sq_conf = config.get("sqlite", {})
         if sq_conf.get("enabled"):
             db_file = os.path.join(APP_DIR, sq_conf.get("folder_name", "db"), sq_conf.get("file_name", "eventhub_local.db"))
             if os.path.exists(db_file):
                 try:
-                    start_t = time.perf_counter()
-                    conn = sqlite3.connect(db_file)
-                    conn.execute("SELECT name FROM sqlite_master;")
-                    conn.close()
+                    start_t = time.perf_counter(); conn = sqlite3.connect(db_file); conn.execute("SELECT name FROM sqlite_master;"); conn.close()
                     ms = int((time.perf_counter() - start_t) * 1000)
                     self._set_health("sqlite_db", f"Ready ✓ (<1ms)" if ms == 0 else f"Ready ✓ ({ms}ms)", "success")
-                except Exception:
-                    self._set_health("sqlite_db", "Corrupted ⚠", "danger")
-            else:
-                self._set_health("sqlite_db", "Missing DB ⚠", "warning")
-        else:
-            self._set_health("sqlite_db", "Disabled", "secondary")
+                except Exception: self._set_health("sqlite_db", "Corrupted ⚠", "danger")
+            else: self._set_health("sqlite_db", "Missing DB ⚠", "warning")
+        else: self._set_health("sqlite_db", "Disabled", "secondary")
 
     def _install_requirements_thread(self):
         try:
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             proc = subprocess.run([sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE, "--disable-pip-version-check"], cwd=ROOT_DIR, capture_output=True, text=True, creationflags=flags)
-            if proc.returncode == 0:
-                self.log("Python dependencies verified.", "SUCCESS")
-                self._set_health("deps", "Ready ✓", "success")
-            else:
-                self.log(f"Dependency error: {proc.stderr}", "ERROR")
-                self._set_health("deps", "Failed ⚠", "danger")
-        except Exception as e:
-            self.log(f"Failed to check dependencies: {e}", "ERROR")
-            self._set_health("deps", "Error ⚠", "danger")
+            if proc.returncode == 0: self.log("Python dependencies verified.", "SUCCESS"); self._set_health("deps", "Ready ✓", "success")
+            else: self.log(f"Dependency error: {proc.stderr}", "ERROR"); self._set_health("deps", "Failed ⚠", "danger")
+        except Exception as e: self.log(f"Failed to check dependencies: {e}", "ERROR"); self._set_health("deps", "Error ⚠", "danger")
 
     # --------------------------------------------------------------------------
-    # CLOUDFLARED MANAGEMENT
+    # CLOUDFLARED & PYTHON UPDATERS
     # --------------------------------------------------------------------------
     def _get_cloudflared_path(self):
         if self.cached_cf_path: return self.cached_cf_path
@@ -765,7 +708,7 @@ class LauncherApp(ttk.Window):
         cf_exe = self._get_cloudflared_path()
         if not cf_exe:
             self._set_health("cloudflared", "Missing ⚠", "warning")
-            self._offer_cloudflared_install()
+            QTimer.singleShot(0, self._offer_cloudflared_install)
             return
         try:
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -773,23 +716,20 @@ class LauncherApp(ttk.Window):
             if res.returncode == 0:
                 match = re.search(r"version\s+(\d+\.\d+\.\d+)", res.stdout)
                 self._set_health("cloudflared", f"v{match.group(1)} ✓" if match else "OK", "success")
-            else:
-                self._set_health("cloudflared", "Broken ⚠", "danger")
-        except Exception:
-            self._set_health("cloudflared", "Broken ⚠", "danger")
+            else: self._set_health("cloudflared", "Broken ⚠", "danger")
+        except Exception: self._set_health("cloudflared", "Broken ⚠", "danger")
 
     def _offer_cloudflared_install(self):
-        if messagebox.askyesno("Cloudflared Missing", "Cloudflared is required. Download and install it now?", parent=self):
+        if QMessageBox.question(self, "Cloudflared Missing", "Cloudflared is required. Download and install it now?") == QMessageBox.Yes:
             threading.Thread(target=self._download_and_install_cloudflared, daemon=True).start()
 
     def _download_and_install_cloudflared(self):
         os.makedirs(EXE_DIR, exist_ok=True)
         msi_path = os.path.join(EXE_DIR, "cloudflared-windows-amd64.msi")
-        msi_url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi"
         try:
             self.log("Downloading Cloudflared... please wait.", "INFO")
-            urllib.request.urlretrieve(msi_url, msi_path)
-            self.log("Installing Cloudflared completely silently in background...", "WARNING")
+            urllib.request.urlretrieve("https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi", msi_path)
+            self.log("Installing Cloudflared completely silently...", "WARNING")
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             subprocess.run(["msiexec.exe", "/i", msi_path, "/quiet", "/norestart"], check=True, creationflags=flags)
             self.log("Cloudflared installation successful.", "SUCCESS", speak_text="Cloudflared installed successfully.")
@@ -798,17 +738,15 @@ class LauncherApp(ttk.Window):
             except Exception: pass 
             self.cached_cf_path = None 
             self.gui_queue.put(("prompt_cf_token", None))
-        except Exception as e:
-            self.log(f"Cloudflared installation failed: {e}", "ERROR", speak_text="Warning. Cloudflared installation failed.")
+        except Exception as e: self.log(f"Cloudflared installation failed: {e}", "ERROR", speak_text="Warning. Cloudflared installation failed.")
 
     def _prompt_and_install_cf_service(self):
-        token = simpledialog.askstring("Cloudflare Tunnel", "Enter your Cloudflare tunnel secret key to bind the service:", parent=self)
-        if token:
+        token, ok = QInputDialog.getText(self, "Cloudflare Tunnel", "Enter your Cloudflare tunnel secret key to bind the service:")
+        if ok and token:
             self.log("Installing background service...", "INFO")
             threading.Thread(target=self._install_cf_service_thread, args=(token.strip(),), daemon=True).start()
         else:
             self.log("Setup skipped. Tunnel will not auto-start.", "WARNING")
-            self.check_system_health() 
 
     def _install_cf_service_thread(self, token):
         try:
@@ -816,20 +754,13 @@ class LauncherApp(ttk.Window):
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
             subprocess.run([cf_exe, "service", "uninstall"], capture_output=True, creationflags=flags)
             proc = subprocess.run([cf_exe, "service", "install", token], capture_output=True, text=True, creationflags=flags)
-            if proc.returncode == 0:
-                self.log("Tunnel service bound successfully. It will now run in the background.", "SUCCESS", speak_text="Tunnel service successfully bound.")
-            else:
-                self.log(f"Cloudflared rejected the token: {proc.stderr.strip() or proc.stdout.strip()}", "ERROR")
-        except Exception as e:
-            self.log(f"Service install crashed: {e}", "ERROR")
-        finally:
-            self.check_system_health()
+            if proc.returncode == 0: self.log("Tunnel service bound successfully.", "SUCCESS", speak_text="Tunnel service successfully bound.")
+            else: self.log(f"Cloudflared rejected the token: {proc.stderr.strip() or proc.stdout.strip()}", "ERROR")
+        except Exception as e: self.log(f"Service install crashed: {e}", "ERROR")
+        finally: self.check_system_health()
 
-    # --------------------------------------------------------------------------
-    # PYTHON MANAGEMENT
-    # --------------------------------------------------------------------------
     def _offer_python_install(self):
-        if messagebox.askyesno("Python Update Required", "Your Python version is too old. Download and install Python 3.14.6?", parent=self):
+        if QMessageBox.question(self, "Python Update Required", "Your Python version is too old. Download and install Python 3.14.6?") == QMessageBox.Yes:
             threading.Thread(target=self._download_and_install_python, daemon=True).start()
 
     def _download_and_install_python(self):
@@ -845,8 +776,7 @@ class LauncherApp(ttk.Window):
             try: os.remove(py_path) 
             except Exception: pass
             self.gui_queue.put(("python_done", None))
-        except Exception as e:
-            self.log(f"Python installation failed: {e}", "ERROR")
+        except Exception as e: self.log(f"Python installation failed: {e}", "ERROR")
 
     # --------------------------------------------------------------------------
     # TOOL PROCESS MANAGEMENT
@@ -863,21 +793,13 @@ class LauncherApp(ttk.Window):
         try:
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
-            # Passing a unique tool ID that the child script can optionally read to split its taskbar icon
             env["EVENTHUB_TOOL_ID"] = f"EventHub.Tool.{key}" 
             
             proc = subprocess.Popen(
                 [sys.executable, script_path], 
-                cwd=APP_DIR,
-                stdout=subprocess.PIPE, 
-                stderr=subprocess.STDOUT, 
-                stdin=subprocess.DEVNULL,
-                text=True,
-                encoding='utf-8',       
-                errors='replace',       
-                bufsize=1,              
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                env=env
+                cwd=APP_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                text=True, encoding='utf-8', errors='replace', bufsize=1,              
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, env=env
             )
             self.processes[key] = proc
             safe_name = tool['label'].replace('Terminal', '').replace('Manager', '')
@@ -895,10 +817,8 @@ class LauncherApp(ttk.Window):
                     if clean_line:
                         clean_line = re.sub(r'\x1b\[[0-9;]*m', '', clean_line)
                         self.log(f"[{tool_name}] {clean_line}", "TOOL")
-        except ValueError:
-            pass 
-        except Exception as e:
-            self.log(f"[{tool_name}] Log stream interrupted: {e}", "WARNING")
+        except ValueError: pass 
+        except Exception as e: self.log(f"[{tool_name}] Log stream interrupted: {e}", "WARNING")
         finally:
             if proc.stdout: proc.stdout.close()
 
@@ -907,10 +827,8 @@ class LauncherApp(ttk.Window):
         proc = self.processes.get(key)
         if proc and proc.poll() is None:
             try:
-                if os.name == "nt":
-                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    proc.terminate()
+                if os.name == "nt": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else: proc.terminate()
             except Exception: pass
             
             safe_name = tool['label'].replace('Terminal', '').replace('Manager', '')
@@ -919,8 +837,7 @@ class LauncherApp(ttk.Window):
 
     def stop_all_tools(self):
         count = sum(1 for key in list(self.processes.keys()) if self.processes[key].poll() is None and not self.stop_tool(next(t for t in TOOLS if t["key"] == key)))
-        if count:
-            self.log(f"Terminated {count} active tools.", "INFO", speak_text="All active tools terminated.")
+        if count: self.log(f"Terminated {count} active tools.", "INFO", speak_text="All active tools terminated.")
 
     def _set_tool_status(self, key, running):
         widgets = self.tool_widgets.get(key)
@@ -928,13 +845,23 @@ class LauncherApp(ttk.Window):
         if not widgets or not tool: return
 
         if running:
-            color = getattr(self.style.colors, "success", "#4CD37E")
-            widgets["status"].configure(text="🟢 RUNNING")
-            self._animate_pulse(widgets["status"], "foreground", color)
-            widgets["button"].configure(text="Stop", bootstyle=DANGER, command=lambda t=tool: self.stop_tool(t))
+            widgets["status"].setText("🟢 RUNNING")
+            widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: white;")
+            QTimer.singleShot(150, lambda: widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: #2ecc71;") if widgets["status"] else None)
+            
+            widgets["button"].setText("Stop")
+            widgets["button"].setStyleSheet(self._get_button_style("danger"))
+            try: widgets["button"].clicked.disconnect()
+            except Exception: pass
+            widgets["button"].clicked.connect(lambda checked=False, t=tool: self.stop_tool(t))
         else:
-            widgets["status"].configure(text="⚫ IDLE", foreground="gray")
-            widgets["button"].configure(text="Launch Tool", bootstyle=tool["bootstyle"], command=lambda t=tool: self.launch_tool(t))
+            widgets["status"].setText("⚫ IDLE")
+            widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
+            widgets["button"].setText("Launch Tool")
+            widgets["button"].setStyleSheet(self._get_button_style(tool["bootstyle"]))
+            try: widgets["button"].clicked.disconnect()
+            except Exception: pass
+            widgets["button"].clicked.connect(lambda checked=False, t=tool: self.launch_tool(t))
 
     def _poll_processes(self):
         for key in list(self.processes.keys()):
@@ -945,7 +872,6 @@ class LauncherApp(ttk.Window):
                 self.log(f"Tool exited unexpectedly: {tool['label']} (Code {proc.returncode})", "ERROR", speak_text=f"Warning. {safe_name} crashed.")
                 del self.processes[key]
                 self._set_tool_status(key, running=False)
-        self.after(2000, self._poll_processes)
 
     # --------------------------------------------------------------------------
     # UTILS & SHUTDOWN
@@ -956,25 +882,25 @@ class LauncherApp(ttk.Window):
             if os.name == "nt": os.startfile(path)
             elif sys.platform == "darwin": subprocess.Popen(["open", path])
             else: subprocess.Popen(["xdg-open", path])
-        except Exception as e:
-            self.log(f"Failed to open folder: {e}", "ERROR")
+        except Exception as e: self.log(f"Failed to open folder: {e}", "ERROR")
 
-    def on_close(self):
+    def closeEvent(self, event):
         active = [k for k, p in self.processes.items() if p.poll() is None]
-        if active and not messagebox.askyesno("Exit Launcher", f"{len(active)} tools are running invisibly.\n\nExit and shut them down?", parent=self):
-            return
+        if active:
+            reply = QMessageBox.question(self, "Exit Launcher", f"{len(active)} tools are running invisibly.\n\nExit and shut them down?")
+            if reply == QMessageBox.No:
+                event.ignore()
+                return
         self.stop_all_tools()
-        self.destroy()
+        event.accept()
 
 if __name__ == "__main__":
-    # PREVENT TASKBAR MERGING: Give the Launcher its own unique Application ID
     if os.name == 'nt':
-        try:
-            my_app_id = 'EventHub.Portable.CentralLauncher.1.0'
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
-        except Exception:
-            pass
+        try: ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('EventHub.Portable.CentralLauncher.1.0')
+        except Exception: pass
             
-    app = LauncherApp()
-    app.protocol("WM_DELETE_WINDOW", app.on_close)
-    app.mainloop()
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion") 
+    launcher = LauncherApp()
+    launcher.show()
+    sys.exit(app.exec())
