@@ -26,7 +26,7 @@ import html
 import sys
 from datetime import datetime, timezone, timedelta
 
-# --- High-DPI Environment Flags ---
+# --- High-DPI Environment Flags (Must be set before QApplication) ---
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
@@ -164,8 +164,9 @@ def _telemetry_worker():
             if last_io and current_io:
                 elapsed = current_time - last_time
                 if elapsed > 0:
-                    dl_mbps = ((current_io.bytes_recv - last_io.bytes_recv) * 8 / 1_000_000) / elapsed
-                    ul_mbps = ((current_io.bytes_sent - last_io.bytes_sent) * 8 / 1_000_000) / elapsed
+                    # Divides by 1,048,576 to explicitly calculate True Megabytes (MB/s)
+                    dl_mbps = ((current_io.bytes_recv - last_io.bytes_recv) / 1048576) / elapsed
+                    ul_mbps = ((current_io.bytes_sent - last_io.bytes_sent) / 1048576) / elapsed
                     total_mbps = dl_mbps + ul_mbps
                 dl_mb = current_io.bytes_recv / 1048576
                 ul_mb = current_io.bytes_sent / 1048576
@@ -1017,7 +1018,7 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
-# Healthcheck must accept GET for system pinger to work!
+# Healthcheck must accept GET for system pinger to work properly
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     if request.method == 'GET':
@@ -1248,9 +1249,10 @@ class SpeedometerGauge(QWidget):
         self.target_val = float(val)
 
     def tick(self):
-        # Allow instant drops or rises without heavy lagging
-        if abs(self.target_val - self.current_val) > 0.1:
-            self.current_val += (self.target_val - self.current_val) * 0.15
+        diff = self.target_val - self.current_val
+        if abs(diff) > 0.05:
+            # Accelerated 0.3 convergence avoids floating lag 
+            self.current_val += diff * 0.30 
             self.update()
         elif self.current_val != self.target_val:
             self.current_val = self.target_val
@@ -1271,7 +1273,6 @@ class SpeedometerGauge(QWidget):
 
         ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
         
-        # Determine Dynamic Color based on load ratio
         if self.good_is_high:
             if ratio < 0.1: dynamic_color = QColor("#858585") # Idle
             elif ratio < 0.6: dynamic_color = QColor("#D7BA7D") # Yellow
@@ -1281,12 +1282,12 @@ class SpeedometerGauge(QWidget):
             elif ratio < 0.85: dynamic_color = QColor("#D7BA7D") # Yellow
             else: dynamic_color = QColor("#F44747") # Red
 
-        # Dotted Background Track
+        # Dotted Background
         pen_bg = QPen(QColor("#333333"), arc_width, Qt.DotLine, Qt.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(arc_rect, 200 * 16, -220 * 16)
 
-        # Active Solid Foreground Track
+        # Active Solid Track
         active_span = -int(220 * ratio * 16)
         pen_fg = QPen(dynamic_color, arc_width, Qt.SolidLine, Qt.RoundCap)
         painter.setPen(pen_fg)
@@ -1297,7 +1298,7 @@ class SpeedometerGauge(QWidget):
         font_size = max(9, int(diameter * 0.23))
         painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
         
-        # Display explicit float formatting if it's Network or API ms.
+        # Keep perfect float accuracy for Network MB/s and low latency ms
         if "MB" in self.unit or self.max_val <= 10.0:
             val_text = f"{self.current_val:.1f}"
         else: 
@@ -1328,7 +1329,11 @@ class ServerHub(QMainWindow):
         self.resize(1300, 780)
         self.setMinimumSize(960, 580)
         
-        # Unified Responsive, Interactive CSS Stylesheet
+        # Load Application Icon if available
+        app_icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
+        if os.path.exists(app_icon_path):
+            self.setWindowIcon(QIcon(app_icon_path))
+        
         self.setStyleSheet("""
             QMainWindow, QWidget { 
                 background-color: #161618; 
@@ -1352,7 +1357,6 @@ class ServerHub(QMainWindow):
                 font-weight: bold; 
                 font-size: 11px;
             }
-            /* Universal Button Styles */
             QPushButton { 
                 background-color: #2D2D30; 
                 color: #FFF; 
@@ -1366,7 +1370,6 @@ class ServerHub(QMainWindow):
             QPushButton:pressed { background-color: #1E1E22; border-color: #4EC9B0; }
             QPushButton:disabled { background-color: #161618; color: #555555; border-color: #2A2A2C; }
             
-            /* ID-Specific Colorful Sidebar Buttons */
             QPushButton#btnStartEngine { background-color: #107C41; color: white; border: 1px solid #107C41; }
             QPushButton#btnStartEngine:hover { background-color: #0c5e31; }
             QPushButton#btnStartEngine:pressed { background-color: #084021; }
@@ -1387,7 +1390,7 @@ class ServerHub(QMainWindow):
             QPushButton#btnWhatsApp:hover { background-color: #0c5e31; }
             QPushButton#btnWhatsApp:pressed { background-color: #084021; }
 
-            /* Test Mode Form Inputs - Fixed Dropdown Visibility */
+            /* Fix ComboBox UI dropdown bug */
             QComboBox {
                 background-color: #2D2D30;
                 color: #FFFFFF;
@@ -1396,19 +1399,18 @@ class ServerHub(QMainWindow):
                 padding: 4px 8px;
                 font-size: 11px;
             }
-            QComboBox:disabled { background-color: #1C1C1E; color: #555555; }
-            QComboBox::drop-down { border-left: 1px solid #3E3E42; width: 20px; }
+            QComboBox:disabled { background-color: #1C1C1E; color: #555555; border-color: #2D2D30; }
             QComboBox QAbstractItemView {
                 background-color: #252528;
                 color: #FFFFFF;
                 border: 1px solid #3E3E42;
                 selection-background-color: #094771;
             }
+            
             QCheckBox { color: #D4D4D4; font-size: 11px; font-weight: bold; }
             QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #3E3E42; border-radius: 3px; background-color: #1C1C1E; }
-            QCheckBox::indicator:checked { background-color: #4EC9B0; border: 1px solid #4EC9B0; }
+            QCheckBox::indicator:checked { background-color: #4EC9B0; border: 1px solid #4EC9B0; image: url(none); }
 
-            /* Table Styles */
             QTableWidget { 
                 background-color: #19191B; 
                 gridline-color: #28282B; 
@@ -1428,9 +1430,8 @@ class ServerHub(QMainWindow):
                 font-size: 11px;
             }
             
-            /* Log Area Styles */
             QPlainTextEdit { 
-                background-color: #141416; 
+                background-color: #0D0D0F; 
                 color: #D4D4D4; 
                 font-family: 'Consolas', monospace; 
                 font-size: 8pt; 
@@ -1484,7 +1485,7 @@ class ServerHub(QMainWindow):
         # High-performance Qt Timers
         self.timer_gui_queue = QTimer(self)
         self.timer_gui_queue.timeout.connect(self.process_gui_queue)
-        self.timer_gui_queue.start(10) # 10ms processing cap prevents freezes
+        self.timer_gui_queue.start(10) 
         
         self.timer_log_flush = QTimer(self)
         self.timer_log_flush.timeout.connect(self.flush_log_buffers)
@@ -1492,7 +1493,7 @@ class ServerHub(QMainWindow):
         
         self.timer_anim = QTimer(self)
         self.timer_anim.timeout.connect(self.animation_loop)
-        self.timer_anim.start(16) # Smooth 60FPS gauges
+        self.timer_anim.start(16) 
         
         self.timer_hw = QTimer(self)
         self.timer_hw.timeout.connect(self.refresh_hw_meters)
@@ -1962,7 +1963,7 @@ class ServerHub(QMainWindow):
         # --- LEFT SIDEBAR ---
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setFixedWidth(240)
+        sidebar_scroll.setFixedWidth(275) # Extra wide so URLs never cut off
         sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         sidebar = QWidget()
@@ -1997,6 +1998,7 @@ class ServerHub(QMainWindow):
         l_eng.addWidget(self.lbl_flask_qr); self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
         self.lbl_flask_link = QLabel("HTTPS Offline")
+        self.lbl_flask_link.setWordWrap(True) # Fixes truncation
         self.lbl_flask_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_flask_link.setAlignment(Qt.AlignCenter)
         l_eng.addWidget(self.lbl_flask_link)
         
@@ -2031,6 +2033,7 @@ class ServerHub(QMainWindow):
         l_cf.addWidget(self.lbl_cf_qr); self.update_qr(self.lbl_cf_qr, "OFFLINE")
         
         self.lbl_cf_link = QLabel("Tunnel Offline")
+        self.lbl_cf_link.setWordWrap(True) # Fixes truncation
         self.lbl_cf_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_cf_link.setAlignment(Qt.AlignCenter)
         l_cf.addWidget(self.lbl_cf_link)
         
@@ -2045,6 +2048,7 @@ class ServerHub(QMainWindow):
         l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(8, 12, 8, 8); l_test.setSpacing(6)
         
         self.chk_test = QCheckBox("Testing Mode OFF")
+        # Fixed: Use 'toggled' instead of 'stateChanged' for proper boolean logic
         self.chk_test.toggled.connect(self.toggle_test_mode)
         l_test.addWidget(self.chk_test)
         
@@ -2214,8 +2218,8 @@ class ServerHub(QMainWindow):
         log_layout.addLayout(log_h)
         main_splitter.addWidget(log_container)
         
-        # Increase the log weight significantly, per user request.
-        main_splitter.setSizes([250, 550])
+        # Huge Splitter weights to make logs massive vertically.
+        main_splitter.setSizes([200, 600])
         c_lay.addWidget(main_splitter, stretch=1)
         
         ftr = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
@@ -2272,7 +2276,6 @@ class ServerHub(QMainWindow):
                 self.mini_meter_net.subtext = "OFFLINE"
             else:
                 mbps = snap_telemetry.get("total_mbps", 0.0)
-                # Network max_val dynamic scaling
                 cap = 1000 if mbps > 100 else (100 if mbps > 10 else 10)
                 self.mini_meter_net.max_val = cap
                 self.mini_meter_net.subtext = net_type.upper()[:7]
@@ -2284,7 +2287,6 @@ class ServerHub(QMainWindow):
                     SERVER_METRICS["avg_process_ms"] = 0.0
                     SERVER_METRICS["req_count"] = 0
                 elif req_sec == 0:
-                    # Decay latency smoothly if no traffic
                     SERVER_METRICS["avg_process_ms"] *= 0.85 
                     if SERVER_METRICS["avg_process_ms"] < 0.5: SERVER_METRICS["avg_process_ms"] = 0.0
                 snap_metrics = dict(SERVER_METRICS)
