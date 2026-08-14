@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import enum
 import time
@@ -6,7 +7,6 @@ import logging
 import threading
 import queue
 from datetime import datetime, timezone
-import tkinter as tk
 import ctypes
 
 import pymysql
@@ -14,11 +14,14 @@ pymysql.install_as_MySQLdb()
 
 from supabase import create_client, Client, ClientOptions
 from sqlalchemy import create_engine
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.widgets.tooltip import ToolTip
 from sqlalchemy.orm.attributes import flag_modified
+
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                               QGridLayout, QLabel, QPushButton, QFrame, QGroupBox, QLineEdit, 
+                               QCheckBox, QComboBox, QProgressBar, QTabWidget, QTreeWidget, 
+                               QTreeWidgetItem, QDialog, QMessageBox, QScrollArea, QHeaderView)
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QPainter, QPen, QColor, QFont, QIcon, QAction
 
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
@@ -28,7 +31,7 @@ except ModuleNotFoundError:
 def global_exception_handler(exc_type, exc_value, exc_traceback):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc_type, exc_value, exc_traceback))
 
-tk.Tk.report_callback_exception = global_exception_handler
+sys.excepthook = global_exception_handler
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_DIR = os.path.join(BASE_DIR, 'config')
@@ -53,8 +56,79 @@ PUSH_BATCH_RETRIES = 3
 PULL_PAGE_RETRIES = 3
 PULL_COMMIT_BATCH_SIZE = 250
 
+# PySide6 Theme Colors Map
+COLORS = {
+    "PRIMARY": "#375a7f",
+    "INFO": "#0dcaf0",
+    "SUCCESS": "#00bc8c",
+    "WARNING": "#f39c12",
+    "DANGER": "#e74c3c",
+    "SECONDARY": "#888888",
+    "LIGHT": "#e0e0e0",
+    "DEFAULT": "transparent"
+}
+
+# ==============================================================================
+# CUSTOM SPEEDOMETER WIDGET (Theme Aware)
+# ==============================================================================
+class SpeedometerWidget(QWidget):
+    def __init__(self, parent=None, size=150):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.amountused = 100
+        self.amounttotal = 100
+        self.bootstyle_color = COLORS["SUCCESS"]
+        self.subtext = "synced"
+        self.textright = "%"
+        
+        # Theme colors
+        self.bg_arc_color = "#333333"
+        self.text_color = "#ffffff"
+        self.sub_text_color = "#888888"
+
+    def set_theme(self, is_light):
+        self.bg_arc_color = "#e9ecef" if is_light else "#333333"
+        self.text_color = "#212529" if is_light else "#ffffff"
+        self.sub_text_color = "#6c757d" if is_light else "#aaaaaa"
+        self.update()
+
+    def configure(self, amountused=None, bootstyle=None):
+        if amountused is not None:
+            self.amountused = amountused
+        if bootstyle is not None:
+            self.bootstyle_color = COLORS.get(bootstyle, bootstyle)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        padding = 10
+        rect = self.rect().adjusted(padding, padding, -padding, -padding)
+        
+        pen_bg = QPen(QColor(self.bg_arc_color), 10, Qt.SolidLine, Qt.RoundCap)
+        painter.setPen(pen_bg)
+        painter.drawArc(rect, -225 * 16, -270 * 16)
+        
+        pen_fg = QPen(QColor(self.bootstyle_color), 10, Qt.SolidLine, Qt.RoundCap)
+        painter.setPen(pen_fg)
+        ratio = max(0.0, min(1.0, self.amountused / max(1, self.amounttotal)))
+        span = int(-270 * ratio * 16)
+        painter.drawArc(rect, -225 * 16, span)
+        
+        painter.setPen(QColor(self.text_color))
+        font = QFont("Segoe UI", 22, QFont.Bold)
+        painter.setFont(font)
+        text = f"{int(self.amountused)}{self.textright}"
+        painter.drawText(self.rect(), Qt.AlignCenter, text)
+        
+        font_sub = QFont("Segoe UI", 9)
+        painter.setFont(font_sub)
+        painter.setPen(QColor(self.sub_text_color))
+        painter.drawText(self.rect().adjusted(0, 30, 0, 0), Qt.AlignCenter, self.subtext)
+
 class AnimatedMeter:
-    def __init__(self, meter_widget):
+    def __init__(self, meter_widget: SpeedometerWidget):
         self.meter = meter_widget
         self.current_val = 0.0
         self.target_val = 0.0
@@ -70,6 +144,9 @@ class AnimatedMeter:
             self.current_val = self.target_val
         self.meter.configure(amountused=int(round(self.current_val)))
 
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
 def _build_portal_key_map():
     mapping = {}
     for iso_day in EVENT_DAYS:
@@ -143,7 +220,7 @@ def _with_retries(fn, attempts=3, base_delay=1.5, on_retry=None):
                 time.sleep(base_delay * attempt)
     raise last_exc
 
-class TkinterLogHandler(logging.Handler):
+class QtLogHandler(logging.Handler):
     def __init__(self, gui_queue, treeview):
         super().__init__()
         self.gui_queue = gui_queue
@@ -153,15 +230,18 @@ class TkinterLogHandler(logging.Handler):
         try: msg = self.format(record)
         except Exception: msg = record.getMessage()
         time_str = datetime.fromtimestamp(record.created).strftime('%H:%M:%S')
-        tag = 'info'
-        if record.levelno >= logging.ERROR: tag = 'error'
-        elif record.levelno >= logging.WARNING: tag = 'warning'
-        self.gui_queue.put(lambda: self._insert_log(time_str, record.levelname, msg, tag))
+        level = record.levelname
+        self.gui_queue.put(lambda: self._insert_log(time_str, level, msg))
 
-    def _insert_log(self, time_str, level, msg, tag):
+    def _insert_log(self, time_str, level, msg):
         try:
-            self.treeview.insert('', END, values=(time_str, level, msg), tags=(tag,))
-            self.treeview.yview_moveto(1)
+            item = QTreeWidgetItem(self.treeview, [time_str, level, msg])
+            if level in ["WARNING", "ERROR"]:
+                color = COLORS["WARNING"] if level == "WARNING" else COLORS["DANGER"]
+                item.setForeground(0, QColor(color))
+                item.setForeground(1, QColor(color))
+                item.setForeground(2, QColor(color))
+            self.treeview.scrollToBottom()
         except Exception: pass
 
 logging.basicConfig(
@@ -225,6 +305,9 @@ def _compute_sync_health(stats):
     healthy = max(total - problem, 0)
     return round((healthy / total) * 100)
 
+# ==============================================================================
+# SYNC MANAGER (Core Logic)
+# ==============================================================================
 class SyncManager:
     def __init__(self):
         self.SessionMySQL = None
@@ -710,13 +793,14 @@ class SyncManager:
             mysql_session.close()
             if sqlite_session: sqlite_session.close()
 
-class ConfigDialog(ttk.Toplevel):
-    def __init__(self, parent):
-        super().__init__()
-        self.title("Configure Databases")
-        self.transient(parent)
-        self.geometry("560x720")
-        self.position_center()
+# ==============================================================================
+# PYSIDE6 UI CLASSES
+# ==============================================================================
+class ConfigDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Databases")
+        self.resize(560, 720)
         self.secrets = {}
         if os.path.exists(SECRETS_PATH):
             try:
@@ -727,76 +811,124 @@ class ConfigDialog(ttk.Toplevel):
             try:
                 with open(SCHEMA_PATH, 'r') as f: self.schema = json.load(f)
             except Exception: pass
-        outer = ttk.Frame(self, padding=25)
-        outer.pack(fill=BOTH, expand=True)
-        ttk.Label(outer, text="Configure Databases", font="-size 16 -weight bold").pack(anchor=W)
-        ttk.Label(outer, text="Run this once per machine — it writes config/secrets.json and config/schema.json.", bootstyle=SECONDARY, font="-size 9").pack(anchor=W, pady=(0, 15))
-        sb_card = ttk.Labelframe(outer, text=" Supabase Cloud ", padding=15)
-        sb_card.pack(fill=X, pady=(0, 15))
-        self.ent_sb_url = self._make_input(sb_card, "SUPABASE_URL", self.secrets.get("SUPABASE_URL", ""))
-        self.ent_sb_key = self._make_input(sb_card, "SUPABASE_KEY", self.secrets.get("SUPABASE_KEY", ""), show="*")
-        sb_test_row = ttk.Frame(sb_card)
-        sb_test_row.pack(fill=X, pady=(4, 0))
-        ttk.Button(sb_test_row, text="Test Connection", bootstyle="outline-info", command=self.test_supabase).pack(side=LEFT)
-        self.lbl_sb_test = ttk.Label(sb_test_row, text="")
-        self.lbl_sb_test.pack(side=LEFT, padx=10)
-        my_card = ttk.Labelframe(outer, text=" MySQL (Local Hub) ", padding=15)
-        my_card.pack(fill=X, pady=(0, 15))
-        my_conf = self.schema.get("mysql", {})
-        self.ent_my_host = self._make_input(my_card, "Host", my_conf.get("host", "localhost"))
-        self.ent_my_user = self._make_input(my_card, "User", my_conf.get("user", "root"))
-        self.ent_my_pass = self._make_input(my_card, "Password", my_conf.get("password", ""), show="*")
-        self.ent_my_db = self._make_input(my_card, "Database", my_conf.get("database", "eventhub_db"))
-        my_test_row = ttk.Frame(my_card)
-        my_test_row.pack(fill=X, pady=(4, 0))
-        ttk.Button(my_test_row, text="Test Connection", bootstyle="outline-info", command=self.test_mysql).pack(side=LEFT)
-        self.lbl_my_test = ttk.Label(my_test_row, text="")
-        self.lbl_my_test.pack(side=LEFT, padx=10)
-        btn_frame = ttk.Frame(outer)
-        btn_frame.pack(fill=X, pady=(10, 0), side=BOTTOM)
-        ttk.Button(btn_frame, text="Save Settings", bootstyle=SUCCESS, command=self.save).pack(side=RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(side=RIGHT)
 
-    def _make_input(self, parent, label, default, show=None):
-        row = ttk.Frame(parent)
-        row.pack(fill=X, pady=3)
-        ttk.Label(row, text=label, width=15).pack(side=LEFT)
-        ent = ttk.Entry(row, show=show or "")
-        ent.insert(0, default)
-        ent.pack(side=LEFT, fill=X, expand=True)
-        if show:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(25, 25, 25, 25)
+        
+        lbl_title = QLabel("Configure Databases")
+        lbl_title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        layout.addWidget(lbl_title)
+        
+        lbl_sub = QLabel("Run this once per machine — it writes config/secrets.json and config/schema.json.")
+        lbl_sub.setObjectName("SubText")
+        layout.addWidget(lbl_sub)
+        
+        layout.addSpacing(15)
+
+        sb_card = QGroupBox(" Supabase Cloud ")
+        sb_layout = QVBoxLayout(sb_card)
+        self.ent_sb_url = self._make_input(sb_layout, "SUPABASE_URL", self.secrets.get("SUPABASE_URL", ""))
+        self.ent_sb_key, sb_toggle = self._make_input(sb_layout, "SUPABASE_KEY", self.secrets.get("SUPABASE_KEY", ""), is_password=True)
+        
+        sb_test_row = QHBoxLayout()
+        btn_test_sb = QPushButton("Test Connection")
+        btn_test_sb.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['INFO']}; color: {COLORS['INFO']}; background: transparent; border-radius: 4px; padding: 4px 8px; }} QPushButton:hover {{ background-color: {COLORS['INFO']}; color: white; }}")
+        btn_test_sb.clicked.connect(self.test_supabase)
+        self.lbl_sb_test = QLabel("")
+        sb_test_row.addWidget(btn_test_sb)
+        sb_test_row.addWidget(self.lbl_sb_test)
+        sb_test_row.addStretch()
+        sb_layout.addLayout(sb_test_row)
+        layout.addWidget(sb_card)
+
+        my_card = QGroupBox(" MySQL (Local Hub) ")
+        my_layout = QVBoxLayout(my_card)
+        my_conf = self.schema.get("mysql", {})
+        self.ent_my_host = self._make_input(my_layout, "Host", my_conf.get("host", "localhost"))
+        self.ent_my_user = self._make_input(my_layout, "User", my_conf.get("user", "root"))
+        self.ent_my_pass, my_toggle = self._make_input(my_layout, "Password", my_conf.get("password", ""), is_password=True)
+        self.ent_my_db = self._make_input(my_layout, "Database", my_conf.get("database", "eventhub_db"))
+        
+        my_test_row = QHBoxLayout()
+        btn_test_my = QPushButton("Test Connection")
+        btn_test_my.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['INFO']}; color: {COLORS['INFO']}; background: transparent; border-radius: 4px; padding: 4px 8px; }} QPushButton:hover {{ background-color: {COLORS['INFO']}; color: white; }}")
+        btn_test_my.clicked.connect(self.test_mysql)
+        self.lbl_my_test = QLabel("")
+        my_test_row.addWidget(btn_test_my)
+        my_test_row.addWidget(self.lbl_my_test)
+        my_test_row.addStretch()
+        my_layout.addLayout(my_test_row)
+        layout.addWidget(my_card)
+        
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        btn_save = QPushButton("Save Settings")
+        btn_save.setStyleSheet(f"QPushButton {{ background-color: {COLORS['SUCCESS']}; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background-color: #009670; }}")
+        btn_save.clicked.connect(self.save)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_save)
+        layout.addLayout(btn_row)
+
+    def _make_input(self, parent_layout, label_text, default, is_password=False):
+        row = QHBoxLayout()
+        lbl = QLabel(label_text)
+        lbl.setFixedWidth(120)
+        ent = QLineEdit(default)
+        row.addWidget(lbl)
+        row.addWidget(ent)
+        
+        btn_toggle = None
+        if is_password:
+            ent.setEchoMode(QLineEdit.Password)
+            btn_toggle = QPushButton("Show")
+            btn_toggle.setFixedWidth(60)
+            btn_toggle.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['SECONDARY']}; background: transparent; border-radius: 4px; padding: 4px; }} QPushButton:hover {{ background-color: {COLORS['SECONDARY']}; color: white; }}")
             def toggle():
-                if ent.cget('show') == '':
-                    ent.configure(show=show); toggle_btn.configure(text="Show")
+                if ent.echoMode() == QLineEdit.Password:
+                    ent.setEchoMode(QLineEdit.Normal)
+                    btn_toggle.setText("Hide")
                 else:
-                    ent.configure(show=''); toggle_btn.configure(text="Hide")
-            toggle_btn = ttk.Button(row, text="Show", bootstyle="outline-secondary", width=5, command=toggle)
-            toggle_btn.pack(side=LEFT, padx=(5, 0))
-        return ent
+                    ent.setEchoMode(QLineEdit.Password)
+                    btn_toggle.setText("Show")
+            btn_toggle.clicked.connect(toggle)
+            row.addWidget(btn_toggle)
+            
+        parent_layout.addLayout(row)
+        return ent if not is_password else (ent, btn_toggle)
 
     def test_supabase(self):
-        url, key = self.ent_sb_url.get().strip(), self.ent_sb_key.get().strip()
+        url, key = self.ent_sb_url.text().strip(), self.ent_sb_key.text().strip()
         if not url or not key:
-            self.lbl_sb_test.configure(text="Enter URL and key first.", bootstyle=WARNING)
+            self.lbl_sb_test.setText("Enter URL and key first.")
+            self.lbl_sb_test.setStyleSheet(f"color: {COLORS['WARNING']};")
             return
-        self.lbl_sb_test.configure(text="Testing...", bootstyle=SECONDARY)
+        self.lbl_sb_test.setText("Testing...")
+        self.lbl_sb_test.setStyleSheet(f"color: {COLORS['SECONDARY']};")
         threading.Thread(target=self._test_supabase_thread, args=(url, key), daemon=True).start()
 
     def _test_supabase_thread(self, url, key):
         try:
             client = create_client(url, key)
             client.table('attendees').select('id').limit(1).execute()
-            self.after(0, lambda: self.lbl_sb_test.configure(text="Connected successfully.", bootstyle=SUCCESS))
+            QTimer.singleShot(0, lambda: self.lbl_sb_test.setStyleSheet(f"color: {COLORS['SUCCESS']};"))
+            QTimer.singleShot(0, lambda: self.lbl_sb_test.setText("Connected successfully."))
         except Exception as e:
             err = str(e)[:70]
-            self.after(0, lambda: self.lbl_sb_test.configure(text=f"Failed: {err}", bootstyle=DANGER))
+            QTimer.singleShot(0, lambda: self.lbl_sb_test.setStyleSheet(f"color: {COLORS['DANGER']};"))
+            QTimer.singleShot(0, lambda: self.lbl_sb_test.setText(f"Failed: {err}"))
 
     def test_mysql(self):
-        host, user, password, db = self.ent_my_host.get().strip(), self.ent_my_user.get().strip(), self.ent_my_pass.get().strip(), self.ent_my_db.get().strip()
+        host, user, password, db = self.ent_my_host.text().strip(), self.ent_my_user.text().strip(), self.ent_my_pass.text().strip(), self.ent_my_db.text().strip()
         if not host or not user or not db:
-            self.lbl_my_test.configure(text="Enter host, user, and database first.", bootstyle=WARNING)
+            self.lbl_my_test.setText("Enter host, user, and database first.")
+            self.lbl_my_test.setStyleSheet(f"color: {COLORS['WARNING']};")
             return
-        self.lbl_my_test.configure(text="Testing...", bootstyle=SECONDARY)
+        self.lbl_my_test.setText("Testing...")
+        self.lbl_my_test.setStyleSheet(f"color: {COLORS['SECONDARY']};")
         threading.Thread(target=self._test_mysql_thread, args=(host, user, password, db), daemon=True).start()
 
     def _test_mysql_thread(self, host, user, password, db):
@@ -804,129 +936,218 @@ class ConfigDialog(ttk.Toplevel):
             url = f"mysql+mysqldb://{user}:{password}@{host}:3306/{db}"
             engine = create_engine(url, pool_size=10, max_overflow=20, pool_pre_ping=True, connect_args={"connect_timeout": 5})
             with engine.connect(): pass
-            self.after(0, lambda: self.lbl_my_test.configure(text="Connected successfully.", bootstyle=SUCCESS))
+            QTimer.singleShot(0, lambda: self.lbl_my_test.setStyleSheet(f"color: {COLORS['SUCCESS']};"))
+            QTimer.singleShot(0, lambda: self.lbl_my_test.setText("Connected successfully."))
         except Exception as e:
             err = str(e)[:70]
-            self.after(0, lambda: self.lbl_my_test.configure(text=f"Failed: {err}", bootstyle=DANGER))
+            QTimer.singleShot(0, lambda: self.lbl_my_test.setStyleSheet(f"color: {COLORS['DANGER']};"))
+            QTimer.singleShot(0, lambda: self.lbl_my_test.setText(f"Failed: {err}"))
 
     def save(self):
         try:
-            with open(SECRETS_PATH, 'w') as f: json.dump({"SUPABASE_URL": self.ent_sb_url.get().strip(), "SUPABASE_KEY": self.ent_sb_key.get().strip()}, f, indent=4)
+            with open(SECRETS_PATH, 'w') as f: json.dump({"SUPABASE_URL": self.ent_sb_url.text().strip(), "SUPABASE_KEY": self.ent_sb_key.text().strip()}, f, indent=4)
             self.schema.setdefault("mysql", {}); self.schema.setdefault("sqlite", {})
-            self.schema["mysql"].update({"host": self.ent_my_host.get().strip(), "user": self.ent_my_user.get().strip(), "password": self.ent_my_pass.get().strip(), "database": self.ent_my_db.get().strip(), "port": self.schema["mysql"].get("port", 3306), "enabled": True})
+            self.schema["mysql"].update({"host": self.ent_my_host.text().strip(), "user": self.ent_my_user.text().strip(), "password": self.ent_my_pass.text().strip(), "database": self.ent_my_db.text().strip(), "port": self.schema["mysql"].get("port", 3306), "enabled": True})
             self.schema["sqlite"].update({"enabled": True, "folder_name": self.schema["sqlite"].get("folder_name", "db"), "file_name": self.schema["sqlite"].get("file_name", "eventhub_local.db")})
             with open(SCHEMA_PATH, 'w') as f: json.dump(self.schema, f, indent=4)
         except Exception as e:
-            Messagebox.show_warning(f"Couldn't save settings: {e}", "Save Failed", parent=self)
+            QMessageBox.warning(self, "Save Failed", f"Couldn't save settings: {e}")
             return
-        Messagebox.show_info("Settings saved. Re-initializing local connections.", "Saved", parent=self)
-        self.master.reinitialize_manager()
-        self.destroy()
+        QMessageBox.information(self, "Saved", "Settings saved. Re-initializing local connections.")
+        if self.parent(): self.parent().reinitialize_manager()
+        self.accept()
 
-class ConflictDetailDialog(ttk.Toplevel):
+class ConflictDetailDialog(QDialog):
     def __init__(self, parent, conflict, on_resolve):
-        super().__init__()
-        self.title(f"Conflict — {conflict.get('attendee_id', '')}")
-        self.transient(parent)
-        self.geometry("660x520")
-        self.position_center()
+        super().__init__(parent)
+        self.setWindowTitle(f"Conflict — {conflict.get('attendee_id', '')}")
+        self.resize(660, 520)
         self.on_resolve = on_resolve
         self.conflict_id = conflict["id"]
-        frame = ttk.Frame(self, padding=22)
-        frame.pack(fill=BOTH, expand=True)
-        ttk.Label(frame, text=conflict.get("full_name", "Unknown"), font="-size 15 -weight bold").pack(anchor=W)
-        ttk.Label(frame, text=f"Attendee ID: {conflict.get('attendee_id', '')}", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 6))
-        ttk.Label(frame, text=f"Local last changed {_fmt_dt(conflict['local_updated_at'])}   ·   Cloud last changed {_fmt_dt(conflict['cloud_updated_at'])}", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 16))
-        ttk.Separator(frame).pack(fill=X, pady=(0, 10))
-        header_row = ttk.Frame(frame)
-        header_row.pack(fill=X)
-        ttk.Label(header_row, text="FIELD", width=18, font="-weight bold").pack(side=LEFT)
-        ttk.Label(header_row, text="LOCAL", width=24, font="-weight bold", bootstyle=SUCCESS).pack(side=LEFT)
-        ttk.Label(header_row, text="CLOUD", width=24, font="-weight bold", bootstyle=INFO).pack(side=LEFT)
-        rows_frame = ttk.Frame(frame)
-        rows_frame.pack(fill=BOTH, expand=True, pady=(6, 16))
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        
+        lbl_name = QLabel(conflict.get("full_name", "Unknown"))
+        lbl_name.setFont(QFont("Segoe UI", 15, QFont.Bold))
+        layout.addWidget(lbl_name)
+        
+        lbl_id = QLabel(f"Attendee ID: {conflict.get('attendee_id', '')}")
+        lbl_id.setObjectName("SubText")
+        layout.addWidget(lbl_id)
+        
+        lbl_time = QLabel(f"Local last changed {_fmt_dt(conflict['local_updated_at'])}   ·   Cloud last changed {_fmt_dt(conflict['cloud_updated_at'])}")
+        lbl_time.setObjectName("SubText")
+        layout.addWidget(lbl_time)
+        
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setObjectName("DividerLine")
+        layout.addWidget(line)
+        layout.addSpacing(10)
+        
+        header_row = QHBoxLayout()
+        h1 = QLabel("FIELD"); h1.setFixedWidth(140); h1.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        h2 = QLabel("LOCAL"); h2.setFixedWidth(190); h2.setFont(QFont("Segoe UI", 10, QFont.Bold)); h2.setStyleSheet(f"color: {COLORS['SUCCESS']};")
+        h3 = QLabel("CLOUD"); h3.setFixedWidth(190); h3.setFont(QFont("Segoe UI", 10, QFont.Bold)); h3.setStyleSheet(f"color: {COLORS['INFO']};")
+        header_row.addWidget(h1); header_row.addWidget(h2); header_row.addWidget(h3); header_row.addStretch()
+        layout.addLayout(header_row)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        rows_layout = QVBoxLayout(scroll_content)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        
         diff_fields = conflict.get("diff_fields", {})
         for i, (field, values) in enumerate(diff_fields.items()):
-            row = ttk.Frame(rows_frame, bootstyle=(SECONDARY if i % 2 else DEFAULT))
-            row.pack(fill=X, pady=1)
-            ttk.Label(row, text=field.replace("_", " ").title(), width=18).pack(side=LEFT, pady=3)
-            ttk.Label(row, text=str(values.get("local") or "—"), width=24, wraplength=170).pack(side=LEFT, pady=3)
-            ttk.Label(row, text=str(values.get("cloud") or "—"), width=24, wraplength=170).pack(side=LEFT, pady=3)
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill=X, side=BOTTOM, pady=(10, 0))
-        ttk.Button(btn_frame, text="Cancel", bootstyle=SECONDARY, command=self.destroy).pack(side=RIGHT)
-        ttk.Button(btn_frame, text="Keep Cloud", bootstyle=INFO, command=lambda: self._choose("cloud")).pack(side=RIGHT, padx=5)
-        ttk.Button(btn_frame, text="Keep Local", bootstyle=SUCCESS, command=lambda: self._choose("local")).pack(side=RIGHT, padx=5)
+            row_w = QWidget()
+            row_w.setObjectName("DiffRowAlt" if i % 2 else "DiffRow")
+            
+            rl = QHBoxLayout(row_w)
+            rl.setContentsMargins(5, 5, 5, 5)
+            f_lbl = QLabel(field.replace("_", " ").title()); f_lbl.setFixedWidth(135)
+            l_lbl = QLabel(str(values.get("local") or "—")); l_lbl.setFixedWidth(185); l_lbl.setWordWrap(True)
+            c_lbl = QLabel(str(values.get("cloud") or "—")); c_lbl.setFixedWidth(185); c_lbl.setWordWrap(True)
+            rl.addWidget(f_lbl); rl.addWidget(l_lbl); rl.addWidget(c_lbl); rl.addStretch()
+            rows_layout.addWidget(row_w)
+            
+        rows_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll, 1)
+        
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        
+        btn_cloud = QPushButton("Keep Cloud")
+        btn_cloud.setStyleSheet(f"QPushButton {{ background-color: {COLORS['INFO']}; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background-color: #0b9ebf; }}")
+        btn_cloud.clicked.connect(lambda: self._choose("cloud"))
+        
+        btn_local = QPushButton("Keep Local")
+        btn_local.setStyleSheet(f"QPushButton {{ background-color: {COLORS['SUCCESS']}; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: bold; }} QPushButton:hover {{ background-color: #009670; }}")
+        btn_local.clicked.connect(lambda: self._choose("local"))
+        
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_cloud)
+        btn_row.addWidget(btn_local)
+        layout.addLayout(btn_row)
 
     def _choose(self, keep):
         self.on_resolve([self.conflict_id], keep)
-        self.destroy()
+        self.accept()
 
-class SyncDashboard(ttk.Window):
+class SyncDashboard(QMainWindow):
     def __init__(self):
-        super().__init__(themename="darkly", title="EventHub Portable — Ultra-Fast Sync Manager")
-        self.update_idletasks()
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        w, h = 1400, 850
-        x = max(0, (sw - w) // 2)
-        y = max(0, (sh - h) // 2 - 20)
-        self.geometry(f"{w}x{h}+{x}+{y}")
-        self.minsize(1200, 720)
+        super().__init__()
+        self.setWindowTitle("EventHub Portable — Ultra-Fast Sync Manager")
+        self.resize(1400, 850)
+        self.setMinimumSize(1200, 720)
         
         icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
         if os.path.exists(icon_path):
-            try:
-                self.iconbitmap(icon_path)
-            except tk.TclError:
-                pass
+            try: self.setWindowIcon(QIcon(icon_path))
+            except Exception: pass
 
         self.gui_queue = queue.Queue(maxsize=1000) 
         self.sync_manager = SyncManager()
         self.is_syncing = False
         self._is_refreshing_stats = False  
-        self.is_light_theme = tk.BooleanVar(value=False)
+        
+        self.is_light_theme = False
         self.canvas_indicators = []
         self._spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._spinner_idx = 0
-        self.auto_pull_enabled = tk.BooleanVar(value=False)
-        self.auto_pull_val = tk.StringVar(value="15")
-        self.auto_pull_unit = tk.StringVar(value="Minutes")
-        self.auto_push_enabled = tk.BooleanVar(value=False)
-        self.auto_push_val = tk.StringVar(value="15")
-        self.auto_push_unit = tk.StringVar(value="Minutes")
+        
         self.next_pull_ts = 0
         self.next_push_ts = 0
-        self.auto_pull_enabled.trace_add("write", self._recalc_pull_ts)
-        self.auto_pull_val.trace_add("write", self._recalc_pull_ts)
-        self.auto_pull_unit.trace_add("write", self._recalc_pull_ts)
-        self.auto_push_enabled.trace_add("write", self._recalc_push_ts)
-        self.auto_push_val.trace_add("write", self._recalc_push_ts)
-        self.auto_push_unit.trace_add("write", self._recalc_push_ts)
+
         self.build_ui()
         self.animated_health_meter = AnimatedMeter(self.health_meter)
-        self.process_gui_queue()
-        self.animation_loop()
+        
+        # Safe async UI queuing
+        self.queue_timer = QTimer(self)
+        self.queue_timer.timeout.connect(self.process_gui_queue)
+        self.queue_timer.start(20)
+
+        # Animation logic
+        self.anim_timer = QTimer(self)
+        self.anim_timer.timeout.connect(self.animation_loop)
+        self.anim_timer.start(16)
+
+        # Background polling
         self.refresh_stats_async()
-        self._schedule_periodic_refresh()
-        self._auto_sync_scheduler() 
+        self.poll_timer = QTimer(self)
+        self.poll_timer.timeout.connect(self._schedule_periodic_refresh)
+        self.poll_timer.start(3000)
+
+        # Auto sync scheduler
+        self.auto_sync_timer = QTimer(self)
+        self.auto_sync_timer.timeout.connect(self._auto_sync_scheduler)
+        self.auto_sync_timer.start(1000)
 
     def toggle_theme(self):
-        theme_name = "cosmo" if self.is_light_theme.get() else "darkly"
-        self.style.theme_use(theme_name)
-        bg_color = self.style.colors.bg
-        for canvas in self.canvas_indicators:
-            canvas.configure(bg=bg_color)
-        if theme_name == "cosmo":
-            self.log_tree.tag_configure('info', foreground='#212529')  
-            self.log_tree.tag_configure('warning', foreground='#d35400') 
-            self.log_tree.tag_configure('error', foreground='#c0392b') 
-            self.conflict_tree.tag_configure('severe', foreground='#c0392b')
+        self.is_light_theme = self.chk_theme.isChecked()
+        self.health_meter.set_theme(self.is_light_theme)
+        
+        # Apply the master stylesheet perfectly resolving inheritance bugs across all Windows
+        app = QApplication.instance()
+        
+        if self.is_light_theme:
+            style = """
+                QMainWindow, QDialog, #CentralWidget, #Sidebar { background-color: #f8f9fa; color: #212529; font-family: 'Segoe UI', Arial; }
+                QGroupBox { border: 1px solid #ced4da; border-radius: 6px; margin-top: 15px; font-weight: bold; }
+                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #495057; }
+                QTreeWidget { background-color: #ffffff; border: 1px solid #ced4da; color: #212529; alternate-background-color: #f1f3f5; }
+                QTreeWidget::item:selected { background-color: #0dcaf0; color: #ffffff; }
+                QHeaderView::section { background-color: #e9ecef; border: none; border-right: 1px solid #ced4da; border-bottom: 1px solid #ced4da; padding: 6px; font-weight: bold; color: #495057; }
+                QLineEdit, QComboBox { background-color: #ffffff; border: 1px solid #ced4da; color: #212529; border-radius: 4px; padding: 5px; }
+                QTabWidget::pane { border: 1px solid #ced4da; background-color: #ffffff; border-radius: 4px; }
+                QTabBar::tab { background-color: #e9ecef; color: #495057; padding: 8px 20px; border: 1px solid #ced4da; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+                QTabBar::tab:selected { background-color: #ffffff; color: #00bc8c; font-weight: bold; border-top: 3px solid #00bc8c; }
+                QPushButton { background-color: #ffffff; color: #212529; border: 1px solid #ced4da; padding: 6px 12px; border-radius: 4px; font-weight: 500; }
+                QPushButton:hover { background-color: #e9ecef; }
+                QPushButton:pressed { background-color: #dee2e6; }
+                QPushButton:disabled { background-color: #e9ecef; color: #adb5bd; border: 1px solid #dee2e6; }
+                QLabel, QCheckBox { background: transparent; color: #212529; }
+                QScrollArea { border: none; background: transparent; }
+                QProgressBar { border: 1px solid #ced4da; border-radius: 2px; background-color: #e9ecef; text-align: center; color: #212529; }
+                QProgressBar::chunk { background-color: #0dcaf0; }
+                #StatCard { border: 1px solid #ced4da; border-radius: 6px; background-color: #ffffff; }
+                #SubText { color: #6c757d; }
+                #DiffRow { background-color: transparent; }
+                #DiffRowAlt { background-color: #f1f3f5; }
+                #DividerLine { color: #ced4da; }
+            """
         else:
-            self.log_tree.tag_configure('info', foreground='#e8e8e8') 
-            self.log_tree.tag_configure('warning', foreground='#ffc046') 
-            self.log_tree.tag_configure('error', foreground='#ff5c5c') 
-            self.conflict_tree.tag_configure('severe', foreground='#ff5c5c')
-        self.update_idletasks()
+            style = """
+                QMainWindow, QDialog, #CentralWidget, #Sidebar { background-color: #121212; color: #e0e0e0; font-family: 'Segoe UI', Arial; }
+                QGroupBox { border: 1px solid #333333; border-radius: 6px; margin-top: 15px; font-weight: bold; }
+                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; color: #aaaaaa; }
+                QTreeWidget { background-color: #1a1a1a; border: 1px solid #333333; color: #e0e0e0; alternate-background-color: #222222; }
+                QTreeWidget::item:selected { background-color: #375a7f; color: #ffffff; }
+                QHeaderView::section { background-color: #242424; border: none; border-right: 1px solid #333333; border-bottom: 1px solid #333333; padding: 6px; font-weight: bold; color: #aaaaaa; }
+                QLineEdit, QComboBox { background-color: #242424; border: 1px solid #444444; color: #ffffff; border-radius: 4px; padding: 5px; }
+                QTabWidget::pane { border: 1px solid #333333; background-color: #1a1a1a; border-radius: 4px; }
+                QTabBar::tab { background-color: #242424; color: #aaaaaa; padding: 8px 20px; border: 1px solid #333333; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+                QTabBar::tab:selected { background-color: #1a1a1a; color: #0dcaf0; font-weight: bold; border-top: 3px solid #0dcaf0; }
+                QPushButton { background-color: #242424; color: #e0e0e0; border: 1px solid #444444; padding: 6px 12px; border-radius: 4px; font-weight: 500; }
+                QPushButton:hover { background-color: #333333; }
+                QPushButton:pressed { background-color: #111111; }
+                QPushButton:disabled { background-color: #242424; color: #555555; border: 1px solid #333333; }
+                QLabel, QCheckBox { background: transparent; color: #e0e0e0; }
+                QScrollArea { border: none; background: transparent; }
+                QProgressBar { border: 1px solid #444444; border-radius: 2px; background-color: #242424; text-align: center; color: #e0e0e0; }
+                QProgressBar::chunk { background-color: #0dcaf0; }
+                #StatCard { border: 1px solid #333333; border-radius: 6px; background-color: #1a1a1a; }
+                #SubText { color: #aaaaaa; }
+                #DiffRow { background-color: transparent; }
+                #DiffRowAlt { background-color: #222222; }
+                #DividerLine { color: #444444; }
+            """
+        app.setStyleSheet(style)
 
     def _get_seconds(self, val_str, unit_str):
         try:
@@ -936,15 +1157,15 @@ class SyncDashboard(ttk.Window):
             v = 15 
         return v * 60 if unit_str == "Minutes" else v * 3600
 
-    def _recalc_pull_ts(self, *args):
-        if self.auto_pull_enabled.get():
-            self.next_pull_ts = time.time() + self._get_seconds(self.auto_pull_val.get(), self.auto_pull_unit.get())
+    def _recalc_pull_ts(self):
+        if self.chk_auto_pull.isChecked():
+            self.next_pull_ts = time.time() + self._get_seconds(self.ent_auto_pull.text(), self.combo_auto_pull.currentText())
         else:
             self.next_pull_ts = 0
 
-    def _recalc_push_ts(self, *args):
-        if self.auto_push_enabled.get():
-            self.next_push_ts = time.time() + self._get_seconds(self.auto_push_val.get(), self.auto_push_unit.get())
+    def _recalc_push_ts(self):
+        if self.chk_auto_push.isChecked():
+            self.next_push_ts = time.time() + self._get_seconds(self.ent_auto_push.text(), self.combo_auto_push.currentText())
         else:
             self.next_push_ts = 0
 
@@ -955,44 +1176,50 @@ class SyncDashboard(ttk.Window):
 
     def animation_loop(self):
         self.animated_health_meter.tick()
-        self.after(16, self.animation_loop)
 
     def _auto_sync_scheduler(self):
         now = time.time()
         self._spinner_idx = (self._spinner_idx + 1) % len(self._spinner_frames)
         spin = self._spinner_frames[self._spinner_idx]
-        if self.auto_pull_enabled.get():
+        
+        if self.chk_auto_pull.isChecked():
             if self.is_syncing:
-                self.lbl_pull_countdown.configure(text=f"{spin} Syncing...", bootstyle=WARNING)
+                self.lbl_pull_countdown.setText(f"{spin} Syncing...")
+                self.lbl_pull_countdown.setStyleSheet(f"color: {COLORS['WARNING']}; font-weight: bold; border: none;")
             else:
                 rem_pull = max(0, int(self.next_pull_ts - now))
-                self.lbl_pull_countdown.configure(text=f"⏱ {self._format_countdown(rem_pull)}", bootstyle=INFO)
+                self.lbl_pull_countdown.setText(f"⏱ {self._format_countdown(rem_pull)}")
+                self.lbl_pull_countdown.setStyleSheet(f"color: {COLORS['INFO']}; font-weight: bold; border: none;")
         else:
-            self.lbl_pull_countdown.configure(text="Off", bootstyle=SECONDARY)
-        if self.auto_push_enabled.get():
+            self.lbl_pull_countdown.setText("Off")
+            self.lbl_pull_countdown.setStyleSheet("color: #888; font-weight: bold; border: none;")
+            
+        if self.chk_auto_push.isChecked():
             if self.is_syncing:
-                self.lbl_push_countdown.configure(text=f"{spin} Syncing...", bootstyle=WARNING)
+                self.lbl_push_countdown.setText(f"{spin} Syncing...")
+                self.lbl_push_countdown.setStyleSheet(f"color: {COLORS['WARNING']}; font-weight: bold; border: none;")
             else:
                 rem_push = max(0, int(self.next_push_ts - now))
-                self.lbl_push_countdown.configure(text=f"⏱ {self._format_countdown(rem_push)}", bootstyle=SUCCESS)
+                self.lbl_push_countdown.setText(f"⏱ {self._format_countdown(rem_push)}")
+                self.lbl_push_countdown.setStyleSheet(f"color: {COLORS['SUCCESS']}; font-weight: bold; border: none;")
         else:
-            self.lbl_push_countdown.configure(text="Off", bootstyle=SECONDARY)
+            self.lbl_push_countdown.setText("Off")
+            self.lbl_push_countdown.setStyleSheet("color: #888; font-weight: bold; border: none;")
+            
         if not self.is_syncing:
-            if self.auto_pull_enabled.get() and self.next_pull_ts and now >= self.next_pull_ts:
+            if self.chk_auto_pull.isChecked() and self.next_pull_ts and now >= self.next_pull_ts:
                 self._recalc_pull_ts()
                 logging.info("Auto-sync: Initiating scheduled PULL")
                 self.run_pull()
-            elif self.auto_push_enabled.get() and self.next_push_ts and now >= self.next_push_ts:
+            elif self.chk_auto_push.isChecked() and self.next_push_ts and now >= self.next_push_ts:
                 self._recalc_push_ts()
                 logging.info("Auto-sync: Initiating scheduled PUSH")
                 self.run_push()
-        self.after(1000, self._auto_sync_scheduler)
 
     def process_gui_queue(self):
         for _ in range(200):
             try: self.gui_queue.get_nowait()()
             except queue.Empty: break
-        self.after(20, self.process_gui_queue)
 
     def reinitialize_manager(self):
         self.sync_manager = SyncManager()
@@ -1001,7 +1228,6 @@ class SyncDashboard(ttk.Window):
     def _schedule_periodic_refresh(self):
         if not self.is_syncing:
             self.refresh_stats_async()
-        self.after(3000, self._schedule_periodic_refresh)
 
     def refresh_stats_async(self):
         if getattr(self, '_is_refreshing_stats', False): return
@@ -1014,204 +1240,325 @@ class SyncDashboard(ttk.Window):
                 self._is_refreshing_stats = False
         threading.Thread(target=_fetch, daemon=True).start()
 
-    def _create_stat_card(self, parent, icon, title, initial_value, style, var_name):
-        outer = ttk.Frame(parent, borderwidth=1, relief="ridge")
-        outer.pack(side=LEFT, fill=BOTH, expand=True, padx=8)
-        ttk.Frame(outer, bootstyle=style, width=4).pack(side=LEFT, fill=Y)
-        inner = ttk.Frame(outer, padding=(18, 16))
-        inner.pack(side=LEFT, fill=BOTH, expand=True)
-        top_row = ttk.Frame(inner)
-        top_row.pack(fill=X, anchor=NW)
+    def _create_stat_card(self, layout, icon, title, initial_value, color, var_name):
+        card = QFrame()
+        card.setObjectName("StatCard")
+        card_lyt = QHBoxLayout(card)
+        card_lyt.setContentsMargins(0, 0, 0, 0)
+        
+        stripe = QWidget()
+        stripe.setFixedWidth(5)
+        stripe.setStyleSheet(f"background-color: {color}; border-top-left-radius: 4px; border-bottom-left-radius: 4px;")
+        card_lyt.addWidget(stripe)
+        
+        inner = QVBoxLayout()
+        inner.setContentsMargins(15, 15, 15, 15)
+        
+        top_row = QHBoxLayout()
         if icon:
-            ttk.Label(top_row, text=icon, font="-size 12").pack(side=LEFT, padx=(0, 6))
-        ttk.Label(top_row, text=title, font="-size 9 -weight bold", bootstyle=style).pack(side=LEFT)
-        val_lbl = ttk.Label(inner, text=initial_value, font="-size 28 -weight bold")
-        val_lbl.pack(anchor=NW, pady=(8, 0))
+            icon_lbl = QLabel(icon)
+            icon_lbl.setStyleSheet("border: none; font-size: 14px;")
+            top_row.addWidget(icon_lbl)
+        t_lbl = QLabel(title)
+        t_lbl.setStyleSheet(f"color: {color}; font-weight: bold; border: none; font-size: 11px;")
+        top_row.addWidget(t_lbl)
+        top_row.addStretch()
+        
+        val_lbl = QLabel(initial_value)
+        val_lbl.setFont(QFont("Segoe UI", 28, QFont.Bold))
+        val_lbl.setStyleSheet("border: none;")
+        
+        inner.addLayout(top_row)
+        inner.addWidget(val_lbl)
+        card_lyt.addLayout(inner)
+        
+        layout.addWidget(card)
         self.stat_vars[var_name] = val_lbl
 
     def build_ui(self):
-        self.root_container = ttk.Frame(self)
-        self.root_container.pack(fill=BOTH, expand=True)
-        self.build_sidebar(self.root_container)
-        content = ttk.Frame(self.root_container, padding=30) 
-        content.pack(side=LEFT, fill=BOTH, expand=True)
-        header_row = ttk.Frame(content)
-        header_row.pack(fill=X, pady=(0, 20))
-        title_box = ttk.Frame(header_row)
-        title_box.pack(side=LEFT)
-        ttk.Label(title_box, text="Sync Dashboard", font="-size 22 -weight bold", bootstyle=PRIMARY).pack(anchor=W)
-        ttk.Label(title_box, text="TDE UP 2026", font="-size 11 -weight bold", bootstyle=SECONDARY).pack(anchor=W)
-        ttk.Button(header_row, text="⟳ Refresh Data", bootstyle="outline-info", command=self.refresh_stats_async).pack(side=RIGHT)
+        central = QWidget()
+        central.setObjectName("CentralWidget")
+        self.setCentralWidget(central)
+        
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.build_sidebar(main_layout)
+        
+        content_w = QWidget()
+        content = QVBoxLayout(content_w)
+        content.setContentsMargins(30, 30, 30, 30)
+        
+        header_row = QHBoxLayout()
+        title_box = QVBoxLayout()
+        t1 = QLabel("Sync Dashboard")
+        t1.setFont(QFont("Segoe UI", 24, QFont.Bold))
+        t1.setStyleSheet(f"color: {COLORS['PRIMARY']}; border: none;")
+        t2 = QLabel("TDE UP 2026")
+        t2.setObjectName("SubText")
+        t2.setStyleSheet("font-weight: bold; border: none;")
+        title_box.addWidget(t1)
+        title_box.addWidget(t2)
+        
+        btn_ref = QPushButton("⟳ Refresh Data")
+        btn_ref.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['INFO']}; color: {COLORS['INFO']}; background: transparent; padding: 6px 12px; border-radius: 4px; }} QPushButton:hover {{ background-color: {COLORS['INFO']}; color: white; }}")
+        btn_ref.clicked.connect(self.refresh_stats_async)
+        
+        header_row.addLayout(title_box)
+        header_row.addStretch()
+        header_row.addWidget(btn_ref)
+        content.addLayout(header_row)
+        content.addSpacing(20)
+        
         self.stat_vars = {}
-        cards_row1 = ttk.Frame(content)
-        cards_row1.pack(fill=X, pady=(0, 15))
-        self._create_stat_card(cards_row1, "👥", "MYSQL (PRIMARY)", "0", PRIMARY, "mysql_total")
-        self._create_stat_card(cards_row1, "💾", "SQLITE (MIRROR)", "0", INFO, "sqlite_total")
-        self._create_stat_card(cards_row1, "⏳", "PENDING PUSH", "0", WARNING, "pending_push")
-        self._create_stat_card(cards_row1, "⚠", "CONFLICTS", "0", DANGER, "conflicts")
-        self._create_stat_card(cards_row1, "🖥️", "KIOSK REG.", "0", SECONDARY, "kiosk_reg")
-        cards_row2 = ttk.Frame(content)
-        cards_row2.pack(fill=X, pady=(0, 25))
-        self._create_stat_card(cards_row2, "✔", "TOTAL CHECKED IN", "0", SUCCESS, "checked_in")
+        cards_row1 = QHBoxLayout()
+        self._create_stat_card(cards_row1, "👥", "MYSQL (PRIMARY)", "0", COLORS["PRIMARY"], "mysql_total")
+        self._create_stat_card(cards_row1, "💾", "SQLITE (MIRROR)", "0", COLORS["INFO"], "sqlite_total")
+        self._create_stat_card(cards_row1, "⏳", "PENDING PUSH", "0", COLORS["WARNING"], "pending_push")
+        self._create_stat_card(cards_row1, "⚠", "CONFLICTS", "0", COLORS["DANGER"], "conflicts")
+        self._create_stat_card(cards_row1, "🖥️", "KIOSK REG.", "0", COLORS["SECONDARY"], "kiosk_reg")
+        content.addLayout(cards_row1)
+        
+        cards_row2 = QHBoxLayout()
+        self._create_stat_card(cards_row2, "✔", "TOTAL CHECKED IN", "0", COLORS["SUCCESS"], "checked_in")
         for day in EVENT_DAYS:
-            self._create_stat_card(cards_row2, "📅", _format_day_label(day).replace("📅 ", ""), "0", LIGHT, f"day_{day}")
-        controls_frame = ttk.Frame(content)
-        controls_frame.pack(fill=X, pady=(0, 10))
-        self.progress = ttk.Progressbar(controls_frame, mode='indeterminate', bootstyle=INFO)
-        self.progress.pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
-        self.lbl_status = ttk.Label(controls_frame, text="Ready.", font="-size 10")
-        self.lbl_status.pack(side=LEFT, padx=10)
-        self.notebook = ttk.Notebook(content)
-        self.notebook.pack(fill=BOTH, expand=True, pady=(15, 0))
+            self._create_stat_card(cards_row2, "📅", _format_day_label(day).replace("📅 ", ""), "0", COLORS["SECONDARY"], f"day_{day}")
+        content.addLayout(cards_row2)
+        content.addSpacing(15)
+        
+        controls_frame = QHBoxLayout()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        self.lbl_status = QLabel("Ready.")
+        controls_frame.addWidget(self.progress)
+        controls_frame.addWidget(self.lbl_status)
+        content.addLayout(controls_frame)
+        
+        self.notebook = QTabWidget()
+        content.addWidget(self.notebook, 1)
+        
         self.build_log_tab()
         self.build_conflicts_tab()
-        self.toggle_theme()
+        
+        main_layout.addWidget(content_w, 1)
+        self.toggle_theme() # Instantly applies Global Styling to fix the UI!
 
-    def build_sidebar(self, container):
-        sidebar_outer = ttk.Frame(container, width=380) 
-        sidebar_outer.pack(side=LEFT, fill=Y)
-        sidebar_outer.pack_propagate(False)
-        sidebar = ttk.Frame(sidebar_outer, padding=25)
-        sidebar.pack(fill=BOTH, expand=True)
-        ttk.Label(sidebar, text="EventHub Portable", font="-size 18 -weight bold").pack(anchor=W)
-        ttk.Label(sidebar, text="Data Synchronization", font="-size 10", bootstyle=SECONDARY).pack(anchor=W, pady=(0, 12))
-        ttk.Checkbutton(sidebar, text="☀️ Sunlight Mode", variable=self.is_light_theme, bootstyle="round-toggle", command=self.toggle_theme).pack(anchor=W, pady=(0, 20))
-        conn_frame = ttk.Labelframe(sidebar, text=" CONNECTION STATUS ", padding=15)
-        conn_frame.pack(fill=X, pady=(0, 15))
-        self.lbl_supa, self.supa_canvas, self.supa_dot = self._create_status_label(conn_frame, "Supabase Cloud: Idle", SECONDARY)
-        self.lbl_mysql, self.my_canvas, self.my_dot = self._create_status_label(conn_frame, "MySQL (Primary): Checking...", INFO)
-        self.lbl_sqlite, self.sq_canvas, self.sq_dot = self._create_status_label(conn_frame, "SQLite (Fallback): Checking...", INFO)
-        ttk.Button(sidebar, text="⟳ Refresh Connections", bootstyle="outline-secondary", command=self.reinitialize_manager).pack(fill=X, pady=(0, 20))
-        health_frame = ttk.Labelframe(sidebar, text=" SYNC HEALTH ", padding=15)
-        health_frame.pack(fill=X, pady=(0, 20))
-        meter_row = ttk.Frame(health_frame)
-        meter_row.pack()
-        self.health_meter = ttk.Meter(
-            meter_row, metersize=150, amounttotal=100, amountused=100, bootstyle=SUCCESS, 
-            subtext="synced", textright="%", stripethickness=8, meterthickness=10, interactive=False,
-            textfont="-size 18 -weight bold"
-        )
-        self.health_meter.pack()
-        self.lbl_last_sync = ttk.Label(health_frame, text="Last synced: Never", font="-size 9", bootstyle=SECONDARY)
-        self.lbl_last_sync.pack(anchor=CENTER, pady=(10, 0))
-        ttk.Separator(sidebar).pack(fill=X, pady=10)
-        self.btn_full_sync = ttk.Button(sidebar, text="🔄 Full Sync (Pull + Push)", bootstyle=PRIMARY, command=self.run_full_sync)
-        self.btn_full_sync.pack(fill=X, pady=(10, 8), ipady=6)
-        pp_row = ttk.Frame(sidebar)
-        pp_row.pack(fill=X, pady=(0, 8))
-        self.btn_pull = ttk.Button(pp_row, text="↓ Pull Data", bootstyle=INFO, command=self.run_pull)
-        self.btn_pull.pack(side=LEFT, fill=X, expand=True, padx=(0, 4), ipady=4)
-        self.btn_push = ttk.Button(pp_row, text="↑ Push Data", bootstyle=SUCCESS, command=self.run_push)
-        self.btn_push.pack(side=LEFT, fill=X, expand=True, padx=(4, 0), ipady=4)
-        auto_frame = ttk.Labelframe(sidebar, text=" AUTO SYNC SCHEDULE ", padding=12)
-        auto_frame.pack(fill=X, pady=(10, 20))
-        p_row = ttk.Frame(auto_frame)
-        p_row.pack(fill=X, pady=6)
-        ttk.Checkbutton(p_row, text="Auto Pull", variable=self.auto_pull_enabled, bootstyle="info-round-toggle", width=10).pack(side=LEFT, padx=(0,6))
-        ttk.Entry(p_row, textvariable=self.auto_pull_val, width=3).pack(side=LEFT)
-        ttk.Combobox(p_row, textvariable=self.auto_pull_unit, values=["Minutes", "Hours"], width=8, state="readonly").pack(side=LEFT, padx=4)
-        self.lbl_pull_countdown = ttk.Label(p_row, text="Off", font="-size 9 -weight bold", bootstyle=SECONDARY)
-        self.lbl_pull_countdown.pack(side=RIGHT, padx=5)
-        pu_row = ttk.Frame(auto_frame)
-        pu_row.pack(fill=X, pady=6)
-        ttk.Checkbutton(pu_row, text="Auto Push", variable=self.auto_push_enabled, bootstyle="success-round-toggle", width=10).pack(side=LEFT, padx=(0,6))
-        ttk.Entry(pu_row, textvariable=self.auto_push_val, width=3).pack(side=LEFT)
-        ttk.Combobox(pu_row, textvariable=self.auto_push_unit, values=["Minutes", "Hours"], width=8, state="readonly").pack(side=LEFT, padx=4)
-        self.lbl_push_countdown = ttk.Label(pu_row, text="Off", font="-size 9 -weight bold", bootstyle=SECONDARY)
-        self.lbl_push_countdown.pack(side=RIGHT, padx=5)
-        ttk.Button(sidebar, text="⚙ Configure Databases", bootstyle="outline-secondary", command=lambda: ConfigDialog(self)).pack(fill=X, side=BOTTOM, pady=(20, 0))
+    def build_sidebar(self, parent_layout):
+        sidebar_w = QWidget()
+        sidebar_w.setFixedWidth(380)
+        sidebar_w.setObjectName("Sidebar")
+        sidebar = QVBoxLayout(sidebar_w)
+        sidebar.setContentsMargins(25, 25, 25, 25)
+        
+        t1 = QLabel("EventHub Portable")
+        t1.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        t1.setStyleSheet("border: none;")
+        t2 = QLabel("Data Synchronization")
+        t2.setObjectName("SubText")
+        t2.setStyleSheet("border: none;")
+        sidebar.addWidget(t1)
+        sidebar.addWidget(t2)
+        sidebar.addSpacing(15)
+        
+        self.chk_theme = QCheckBox("☀️ Sunlight Mode")
+        self.chk_theme.setStyleSheet("border: none;")
+        self.chk_theme.toggled.connect(self.toggle_theme)
+        sidebar.addWidget(self.chk_theme)
+        sidebar.addSpacing(15)
+        
+        conn_frame = QGroupBox(" CONNECTION STATUS ")
+        conn_lyt = QVBoxLayout(conn_frame)
+        self.lbl_supa, self.supa_dot = self._create_status_label(conn_lyt, "Supabase Cloud: Idle", COLORS["SECONDARY"])
+        self.lbl_mysql, self.my_dot = self._create_status_label(conn_lyt, "MySQL (Primary): Checking...", COLORS["INFO"])
+        self.lbl_sqlite, self.sq_dot = self._create_status_label(conn_lyt, "SQLite (Fallback): Checking...", COLORS["INFO"])
+        sidebar.addWidget(conn_frame)
+        
+        btn_rc = QPushButton("⟳ Refresh Connections")
+        btn_rc.clicked.connect(self.reinitialize_manager)
+        sidebar.addWidget(btn_rc)
+        sidebar.addSpacing(15)
+        
+        health_frame = QGroupBox(" SYNC HEALTH ")
+        health_lyt = QVBoxLayout(health_frame)
+        health_lyt.setAlignment(Qt.AlignCenter)
+        self.health_meter = SpeedometerWidget(size=160)
+        health_lyt.addWidget(self.health_meter, 0, Qt.AlignCenter)
+        self.lbl_last_sync = QLabel("Last synced: Never")
+        self.lbl_last_sync.setObjectName("SubText")
+        self.lbl_last_sync.setStyleSheet("font-size: 11px;")
+        health_lyt.addWidget(self.lbl_last_sync, 0, Qt.AlignCenter)
+        sidebar.addWidget(health_frame)
+        sidebar.addSpacing(15)
+        
+        self.btn_full_sync = QPushButton("🔄 Full Sync (Pull + Push)")
+        self.btn_full_sync.setStyleSheet(f"QPushButton {{ background-color: {COLORS['PRIMARY']}; color: white; border: none; padding: 10px; font-weight: bold; border-radius: 4px; }} QPushButton:hover {{ background-color: #2b4764; }}")
+        self.btn_full_sync.clicked.connect(self.run_full_sync)
+        sidebar.addWidget(self.btn_full_sync)
+        
+        pp_row = QHBoxLayout()
+        self.btn_pull = QPushButton("↓ Pull Data")
+        self.btn_pull.setStyleSheet(f"QPushButton {{ background-color: {COLORS['INFO']}; color: white; border: none; padding: 8px; font-weight: bold; border-radius: 4px; }} QPushButton:hover {{ background-color: #0b9ebf; }}")
+        self.btn_pull.clicked.connect(self.run_pull)
+        
+        self.btn_push = QPushButton("↑ Push Data")
+        self.btn_push.setStyleSheet(f"QPushButton {{ background-color: {COLORS['SUCCESS']}; color: white; border: none; padding: 8px; font-weight: bold; border-radius: 4px; }} QPushButton:hover {{ background-color: #009670; }}")
+        self.btn_push.clicked.connect(self.run_push)
+        pp_row.addWidget(self.btn_pull)
+        pp_row.addWidget(self.btn_push)
+        sidebar.addLayout(pp_row)
+        sidebar.addSpacing(15)
+        
+        auto_frame = QGroupBox(" AUTO SYNC SCHEDULE ")
+        auto_lyt = QVBoxLayout(auto_frame)
+        
+        p_row = QHBoxLayout()
+        self.chk_auto_pull = QCheckBox("Auto Pull")
+        self.chk_auto_pull.toggled.connect(self._recalc_pull_ts)
+        self.ent_auto_pull = QLineEdit("15")
+        self.ent_auto_pull.setFixedWidth(40)
+        self.ent_auto_pull.textChanged.connect(self._recalc_pull_ts)
+        self.combo_auto_pull = QComboBox()
+        self.combo_auto_pull.addItems(["Minutes", "Hours"])
+        self.combo_auto_pull.currentTextChanged.connect(self._recalc_pull_ts)
+        self.lbl_pull_countdown = QLabel("Off")
+        p_row.addWidget(self.chk_auto_pull); p_row.addWidget(self.ent_auto_pull); p_row.addWidget(self.combo_auto_pull); p_row.addStretch(); p_row.addWidget(self.lbl_pull_countdown)
+        auto_lyt.addLayout(p_row)
+        
+        pu_row = QHBoxLayout()
+        self.chk_auto_push = QCheckBox("Auto Push")
+        self.chk_auto_push.toggled.connect(self._recalc_push_ts)
+        self.ent_auto_push = QLineEdit("15")
+        self.ent_auto_push.setFixedWidth(40)
+        self.ent_auto_push.textChanged.connect(self._recalc_push_ts)
+        self.combo_auto_push = QComboBox()
+        self.combo_auto_push.addItems(["Minutes", "Hours"])
+        self.combo_auto_push.currentTextChanged.connect(self._recalc_push_ts)
+        self.lbl_push_countdown = QLabel("Off")
+        pu_row.addWidget(self.chk_auto_push); pu_row.addWidget(self.ent_auto_push); pu_row.addWidget(self.combo_auto_push); pu_row.addStretch(); pu_row.addWidget(self.lbl_push_countdown)
+        auto_lyt.addLayout(pu_row)
+        
+        sidebar.addWidget(auto_frame)
+        sidebar.addStretch()
+        
+        btn_cfg = QPushButton("⚙ Configure Databases")
+        btn_cfg.clicked.connect(lambda: ConfigDialog(self).exec())
+        sidebar.addWidget(btn_cfg)
+        
+        parent_layout.addWidget(sidebar_w)
 
-    def _create_status_label(self, parent, text, bootstyle):
-        row = ttk.Frame(parent)
-        row.pack(fill=X, pady=4)
-        canvas = tk.Canvas(row, width=12, height=12, bg=self.style.colors.bg, highlightthickness=0)
-        self.canvas_indicators.append(canvas)
-        dot = canvas.create_oval(2, 2, 10, 10, fill=self.style.colors.get(bootstyle), outline="")
-        canvas.pack(side=LEFT, padx=(0, 8))
-        lbl = ttk.Label(row, text=text, font="-size 10 -weight bold", bootstyle=bootstyle)
-        lbl.pack(side=LEFT)
-        return lbl, canvas, dot
+    def _create_status_label(self, parent_layout, text, color):
+        row = QHBoxLayout()
+        dot = QLabel("●")
+        dot.setStyleSheet(f"color: {color}; font-size: 16px; border: none;")
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"color: {color}; font-weight: bold; border: none;")
+        row.addWidget(dot)
+        row.addWidget(lbl)
+        row.addStretch()
+        parent_layout.addLayout(row)
+        return lbl, dot
 
-    def _update_status_dot(self, label, canvas, dot, text, bootstyle):
-        label.configure(text=text, bootstyle=bootstyle)
-        current_color = self.style.colors.get(bootstyle)
-        canvas.itemconfig(dot, fill=current_color)
-        canvas.coords(dot, 1, 1, 11, 11)
-        self.after(200, lambda: canvas.coords(dot, 2, 2, 10, 10) if canvas.winfo_exists() else None)
+    def _update_status_dot(self, label, dot, text, color):
+        label.setText(text)
+        label.setStyleSheet(f"color: {color}; font-weight: bold; border: none;")
+        dot.setStyleSheet(f"color: {color}; font-size: 16px; border: none;")
 
     def build_log_tab(self):
-        log_tab = ttk.Frame(self.notebook)
-        self.notebook.add(log_tab, text="Activity Log")
-        toolbar = ttk.Frame(log_tab, padding=(10, 10, 10, 5))
-        toolbar.pack(fill=X)
-        ttk.Button(toolbar, text="Clear Log", bootstyle="outline-secondary", command=self.clear_log).pack(side=RIGHT)
-        body = ttk.Frame(log_tab)
-        body.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
-        cols = ("Time", "Level", "Message")
-        self.log_tree = ttk.Treeview(body, columns=cols, show="headings", bootstyle=INFO)
-        self.log_tree.heading("Time", text="TIME", anchor=W)
-        self.log_tree.heading("Level", text="LEVEL", anchor=W)
-        self.log_tree.heading("Message", text="MESSAGE", anchor=W)
-        self.log_tree.column("Time", width=100, stretch=False)
-        self.log_tree.column("Level", width=100, stretch=False)
-        scrollbar = ttk.Scrollbar(body, orient=VERTICAL, command=self.log_tree.yview)
-        self.log_tree.configure(yscrollcommand=scrollbar.set)
-        self.log_tree.pack(side=LEFT, fill=BOTH, expand=True)
-        scrollbar.pack(side=RIGHT, fill=Y)
-        gui_logger = TkinterLogHandler(self.gui_queue, self.log_tree)
+        log_tab = QWidget()
+        lyt = QVBoxLayout(log_tab)
+        
+        toolbar = QHBoxLayout()
+        toolbar.addStretch()
+        btn_clear = QPushButton("Clear Log")
+        btn_clear.clicked.connect(self.clear_log)
+        toolbar.addWidget(btn_clear)
+        lyt.addLayout(toolbar)
+        
+        self.log_tree = QTreeWidget()
+        self.log_tree.setAlternatingRowColors(True)
+        self.log_tree.setHeaderLabels(["TIME", "LEVEL", "MESSAGE"])
+        self.log_tree.setColumnWidth(0, 100)
+        self.log_tree.setColumnWidth(1, 100)
+        lyt.addWidget(self.log_tree)
+        self.notebook.addTab(log_tab, "Activity Log")
+        
+        gui_logger = QtLogHandler(self.gui_queue, self.log_tree)
         gui_logger.setFormatter(logging.Formatter('%(message)s'))
         logging.getLogger().addHandler(gui_logger)
 
     def build_conflicts_tab(self):
-        conflicts_tab = ttk.Frame(self.notebook)
-        self.notebook.add(conflicts_tab, text="Conflicts")
-        self.conflicts_tab = conflicts_tab
-        toolbar = ttk.Frame(conflicts_tab, padding=(10, 10, 10, 5))
-        toolbar.pack(fill=X)
-        ttk.Label(toolbar, text="Double-click a row to compare fields side-by-side.", bootstyle=SECONDARY).pack(side=LEFT)
-        self.btn_resolve_all = ttk.Button(toolbar, text="Resolve All → Prefer Newest", bootstyle="outline-warning", command=self.resolve_all_conflicts_bulk)
-        self.btn_resolve_all.pack(side=RIGHT, padx=(5, 0))
-        self.btn_keep_cloud = ttk.Button(toolbar, text="Keep Cloud (Selected)", bootstyle="outline-info", command=lambda: self.resolve_selected("cloud"))
-        self.btn_keep_cloud.pack(side=RIGHT, padx=5)
-        self.btn_keep_local = ttk.Button(toolbar, text="Keep Local (Selected)", bootstyle="outline-success", command=lambda: self.resolve_selected("local"))
-        self.btn_keep_local.pack(side=RIGHT, padx=5)
-        body = ttk.Frame(conflicts_tab)
-        body.pack(fill=BOTH, expand=True, padx=10, pady=(0, 10))
-        cols = ("attendee_id", "full_name", "local_updated", "cloud_updated", "fields")
-        self.conflict_tree = ttk.Treeview(body, columns=cols, show="headings", bootstyle=WARNING, selectmode="extended")
-        headings = {"attendee_id": "ATTENDEE ID", "full_name": "NAME", "local_updated": "LOCAL UPDATED", "cloud_updated": "CLOUD UPDATED", "fields": "FIELDS DIFFERING"}
-        for c in cols: self.conflict_tree.heading(c, text=headings[c], anchor=W)
-        self.conflict_tree.column("attendee_id", width=140, stretch=False)
-        self.conflict_tree.column("full_name", width=160, stretch=False)
-        self.conflict_tree.column("local_updated", width=150, stretch=False)
-        self.conflict_tree.column("cloud_updated", width=150, stretch=False)
-        self.conflict_tree.bind("<Double-1>", self.on_conflict_double_click)
-        self._conflict_scroll = ttk.Scrollbar(body, orient=VERTICAL, command=self.conflict_tree.yview)
-        self.conflict_tree.configure(yscrollcommand=self._conflict_scroll.set)
-        self.conflict_empty_label = ttk.Label(body, text="✅ No conflicts right now — everything's in sync.", font="-size 12", bootstyle=SUCCESS, anchor=CENTER, justify=CENTER)
+        self.conflicts_tab = QWidget()
+        lyt = QVBoxLayout(self.conflicts_tab)
+        
+        toolbar = QHBoxLayout()
+        lbl = QLabel("Double-click a row to compare fields side-by-side.")
+        lbl.setObjectName("SubText")
+        toolbar.addWidget(lbl)
+        toolbar.addStretch()
+        
+        self.btn_resolve_all = QPushButton("Resolve All → Prefer Newest")
+        self.btn_resolve_all.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['WARNING']}; color: {COLORS['WARNING']}; background: transparent; border-radius: 4px; padding: 6px; }} QPushButton:hover {{ background-color: {COLORS['WARNING']}; color: white; }}")
+        self.btn_resolve_all.clicked.connect(self.resolve_all_conflicts_bulk)
+        
+        self.btn_keep_cloud = QPushButton("Keep Cloud (Selected)")
+        self.btn_keep_cloud.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['INFO']}; color: {COLORS['INFO']}; background: transparent; border-radius: 4px; padding: 6px; }} QPushButton:hover {{ background-color: {COLORS['INFO']}; color: white; }}")
+        self.btn_keep_cloud.clicked.connect(lambda: self.resolve_selected("cloud"))
+        
+        self.btn_keep_local = QPushButton("Keep Local (Selected)")
+        self.btn_keep_local.setStyleSheet(f"QPushButton {{ border: 1px solid {COLORS['SUCCESS']}; color: {COLORS['SUCCESS']}; background: transparent; border-radius: 4px; padding: 6px; }} QPushButton:hover {{ background-color: {COLORS['SUCCESS']}; color: white; }}")
+        self.btn_keep_local.clicked.connect(lambda: self.resolve_selected("local"))
+        
+        toolbar.addWidget(self.btn_resolve_all)
+        toolbar.addWidget(self.btn_keep_cloud)
+        toolbar.addWidget(self.btn_keep_local)
+        lyt.addLayout(toolbar)
+        
+        self.conflict_tree = QTreeWidget()
+        self.conflict_tree.setAlternatingRowColors(True)
+        self.conflict_tree.setHeaderLabels(["ATTENDEE ID", "NAME", "LOCAL UPDATED", "CLOUD UPDATED", "FIELDS DIFFERING"])
+        self.conflict_tree.setColumnWidth(0, 140)
+        self.conflict_tree.setColumnWidth(1, 160)
+        self.conflict_tree.setColumnWidth(2, 160)
+        self.conflict_tree.setColumnWidth(3, 160)
+        self.conflict_tree.itemDoubleClicked.connect(self.on_conflict_double_click)
+        self.conflict_tree.setSelectionMode(QTreeWidget.ExtendedSelection)
+        lyt.addWidget(self.conflict_tree)
+        
+        self.conflict_empty_label = QLabel("✅ No conflicts right now — everything's in sync.")
+        self.conflict_empty_label.setAlignment(Qt.AlignCenter)
+        self.conflict_empty_label.setFont(QFont("Segoe UI", 12))
+        self.conflict_empty_label.setStyleSheet(f"color: {COLORS['SUCCESS']};")
+        lyt.addWidget(self.conflict_empty_label)
+        
+        self.notebook.addTab(self.conflicts_tab, "Conflicts")
 
     def _apply_stats(self, stats):
         if not self.sync_manager.SessionMySQL:
-            self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Offline", DANGER)
-            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Check Config", DANGER)
-            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", SECONDARY)
+            self._update_status_dot(self.lbl_mysql, self.my_dot, "MySQL (Primary): Offline", COLORS["DANGER"])
+            self._update_status_dot(self.lbl_sqlite, self.sq_dot, "SQLite (Fallback): Check Config", COLORS["DANGER"])
+            self._update_status_dot(self.lbl_supa, self.supa_dot, "Supabase Cloud: Idle", COLORS["SECONDARY"])
             self.animated_health_meter.set_target(0)
-            self.health_meter.configure(bootstyle=DANGER)
-            self.lbl_last_sync.configure(text=f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
+            self.health_meter.configure(bootstyle=COLORS["DANGER"])
+            self.lbl_last_sync.setText(f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
             self._refresh_conflicts_ui()
             return
-        self._update_status_dot(self.lbl_mysql, self.my_canvas, self.my_dot, "MySQL (Primary): Online", SUCCESS)
+        self._update_status_dot(self.lbl_mysql, self.my_dot, "MySQL (Primary): Online", COLORS["SUCCESS"])
         if self.sync_manager.SessionSQLite:
-            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Ready", SUCCESS)
+            self._update_status_dot(self.lbl_sqlite, self.sq_dot, "SQLite (Fallback): Ready", COLORS["SUCCESS"])
         else:
-            self._update_status_dot(self.lbl_sqlite, self.sq_canvas, self.sq_dot, "SQLite (Fallback): Offline", DANGER)
+            self._update_status_dot(self.lbl_sqlite, self.sq_dot, "SQLite (Fallback): Offline", COLORS["DANGER"])
         if self.sync_manager.state == SyncState.ERROR: 
-            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Error", DANGER)
+            self._update_status_dot(self.lbl_supa, self.supa_dot, "Supabase Cloud: Error", COLORS["DANGER"])
         elif not self.is_syncing: 
-            self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, "Supabase Cloud: Idle", SECONDARY)
+            self._update_status_dot(self.lbl_supa, self.supa_dot, "Supabase Cloud: Idle", COLORS["SECONDARY"])
+            
         def safe_set(key, val):
-            if self.stat_vars[key].cget("text") != str(val):
-                self.stat_vars[key].configure(text=str(val))
+            if self.stat_vars[key].text() != str(val):
+                self.stat_vars[key].setText(str(val))
+                
         safe_set("mysql_total", stats["mysql_total"])
         safe_set("sqlite_total", stats["sqlite_total"])
         safe_set("pending_push", stats["pending_push"])
@@ -1220,51 +1567,56 @@ class SyncDashboard(ttk.Window):
         safe_set("checked_in", stats["checked_in"])
         for day in EVENT_DAYS: 
             safe_set(f"day_{day}", stats["day_counts"].get(day, 0))
+            
         health = _compute_sync_health(stats)
         self.animated_health_meter.set_target(health)
-        self.health_meter.configure(bootstyle=SUCCESS if health >= 95 else (WARNING if health >= 80 else DANGER))
-        self.lbl_last_sync.configure(text=f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
+        self.health_meter.configure(bootstyle=COLORS["SUCCESS"] if health >= 95 else (COLORS["WARNING"] if health >= 80 else COLORS["DANGER"]))
+        self.lbl_last_sync.setText(f"Last synced: {_relative_time(self.sync_manager.last_sync_at)}")
         self._refresh_conflicts_ui()
 
     def _refresh_conflicts_ui(self):
-        for row in self.conflict_tree.get_children(): self.conflict_tree.delete(row)
+        self.conflict_tree.clear()
         conflicts = self.sync_manager.get_pending_conflicts()
         if not conflicts:
-            self.conflict_tree.pack_forget()
-            self._conflict_scroll.pack_forget()
-            self.conflict_empty_label.pack(fill=BOTH, expand=True)
+            self.conflict_tree.hide()
+            self.conflict_empty_label.show()
         else:
-            self.conflict_empty_label.pack_forget()
-            self.conflict_tree.pack(side=LEFT, fill=BOTH, expand=True)
-            self._conflict_scroll.pack(side=RIGHT, fill=Y)
+            self.conflict_empty_label.hide()
+            self.conflict_tree.show()
             for c in conflicts:
-                self.conflict_tree.insert('', END, iid=c["id"], tags=('severe',) if len(c["diff_fields"]) >= 5 else (), values=(c["attendee_id"], c["full_name"], _fmt_dt(c["local_updated_at"]), _fmt_dt(c["cloud_updated_at"]), _fields_summary(c["diff_fields"])))
-        self.notebook.tab(self.conflicts_tab, text=f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts")
+                item = QTreeWidgetItem(self.conflict_tree, [c["attendee_id"], c["full_name"], _fmt_dt(c["local_updated_at"]), _fmt_dt(c["cloud_updated_at"]), _fields_summary(c["diff_fields"])])
+                item.setData(0, Qt.UserRole, c["id"])
+                if len(c["diff_fields"]) >= 5:
+                    for i in range(5): item.setForeground(i, QColor(COLORS["DANGER"]))
+        tab_idx = self.notebook.indexOf(self.conflicts_tab)
+        self.notebook.setTabText(tab_idx, f"Conflicts ({len(conflicts)})" if conflicts else "Conflicts")
 
     def clear_log(self):
-        for row in self.log_tree.get_children(): self.log_tree.delete(row)
+        self.log_tree.clear()
 
     def _set_controls_state(self, state):
+        enabled = state != False 
         for btn in (self.btn_pull, self.btn_push, self.btn_full_sync, self.btn_keep_local, self.btn_keep_cloud, self.btn_resolve_all):
-            btn.configure(state=state)
+            btn.setEnabled(enabled)
 
     def _lock_ui(self, mode="syncing"):
         self.is_syncing = True
-        self._set_controls_state(DISABLED)
-        self.progress.start(10)
-        self._update_status_dot(self.lbl_supa, self.supa_canvas, self.supa_dot, f"Supabase Cloud: {mode.title()}...", INFO)
+        self._set_controls_state(False)
+        self.progress.setRange(0, 0) # Indeterminate
+        self._update_status_dot(self.lbl_supa, self.supa_dot, f"Supabase Cloud: {mode.title()}...", COLORS["INFO"])
 
     def _unlock_ui(self, msg="Ready."):
         self.is_syncing = False
-        self._set_controls_state(NORMAL)
-        self.progress.stop()
-        self.lbl_status.configure(text=msg)
+        self._set_controls_state(True)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.lbl_status.setText(msg)
         self.refresh_stats_async()
 
     def run_push(self):
         if self.is_syncing: return
         self._lock_ui("pushing")
-        self.lbl_status.configure(text="Connecting to cloud and pushing data...")
+        self.lbl_status.setText("Connecting to cloud and pushing data...")
         threading.Thread(target=self._thread_push, daemon=True).start()
 
     def _thread_push(self):
@@ -1274,7 +1626,7 @@ class SyncDashboard(ttk.Window):
     def run_pull(self):
         if self.is_syncing: return
         self._lock_ui("pulling")
-        self.lbl_status.configure(text="Connecting to cloud and pulling data...")
+        self.lbl_status.setText("Connecting to cloud and pulling data...")
         threading.Thread(target=self._thread_pull, daemon=True).start()
 
     def _thread_pull(self):
@@ -1285,7 +1637,7 @@ class SyncDashboard(ttk.Window):
     def run_full_sync(self):
         if self.is_syncing: return
         self._lock_ui("syncing")
-        self.lbl_status.configure(text="Running full sync (pull then push)...")
+        self.lbl_status.setText("Running full sync (pull then push)...")
         threading.Thread(target=self._thread_full_sync, daemon=True).start()
 
     def _thread_full_sync(self):
@@ -1293,28 +1645,29 @@ class SyncDashboard(ttk.Window):
         msg = f"Full Sync Complete — {len(self.sync_manager.conflicts)} conflict(s) need review." if success and self.sync_manager.conflicts else ("Full Sync Complete." if success else f"Full Sync Failed: {self.sync_manager.last_error}")
         self.gui_queue.put(lambda: self._unlock_ui(msg))
 
-    def on_conflict_double_click(self, event):
-        row_id = self.conflict_tree.identify_row(event.y)
+    def on_conflict_double_click(self, item, column):
+        row_id = item.data(0, Qt.UserRole)
         if not row_id: return
         conflict = self.sync_manager.conflicts.get(row_id)
-        if conflict: ConflictDetailDialog(self, conflict, on_resolve=self._resolve_and_refresh)
+        if conflict: ConflictDetailDialog(self, conflict, on_resolve=self._resolve_and_refresh).exec()
 
     def resolve_selected(self, keep):
-        selected = self.conflict_tree.selection()
+        selected = self.conflict_tree.selectedItems()
         if not selected:
-            Messagebox.show_warning("Select one or more rows first.", "Nothing Selected", parent=self)
+            QMessageBox.warning(self, "Nothing Selected", "Select one or more rows first.")
             return
-        self._resolve_and_refresh(list(selected), keep)
+        cids = [item.data(0, Qt.UserRole) for item in selected]
+        self._resolve_and_refresh(cids, keep)
 
     def resolve_all_conflicts_bulk(self):
         if not self.sync_manager.conflicts: return
-        if Messagebox.yesno("Resolve all conflicts by picking the newest change automatically?", "Resolve All", parent=self) == "Yes":
+        if QMessageBox.question(self, "Resolve All", "Resolve all conflicts by picking the newest change automatically?") == QMessageBox.Yes:
             self._resolve_and_refresh(list(self.sync_manager.conflicts.keys()), "newest")
 
     def _resolve_and_refresh(self, conflict_ids, keep):
         if self.is_syncing: return
         self._lock_ui("syncing")
-        self.lbl_status.configure(text="Applying conflict resolution...")
+        self.lbl_status.setText("Applying conflict resolution...")
         threading.Thread(target=self._thread_resolve, args=(conflict_ids, keep), daemon=True).start()
 
     def _thread_resolve(self, conflict_ids, keep):
@@ -1329,13 +1682,13 @@ class SyncDashboard(ttk.Window):
         if resolved: self.sync_manager.mirror_mysql_to_sqlite()
         self.gui_queue.put(lambda: self._unlock_ui(f"Resolved {resolved} conflict(s)."))
 
-
 if __name__ == "__main__":
     if os.name == 'nt':
         try:
             my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.sync")
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
-        except Exception:
-            pass
-    app = SyncDashboard()
-    app.mainloop()
+        except Exception: pass
+    app = QApplication(sys.argv)
+    window = SyncDashboard()
+    window.show()
+    sys.exit(app.exec())

@@ -1,6 +1,6 @@
 ttkbootstrap==1.20.4
 pydantic-core==2.46.4
-pip install PySide6
+PySide6
 Flask
 Flask-Cors
 Flask-SocketIO
