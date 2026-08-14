@@ -136,7 +136,10 @@ TELEMETRY_DATA = {
     "ram_gb_used": 0.0, "ram_gb_total": 0.0
 }
 _telemetry_lock = threading.Lock()
+
+# Globals for thread state management
 _global_shutdown_event = threading.Event()
+_flask_shutdown_event = threading.Event() # Specifically to terminate lingering Flask SSE sockets
 _db_shutdown_event = threading.Event()
 
 def _telemetry_worker():
@@ -1099,15 +1102,21 @@ def get_network_data():
         global_stats = {"total_scans": STATS_CACHE["total_scans"], "total_registrations": STATS_CACHE["total_registrations"], "today_scans": STATS_CACHE["today_scans"]}
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
+# ==============================================================================
+# FIXED: SSE Stream correctly respects Flask Shutdown Event to prevent WinError 10038
+# ==============================================================================
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
         q = queue.Queue(maxsize=100)
         with scan_clients_lock: SCAN_CLIENTS.append(q)
         try:
-            while True:
-                try: yield f"data: {json.dumps(q.get(timeout=15))}\n\n"
-                except queue.Empty: yield ": heartbeat\n\n"
+            while not _flask_shutdown_event.is_set():
+                try: 
+                    # Decreased timeout allows it to check the shutdown flag frequently
+                    yield f"data: {json.dumps(q.get(timeout=1))}\n\n"
+                except queue.Empty: 
+                    yield ": heartbeat\n\n"
         except GeneratorExit: pass 
         finally:
             with scan_clients_lock:
@@ -1272,7 +1281,6 @@ class SpeedometerGauge(QWidget):
     def tick(self):
         diff = self.target_val - self.current_val
         if abs(diff) > 0.05:
-            # Accelerated 0.3 convergence avoids floating lag 
             self.current_val += diff * 0.30 
             self.update()
         elif self.current_val != self.target_val:
@@ -1294,33 +1302,28 @@ class SpeedometerGauge(QWidget):
 
         ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
         
-        # Determine Dynamic Color based on load ratio
         if self.good_is_high:
-            if ratio < 0.1: dynamic_color = QColor("#858585") # Idle
-            elif ratio < 0.6: dynamic_color = QColor("#D7BA7D") # Yellow
-            else: dynamic_color = QColor("#4EC9B0") # Green
+            if ratio < 0.1: dynamic_color = QColor("#858585") 
+            elif ratio < 0.6: dynamic_color = QColor("#D7BA7D") 
+            else: dynamic_color = QColor("#4EC9B0") 
         else:
-            if ratio < 0.6: dynamic_color = QColor("#4EC9B0") # Green
-            elif ratio < 0.85: dynamic_color = QColor("#D7BA7D") # Yellow
-            else: dynamic_color = QColor("#F44747") # Red
+            if ratio < 0.6: dynamic_color = QColor("#4EC9B0") 
+            elif ratio < 0.85: dynamic_color = QColor("#D7BA7D") 
+            else: dynamic_color = QColor("#F44747") 
 
-        # Dotted Background Track
         pen_bg = QPen(QColor("#333333"), arc_width, Qt.DotLine, Qt.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(arc_rect, 200 * 16, -220 * 16)
 
-        # Active Solid Foreground Track
         active_span = -int(220 * ratio * 16)
         pen_fg = QPen(dynamic_color, arc_width, Qt.SolidLine, Qt.RoundCap)
         painter.setPen(pen_fg)
         if active_span != 0: painter.drawArc(arc_rect, 200 * 16, active_span)
 
-        # Center Text
         painter.setPen(dynamic_color)
         font_size = max(9, int(diameter * 0.23))
         painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
         
-        # Display explicit float formatting if it's Network or API ms.
         if "MB" in self.unit or self.max_val <= 10.0:
             val_text = f"{self.current_val:.1f}"
         else: 
@@ -1329,7 +1332,6 @@ class SpeedometerGauge(QWidget):
         val_rect = QRectF(margin_x, margin_y + (diameter * 0.18), diameter, diameter * 0.45)
         painter.drawText(val_rect, Qt.AlignCenter, val_text)
 
-        # Bottom Subtext (dynamically scaled to fit string length)
         painter.setPen(QColor("#AAAAAA"))
         sub_font_size = max(7, int(diameter * 0.11))
         painter.setFont(QFont("Segoe UI", sub_font_size, QFont.Normal))
@@ -1352,12 +1354,10 @@ class ServerHub(QMainWindow):
         self.resize(1300, 780)
         self.setMinimumSize(960, 580)
         
-        # Load Application Icon if available
         app_icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
         if os.path.exists(app_icon_path):
             self.setWindowIcon(QIcon(app_icon_path))
         
-        # Unified Responsive, Interactive CSS Stylesheet
         self.setStyleSheet("""
             QMainWindow, QWidget { 
                 background-color: #161618; 
@@ -1381,7 +1381,6 @@ class ServerHub(QMainWindow):
                 font-weight: bold; 
                 font-size: 11px;
             }
-            /* Universal Button Styles */
             QPushButton { 
                 background-color: #2D2D30; 
                 color: #FFF; 
@@ -1395,7 +1394,6 @@ class ServerHub(QMainWindow):
             QPushButton:pressed { background-color: #1E1E22; border-color: #4EC9B0; }
             QPushButton:disabled { background-color: #161618; color: #555555; border-color: #2A2A2C; }
             
-            /* ID-Specific Colorful Sidebar Buttons */
             QPushButton#btnStartEngine { background-color: #107C41; color: white; border: 1px solid #107C41; }
             QPushButton#btnStartEngine:hover { background-color: #0c5e31; }
             QPushButton#btnStartEngine:pressed { background-color: #084021; }
@@ -1416,7 +1414,6 @@ class ServerHub(QMainWindow):
             QPushButton#btnWhatsApp:hover { background-color: #0c5e31; }
             QPushButton#btnWhatsApp:pressed { background-color: #084021; }
 
-            /* Fix ComboBox UI dropdown bug */
             QComboBox {
                 background-color: #2D2D30;
                 color: #FFFFFF;
@@ -1509,7 +1506,6 @@ class ServerHub(QMainWindow):
             "api": AnimatedMeter(self.mini_meter_api)
         }
         
-        # High-performance Qt Timers
         self.timer_gui_queue = QTimer(self)
         self.timer_gui_queue.timeout.connect(self.process_gui_queue)
         self.timer_gui_queue.start(10) 
@@ -2440,6 +2436,10 @@ class ServerHub(QMainWindow):
     def start_flask(self):
         self.btn_start_flask.setEnabled(False)
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
+        
+        # ADDED: Clear shutdown flag so connections work correctly
+        _flask_shutdown_event.clear()
+        
         start_db_writers()
         self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} Multi-threaded highly-available DB writers ready.")
         try:
@@ -2476,6 +2476,11 @@ class ServerHub(QMainWindow):
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopping gracefully... Please wait.")
 
         def _async_stop():
+            # FIXED: Gracefully shut down all SSE and web socket streams BEFORE closing the server loop
+            # This completely eliminates WinError 10038
+            _flask_shutdown_event.set()
+            time.sleep(1.5)
+            
             stop_db_writers()
             if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
             if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
