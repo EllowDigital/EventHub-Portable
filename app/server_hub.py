@@ -22,17 +22,30 @@ import ssl
 import array
 import fractions
 import ctypes
+import html
+import sys
 from datetime import datetime, timezone, timedelta
-import tkinter as tk
-from tkinter import simpledialog
 
-import ttkbootstrap as ttk
-from ttkbootstrap.constants import *
-from ttkbootstrap.widgets.scrolled import ScrolledText
-from ttkbootstrap.dialogs import Messagebox
-from ttkbootstrap.widgets import ToolTip
+# --- High-DPI Environment Flags (Must be set before QApplication) ---
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
+os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+
+# --- PySide6 Core & Widgets ---
+from PySide6.QtCore import Qt, QTimer, QSize, QRectF, QPointF
+from PySide6.QtGui import (
+    QIcon, QPixmap, QImage, QColor, QFont, QCursor, 
+    QPainter, QPen, QBrush, QPainterPath
+)
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QGridLayout, QLabel, QPushButton, QProgressBar, QTableWidget,
+    QTableWidgetItem, QTabWidget, QPlainTextEdit, QGroupBox, QCheckBox,
+    QComboBox, QHeaderView, QMenu, QInputDialog, QMessageBox, QFrame,
+    QDialog, QSplitter, QScrollArea, QSizePolicy
+)
+
 import qrcode
-from PIL import Image, ImageTk
+from PIL import Image
 import webbrowser
 import psutil
 
@@ -86,10 +99,10 @@ app_window = None
 GLOBAL_GROUP_CALL_ACTIVE = False
 GROUP_CALL_WINDOW = None
 
-def global_exception_handler(*args):
-    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=args)
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc_type, exc_value, exc_traceback))
 
-tk.Tk.report_callback_exception = global_exception_handler
+sys.excepthook = global_exception_handler
 
 def _configure_windows_platform():
     if platform.system() != "Windows":
@@ -192,7 +205,10 @@ threading.Thread(target=_telemetry_worker, daemon=True).start()
 try:
     from app.schema import Attendee, OfflineKioskAttendee, get_database_sessions
 except ModuleNotFoundError:
-    from schema import Attendee, OfflineKioskAttendee, get_database_sessions
+    try:
+        from schema import Attendee, OfflineKioskAttendee, get_database_sessions
+    except ModuleNotFoundError:
+        Attendee, OfflineKioskAttendee, get_database_sessions = None, None, lambda: None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(BASE_DIR, 'logs')
@@ -276,15 +292,6 @@ GLOBAL_MIC_SUBSCRIBERS = set()
 AUDIO_WATCHDOG_INTERVAL_SEC = 5
 
 class GlobalAudioEngine:
-    """
-    Bridges the PC's physical mic/speakers to the WebRTC call.
-    NOTE: this used to fail 100% silently (bare 'except: pass' around every
-    sounddevice call) - if the PC's speaker device couldn't be opened, callers'
-    voices would vanish into GLOBAL_AUDIO_MIXER forever with zero error, zero log
-    line, and zero indication anywhere in the app that anything was wrong. All
-    failures are now logged to logs/server_hub.log and exposed via status_text()
-    for the GUI, and a watchdog retries periodically instead of giving up forever.
-    """
     def __init__(self):
         self.in_stream = None
         self.out_stream = None
@@ -310,13 +317,12 @@ class GlobalAudioEngine:
         threading.Thread(target=self._watchdog_loop, daemon=True, name="AudioWatchdog").start()
 
     def _open_input(self):
-        """(Re)open the mic capture stream - this is what lets the PC's own mic be heard by callers."""
         try:
             in_info = sd.query_devices(sd.default.device[0], 'input')
             self.in_channels = min(2, in_info['max_input_channels']) or 1
             self.in_device_name = in_info.get('name', 'default')
         except Exception as e:
-            logging.warning(f"[AUDIO] Could not query default input device info (will still try to open it): {e}")
+            logging.warning(f"[AUDIO] Could not query default input device info: {e}")
         try:
             self.in_stream = sd.RawInputStream(
                 samplerate=48000, channels=self.in_channels, dtype='int16',
@@ -324,20 +330,19 @@ class GlobalAudioEngine:
             )
             self.in_stream.start()
             self.in_error = None
-            logging.info(f"[AUDIO] Mic input OPEN on '{self.in_device_name}' ({self.in_channels}ch). Your mic can be sent to callers.")
+            logging.info(f"[AUDIO] Mic input OPEN on '{self.in_device_name}' ({self.in_channels}ch).")
         except Exception as e:
             self.in_stream = None
             self.in_error = str(e)
-            logging.error(f"[AUDIO] FAILED to open mic input ('{self.in_device_name}'): {e}. Callers will NOT hear you until this is fixed.")
+            logging.error(f"[AUDIO] FAILED to open mic input ('{self.in_device_name}'): {e}.")
 
     def _open_output(self):
-        """(Re)open the speaker playback stream - this is what lets you hear callers' voices."""
         try:
             out_info = sd.query_devices(sd.default.device[1], 'output')
             self.out_channels = min(2, out_info['max_output_channels']) or 1
             self.out_device_name = out_info.get('name', 'default')
         except Exception as e:
-            logging.warning(f"[AUDIO] Could not query default output device info (will still try to open it): {e}")
+            logging.warning(f"[AUDIO] Could not query default output device info: {e}")
         try:
             self.out_stream = sd.RawOutputStream(
                 samplerate=48000, channels=self.out_channels, dtype='int16',
@@ -345,11 +350,11 @@ class GlobalAudioEngine:
             )
             self.out_stream.start()
             self.out_error = None
-            logging.info(f"[AUDIO] Speaker output OPEN on '{self.out_device_name}' ({self.out_channels}ch). Incoming caller voice can be played.")
+            logging.info(f"[AUDIO] Speaker output OPEN on '{self.out_device_name}' ({self.out_channels}ch).")
         except Exception as e:
             self.out_stream = None
             self.out_error = str(e)
-            logging.error(f"[AUDIO] FAILED to open speaker output ('{self.out_device_name}'): {e}. You will NOT hear callers until this is fixed.")
+            logging.error(f"[AUDIO] FAILED to open speaker output ('{self.out_device_name}'): {e}.")
 
     def _watchdog_loop(self):
         while not _global_shutdown_event.is_set():
@@ -375,14 +380,14 @@ class GlobalAudioEngine:
 
     def status_text(self):
         if not SOUNDDEVICE_AVAILABLE:
-            return ("● VOICE AUDIO: NOT INSTALLED", "secondary")
+            return ("● VOICE: NOT INSTALLED", "secondary")
         if self.out_stream and self.in_stream:
-            return ("● VOICE AUDIO: LIVE", "success")
+            return ("● VOICE: LIVE", "success")
         if self.out_stream and not self.in_stream:
-            return ("● VOICE AUDIO: MIC OFFLINE", "warning")
+            return ("● VOICE: MIC OFFLINE", "warning")
         if self.in_stream and not self.out_stream:
-            return ("● VOICE AUDIO: SPEAKER OFFLINE", "danger")
-        return ("● VOICE AUDIO: OFFLINE", "danger")
+            return ("● VOICE: SPK OFFLINE", "danger")
+        return ("● VOICE: OFFLINE", "danger")
 
     def in_callback(self, indata, frames, time_info, status):
         try:
@@ -612,11 +617,6 @@ async def signaling_handler(websocket, path=None):
                         await websocket.send(json.dumps({"type": "client_muted", "muted": GROUP_CALL_WINDOW['spk_muted']}))
                     
                 elif msg_type == "candidate":
-                    # No-op by design: every client page waits for iceGatheringState
-                    # 'complete' before sending its offer (see "FIX 4" in the HTML),
-                    # so no separate trickle candidates are ever sent here today. If
-                    # trickle ICE is ever added client-side, this needs to call
-                    # pc.addIceCandidate(...) or those candidates will be dropped.
                     pass 
                     
                 elif msg_type == "call_ended":
@@ -646,7 +646,7 @@ async def _run_webrtc_server():
         async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
             await asyncio.Future()
     except Exception as e:
-        logging.error(f"[VOICE] Voice signaling server on port {WS_AUDIO_PORT} FAILED to start: {e}. Voice calling will not work at all until this is resolved (check whether the port is already in use by another instance).")
+        logging.error(f"[VOICE] Voice signaling server on port {WS_AUDIO_PORT} FAILED to start: {e}.")
 
 def start_webrtc_server():
     global _ws_loop
@@ -1480,14 +1480,105 @@ def get_local_ip():
         except Exception:
             return "127.0.0.1"
 
-def _hex_to_rgb(hex_color):
-    return tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-def _rgb_to_hex(rgb):
-    return "#{:02x}{:02x}{:02x}".format(*(max(0, min(255, int(round(c)))) for c in rgb))
+# --- ADVANCED VECTOR SPEEDOMETER GAUGE WIDGET ---
+class SpeedometerGauge(QWidget):
+    """
+    High-DPI circular/semi-circular Speedometer Gauge with anti-aliasing.
+    Renders cleanly on 720p, 1080p, 2K, and 4K displays.
+    """
+    def __init__(self, subtext="CPU", unit="%", max_val=100, color_hex="#569CD6", parent=None):
+        super().__init__(parent)
+        self.subtext = subtext
+        self.unit = unit
+        self.max_val = max_val
+        self.current_val = 0.0
+        self.target_val = 0.0
+        self.color_hex = color_hex
+        self.setMinimumSize(68, 62)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-def _mix_hex(c_a, c_b, w):
-    return _rgb_to_hex(a + (b - a) * w for a, b in zip(_hex_to_rgb(c_a), _hex_to_rgb(c_b)))
+        class AmountUsedVarProxy:
+            def __init__(self, outer): self.outer = outer
+            def set(self, v): self.outer.set_value(v)
+        self.amountusedvar = AmountUsedVarProxy(self)
+
+    def set_value(self, val):
+        self.current_val = float(val)
+        self.update()
+
+    def set_target(self, val):
+        self.target_val = float(val)
+
+    def tick(self):
+        if abs(self.target_val - self.current_val) > 0.1:
+            self.current_val += (self.target_val - self.current_val) * 0.18
+            self.update()
+        elif self.current_val != self.target_val:
+            self.current_val = self.target_val
+            self.update()
+
+    def configure(self, bootstyle=None, subtext=None, amounttotal=None):
+        if amounttotal is not None:
+            self.max_val = float(amounttotal)
+        if subtext is not None:
+            self.subtext = subtext
+        if bootstyle is not None:
+            colors = {
+                "info": "#569CD6", "warning": "#D7BA7D", "danger": "#F44747",
+                "success": "#4EC9B0", "secondary": "#858585", "light": "#E0E0E0"
+            }
+            self.color_hex = colors.get(bootstyle, "#569CD6")
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        w = self.width()
+        h = self.height()
+
+        # Gauge dimensions
+        diameter = min(w, h - 14)
+        margin_x = (w - diameter) / 2.0
+        margin_y = 2.0
+        arc_rect = QRectF(margin_x + 4, margin_y + 4, diameter - 8, diameter - 8)
+
+        # Background track arc (220 degrees: 200° down to -20°)
+        pen_bg = QPen(QColor("#2D2D30"), max(3.5, diameter * 0.08), Qt.SolidLine, Qt.RoundCap)
+        painter.setPen(pen_bg)
+        painter.drawArc(arc_rect, 200 * 16, -220 * 16)
+
+        # Active speed meter arc
+        ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
+        active_span = -int(220 * ratio * 16)
+
+        pen_fg = QPen(QColor(self.color_hex), max(3.5, diameter * 0.08), Qt.SolidLine, Qt.RoundCap)
+        painter.setPen(pen_fg)
+        if active_span != 0:
+            painter.drawArc(arc_rect, 200 * 16, active_span)
+
+        # Value text in center
+        painter.setPen(QColor("#FFFFFF"))
+        font_size = max(8, int(diameter * 0.22))
+        painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
+        
+        if self.max_val > 100 and ("MB" in self.unit or "ms" in self.subtext):
+            val_text = f"{self.current_val:.1f}" if self.current_val < 100 else f"{int(round(self.current_val))}"
+        else:
+            val_text = str(int(round(self.current_val)))
+            
+        val_rect = QRectF(margin_x, margin_y + (diameter * 0.18), diameter, diameter * 0.45)
+        painter.drawText(val_rect, Qt.AlignCenter, val_text)
+
+        # Bottom label subtext
+        painter.setPen(QColor("#AAAAAA"))
+        sub_font_size = max(7, int(diameter * 0.14))
+        painter.setFont(QFont("Segoe UI", sub_font_size, QFont.Normal))
+        lbl_rect = QRectF(0, h - 14, w, 14)
+        painter.drawText(lbl_rect, Qt.AlignCenter, self.subtext)
+
 
 class AnimatedMeter:
     def __init__(self, meter_widget):
@@ -1496,33 +1587,87 @@ class AnimatedMeter:
         self.target_val = 0.0
         self._last_int_val = -1
     def set_target(self, val):
-        self.target_val = float(val)
+        self.meter.set_target(val)
     def tick(self):
-        if abs(self.target_val - self.current_val) > 0.1:
-            self.current_val += (self.target_val - self.current_val) * 0.10 
-        else:
-            self.current_val = self.target_val
-        new_int_val = int(round(self.current_val))
-        if new_int_val != self._last_int_val:
-            self.meter.amountusedvar.set(new_int_val)
-            self._last_int_val = new_int_val
+        self.meter.tick()
 
-class ServerHub(ttk.Window):
+
+class ServerHub(QMainWindow):
     def __init__(self):
-        super().__init__(themename="darkly", title="TDE UP 2026 — Event Hub V2.6 (Enterprise Dual-Sync Edition)")
-        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        ww, wh = max(1024, min(1600, int(sw * 0.90))), max(600, min(900, int(sh * 0.90)))
-        self.geometry(f"{ww}x{wh}+{max(0, (sw - ww) // 2)}+{max(0, (sh - wh) // 2 - 15)}")
-        self.minsize(1024, 600)
+        super().__init__()
+        self.setWindowTitle("TDE UP 2026 — Event Hub V3.5 (Responsive Speedometer PySide6)")
+        self.resize(1280, 780)
+        self.setMinimumSize(960, 580)
         
-        icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
-        if os.path.exists(icon_path):
-            try:
-                self.iconbitmap(icon_path)
-            except tk.TclError:
-                pass
+        # Responsive, High-Pixel Visual Stylesheet
+        self.setStyleSheet("""
+            QMainWindow, QWidget { 
+                background-color: #161618; 
+                color: #D4D4D4; 
+                font-family: 'Segoe UI', system-ui, sans-serif; 
+                font-size: 12px; 
+            }
+            QScrollArea { border: none; background: transparent; }
+            QGroupBox { 
+                border: 1px solid #2D2D30; 
+                border-radius: 5px; 
+                margin-top: 8px; 
+                padding-top: 10px; 
+                background: #1E1E20; 
+            }
+            QGroupBox::title { 
+                subcontrol-origin: margin; 
+                left: 8px; 
+                padding: 0 4px; 
+                color: #569CD6; 
+                font-weight: bold; 
+                font-size: 11px;
+            }
+            QPushButton { 
+                background-color: #2D2D30; 
+                color: #FFF; 
+                border: 1px solid #3E3E42; 
+                border-radius: 3px; 
+                padding: 4px 8px; 
+                font-weight: bold; 
+                font-size: 11px;
+            }
+            QPushButton:hover { background-color: #3E3E42; border-color: #569CD6; }
+            QPushButton:disabled { background-color: #202022; color: #555555; border-color: #2A2A2C; }
+            QTableWidget { 
+                background-color: #19191B; 
+                gridline-color: #28282B; 
+                border: 1px solid #2D2D30; 
+                border-radius: 4px;
+                selection-background-color: #094771; 
+                font-size: 11px;
+            }
+            QTableCornerButton::section {
+                background-color: #202022;
+                border: 1px solid #28282B;
+            }
+            QHeaderView::section { 
+                background-color: #202022; 
+                color: #569CD6; 
+                padding: 3px 6px; 
+                border: 1px solid #28282B; 
+                font-weight: bold; 
+                font-size: 11px;
+            }
+            QPlainTextEdit { 
+                background-color: #141416; 
+                color: #D4D4D4; 
+                font-family: 'Consolas', monospace; 
+                font-size: 11px; 
+                border: 1px solid #2D2D30; 
+                border-radius: 4px;
+            }
+            QTabWidget::pane { border: 1px solid #2D2D30; background: #1C1C1E; border-radius: 4px; }
+            QTabBar::tab { background: #252528; color: #888888; padding: 5px 12px; border: 1px solid #2D2D30; font-size: 11px; }
+            QTabBar::tab:selected { background: #1C1C1E; color: #569CD6; font-weight: bold; border-bottom: none; }
+            QSplitter::handle { background-color: #222224; height: 3px; }
+        """)
 
-        self.bind("<Escape>", lambda e: self.attributes("-fullscreen", False))
         self.local_ip = get_local_ip()
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
@@ -1534,16 +1679,17 @@ class ServerHub(ttk.Window):
         self.SessionSQLite = None
         self._db_checked = False
         threading.Thread(target=self.connect_db, daemon=True).start()
+        
         self.http_thread = None
         self.https_thread = None
         self.log_lock = threading.Lock()
         self.log_buffer_flask = []
         self.log_buffer_network = []
         self.log_buffer_cf = []
+        
         self.gui_queue = queue.Queue(maxsize=1000)
         self._meter_cache = {}
         self._context_device_id = None
-        
         self.active_call_windows = {}
 
         global gui_log_callback
@@ -1552,18 +1698,35 @@ class ServerHub(ttk.Window):
         app_window = self
         
         self.build_ui()
+        
         self.animated_meters = {
             "cpu": AnimatedMeter(self.mini_meter_cpu),
             "ram": AnimatedMeter(self.mini_meter_ram),
             "net": AnimatedMeter(self.mini_meter_net),
             "api": AnimatedMeter(self.mini_meter_api)
         }
-        self.flush_log_buffers()
-        self.process_gui_queue()
-        self.refresh_stats()
-        self.refresh_hw_meters()
-        self.animation_loop()
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        
+        # High-performance Qt Timers
+        self.timer_gui_queue = QTimer(self)
+        self.timer_gui_queue.timeout.connect(self.process_gui_queue)
+        self.timer_gui_queue.start(15)
+        
+        self.timer_log_flush = QTimer(self)
+        self.timer_log_flush.timeout.connect(self.flush_log_buffers)
+        self.timer_log_flush.start(250)
+        
+        self.timer_anim = QTimer(self)
+        self.timer_anim.timeout.connect(self.animation_loop)
+        self.timer_anim.start(20)
+        
+        self.timer_hw = QTimer(self)
+        self.timer_hw.timeout.connect(self.refresh_hw_meters)
+        self.timer_hw.start(1000)
+        
+        self.timer_stats = QTimer(self)
+        self.timer_stats.timeout.connect(self.refresh_stats)
+        self.timer_stats.start(3000)
+
         self.ping_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
@@ -1572,11 +1735,11 @@ class ServerHub(ttk.Window):
     def _prompt_group_call(self):
         global GLOBAL_GROUP_CALL_ACTIVE, _ws_loop
         if not WEBRTC_SUPPORTED:
-            Messagebox.show_error("Missing audio libraries. Please pip install aiortc sounddevice", "Error")
+            QMessageBox.critical(self, "Error", "Missing audio libraries. Please pip install aiortc sounddevice")
             return
             
         if GLOBAL_GROUP_CALL_ACTIVE:
-            Messagebox.show_warning("A Group Call is already active.", "Warning")
+            QMessageBox.warning(self, "Warning", "A Group Call is already active.")
             return
             
         GLOBAL_GROUP_CALL_ACTIVE = True
@@ -1589,60 +1752,67 @@ class ServerHub(ttk.Window):
 
     def show_group_call_ui(self):
         global GROUP_CALL_WINDOW
-        if GROUP_CALL_WINDOW is not None:
-            return
+        if GROUP_CALL_WINDOW is not None: return
 
-        win = ttk.Toplevel(self)
-        win.title("Active Group Call")
-        win.geometry("400x350")
-        win.attributes('-topmost', True)
-        win.protocol("WM_DELETE_WINDOW", self.end_group_call_ui)
+        win = QDialog(self)
+        win.setWindowTitle("Active Group Call")
+        win.setFixedSize(380, 300)
+        win.setWindowFlags(win.windowFlags() | Qt.WindowStaysOnTopHint)
         
-        ttk.Label(win, text="📢 Group Call Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(15, 5))
-        ttk.Label(win, text="All connected devices are ringing/joined.", font=("Segoe UI", 10)).pack(pady=(0, 10))
+        layout = QVBoxLayout(win)
+        lbl_ring = QLabel("📢 Group Call Active")
+        lbl_ring.setStyleSheet("color: #4EC9B0; font-size: 15px; font-weight:bold;")
+        layout.addWidget(lbl_ring, alignment=Qt.AlignCenter)
+        
+        lbl_sub = QLabel("All connected devices are ringing/joined.")
+        layout.addWidget(lbl_sub, alignment=Qt.AlignCenter)
         
         if not SOUNDDEVICE_AVAILABLE:
-            ttk.Label(win, text="⚠️ 'sounddevice' missing. PC Speakers Disabled.", font=("Segoe UI", 8), bootstyle=WARNING).pack(pady=(0,5))
+            lbl_err = QLabel("⚠️ 'sounddevice' missing. PC Speakers Disabled.")
+            lbl_err.setStyleSheet("color: #D7BA7D;")
+            layout.addWidget(lbl_err, alignment=Qt.AlignCenter)
             
-        ttk.Label(win, text="Highest Incoming Audio Level:", font=("Segoe UI", 9)).pack(anchor=W, padx=25)
-        meter = ttk.Progressbar(win, bootstyle="success", maximum=100, value=0)
-        meter.pack(fill=X, padx=25, pady=(0, 15))
+        layout.addWidget(QLabel("Highest Incoming Audio Level:"))
+        meter = QProgressBar()
+        meter.setMaximum(100)
+        meter.setValue(0)
+        layout.addWidget(meter)
         
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(fill=X, padx=20, pady=5)
+        btn_frame = QHBoxLayout()
+        btn_mic = QPushButton("Mute My Mic (All)")
+        btn_spk = QPushButton("Mute Speakers (All)")
+        btn_frame.addWidget(btn_mic)
+        btn_frame.addWidget(btn_spk)
+        layout.addLayout(btn_frame)
         
-        btn_mic = ttk.Button(btn_frame, text="Mute My Mic (All)", bootstyle="warning-outline", command=lambda: self.toggle_group_mic(btn_mic))
-        btn_mic.pack(side=LEFT, expand=True, padx=5)
-        
-        btn_spk = ttk.Button(btn_frame, text="Mute Speakers (All)", bootstyle="info-outline", command=lambda: self.toggle_group_speaker(btn_spk))
-        btn_spk.pack(side=LEFT, expand=True, padx=5)
-        
-        btn_end = ttk.Button(win, text="❌ End Group Call", bootstyle="danger", command=self.end_group_call_ui)
-        btn_end.pack(fill=X, padx=25, pady=15)
+        btn_end = QPushButton("❌ End Group Call")
+        btn_end.setStyleSheet("background-color: #F44747; color: white;")
+        btn_end.clicked.connect(self.end_group_call_ui)
+        layout.addWidget(btn_end)
         
         GROUP_CALL_WINDOW = {'win': win, 'meter': meter, 'mic_muted': False, 'spk_muted': False}
+        btn_mic.clicked.connect(lambda: self.toggle_group_mic(btn_mic))
+        btn_spk.clicked.connect(lambda: self.toggle_group_speaker(btn_spk))
+        
+        win.finished.connect(self.end_group_call_ui)
+        win.show()
 
     def update_group_call_meter(self, volume):
         global GROUP_CALL_WINDOW
-        if GROUP_CALL_WINDOW:
+        if GROUP_CALL_WINDOW and GROUP_CALL_WINDOW['win'].isVisible():
             meter = GROUP_CALL_WINDOW['meter']
-            if meter.winfo_exists():
-                curr = meter['value']
-                val = volume if volume > curr else curr - ((curr - volume) * 0.15)
-                meter.configure(value=val)
-                if val > 75:
-                    meter.configure(bootstyle="danger")
-                elif val > 45:
-                    meter.configure(bootstyle="warning")
-                else:
-                    meter.configure(bootstyle="success")
+            curr = meter.value()
+            val = volume if volume > curr else curr - ((curr - volume) * 0.15)
+            meter.setValue(int(val))
+            c = "#F44747" if val > 75 else ("#D7BA7D" if val > 45 else "#4EC9B0")
+            meter.setStyleSheet(f"QProgressBar::chunk {{ background-color: {c}; }}")
 
     def toggle_group_mic(self, btn):
         global GROUP_CALL_WINDOW, _ws_loop
         if GROUP_CALL_WINDOW:
             GROUP_CALL_WINDOW['mic_muted'] = not GROUP_CALL_WINDOW['mic_muted']
             muted = GROUP_CALL_WINDOW['mic_muted']
-            btn.configure(text="Unmute My Mic (All)" if muted else "Mute My Mic (All)", bootstyle="warning" if muted else "warning-outline")
+            btn.setText("Unmute My Mic (All)" if muted else "Mute My Mic (All)")
             if _ws_loop:
                 for ws in list(CONNECTED_WS.values()):
                     asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": muted})), _ws_loop)
@@ -1652,7 +1822,7 @@ class ServerHub(ttk.Window):
         if GROUP_CALL_WINDOW:
             GROUP_CALL_WINDOW['spk_muted'] = not GROUP_CALL_WINDOW['spk_muted']
             muted = GROUP_CALL_WINDOW['spk_muted']
-            btn.configure(text="Unmute Speakers (All)" if muted else "Mute Speakers (All)", bootstyle="info" if muted else "info-outline")
+            btn.setText("Unmute Speakers (All)" if muted else "Mute Speakers (All)")
             if _ws_loop:
                 for ws in list(CONNECTED_WS.values()):
                     asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": muted})), _ws_loop)
@@ -1667,72 +1837,76 @@ class ServerHub(ttk.Window):
                 asyncio.run_coroutine_threadsafe(cleanup_call(d_id), _ws_loop)
         
         if GROUP_CALL_WINDOW:
-            try:
-                GROUP_CALL_WINDOW['win'].destroy()
-            except Exception:
-                pass
+            try: GROUP_CALL_WINDOW['win'].close()
+            except: pass
             GROUP_CALL_WINDOW = None
         self._append_log('network', "[VOICE] Group Call ended.")
 
     def show_active_call_ui(self, device_id):
-        if device_id in self.active_call_windows:
-            return
+        if device_id in self.active_call_windows: return
         
         d_name = "Unknown Device"
         with device_lock:
-            if device_id in ACTIVE_DEVICES:
-                d_name = ACTIVE_DEVICES[device_id]['name']
+            if device_id in ACTIVE_DEVICES: d_name = ACTIVE_DEVICES[device_id]['name']
 
-        win = ttk.Toplevel(self)
-        win.title("Active Voice Call")
-        win.geometry("380x320")
-        win.attributes('-topmost', True)
-        win.protocol("WM_DELETE_WINDOW", lambda: self.end_call_ui(device_id))
+        win = QDialog(self)
+        win.setWindowTitle("Active Voice Call")
+        win.setFixedSize(360, 280)
+        win.setWindowFlags(win.windowFlags() | Qt.WindowStaysOnTopHint)
         
-        ttk.Label(win, text="🎙️ Call Accepted & Active", font=("Segoe UI", 16, "bold"), bootstyle=SUCCESS).pack(pady=(15, 5))
-        ttk.Label(win, text=f"Connected to: {d_name}", font=("Segoe UI", 10)).pack(pady=(0, 10))
+        layout = QVBoxLayout(win)
+        lbl_ring = QLabel("🎙️ Call Accepted & Active")
+        lbl_ring.setStyleSheet("color: #4EC9B0; font-size: 15px; font-weight:bold;")
+        layout.addWidget(lbl_ring, alignment=Qt.AlignCenter)
         
+        layout.addWidget(QLabel(f"Connected to: {d_name}"), alignment=Qt.AlignCenter)
         if not SOUNDDEVICE_AVAILABLE:
-            ttk.Label(win, text="⚠️ 'sounddevice' missing. PC Speakers Disabled.", font=("Segoe UI", 8), bootstyle=WARNING).pack(pady=(0,5))
+            lbl_err = QLabel("⚠️ 'sounddevice' missing. PC Speakers Disabled.")
+            lbl_err.setStyleSheet("color: #D7BA7D;")
+            layout.addWidget(lbl_err, alignment=Qt.AlignCenter)
             
-        ttk.Label(win, text="Incoming Audio Level:", font=("Segoe UI", 9)).pack(anchor=W, padx=25)
-        meter = ttk.Progressbar(win, bootstyle="success", maximum=100, value=0)
-        meter.pack(fill=X, padx=25, pady=(0, 15))
+        layout.addWidget(QLabel("Incoming Audio Level:"))
+        meter = QProgressBar()
+        meter.setMaximum(100)
+        meter.setValue(0)
+        layout.addWidget(meter)
         
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(fill=X, padx=20, pady=5)
+        btn_frame = QHBoxLayout()
+        btn_mic = QPushButton("Mute My Mic")
+        btn_spk = QPushButton("Mute Speaker")
+        btn_frame.addWidget(btn_mic)
+        btn_frame.addWidget(btn_spk)
+        layout.addLayout(btn_frame)
         
-        btn_mic = ttk.Button(btn_frame, text="Mute My Mic", bootstyle="warning-outline", command=lambda: self.toggle_mic(device_id, btn_mic))
-        btn_mic.pack(side=LEFT, expand=True, padx=5)
-        
-        btn_spk = ttk.Button(btn_frame, text="Mute Speaker", bootstyle="info-outline", command=lambda: self.toggle_speaker(device_id, btn_spk))
-        btn_spk.pack(side=LEFT, expand=True, padx=5)
-        
-        btn_end = ttk.Button(win, text="❌ End Call", bootstyle="danger", command=lambda: self.end_call_ui(device_id))
-        btn_end.pack(fill=X, padx=25, pady=15)
+        btn_end = QPushButton("❌ End Call")
+        btn_end.setStyleSheet("background-color: #F44747; color: white;")
+        btn_end.clicked.connect(lambda: self.end_call_ui(device_id))
+        layout.addWidget(btn_end)
         
         self.active_call_windows[device_id] = {'win': win, 'meter': meter, 'mic_muted': False, 'spk_muted': False}
+        
+        btn_mic.clicked.connect(lambda: self.toggle_mic(device_id, btn_mic))
+        btn_spk.clicked.connect(lambda: self.toggle_speaker(device_id, btn_spk))
+        win.finished.connect(lambda: self.end_call_ui(device_id))
+        win.show()
         self._append_log('network', f"[VOICE] Call established with {d_name}.")
 
     def update_call_meter(self, device_id, volume):
         if device_id in self.active_call_windows:
-            meter = self.active_call_windows[device_id]['meter']
-            if meter.winfo_exists():
-                curr = meter['value']
+            state = self.active_call_windows[device_id]
+            if state['win'].isVisible():
+                meter = state['meter']
+                curr = meter.value()
                 val = volume if volume > curr else curr - ((curr - volume) * 0.15)
-                meter.configure(value=val)
-                if val > 75:
-                    meter.configure(bootstyle="danger")
-                elif val > 45:
-                    meter.configure(bootstyle="warning")
-                else:
-                    meter.configure(bootstyle="success")
+                meter.setValue(int(val))
+                c = "#F44747" if val > 75 else ("#D7BA7D" if val > 45 else "#4EC9B0")
+                meter.setStyleSheet(f"QProgressBar::chunk {{ background-color: {c}; }}")
 
     def toggle_mic(self, device_id, btn):
         state = self.active_call_windows.get(device_id)
         if state:
             state['mic_muted'] = not state['mic_muted']
-            btn.configure(text="Unmute My Mic" if state['mic_muted'] else "Mute My Mic", bootstyle="warning" if state['mic_muted'] else "warning-outline")
+            btn.setText("Unmute My Mic" if state['mic_muted'] else "Mute My Mic")
             ws = CONNECTED_WS.get(device_id)
             if ws and _ws_loop:
                 asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": state['mic_muted']})), _ws_loop)
@@ -1741,7 +1915,7 @@ class ServerHub(ttk.Window):
         state = self.active_call_windows.get(device_id)
         if state:
             state['spk_muted'] = not state['spk_muted']
-            btn.configure(text="Unmute Speaker" if state['spk_muted'] else "Mute Speaker", bootstyle="info" if state['spk_muted'] else "info-outline")
+            btn.setText("Unmute Speaker" if state['spk_muted'] else "Mute Speaker")
             ws = CONNECTED_WS.get(device_id)
             if ws and _ws_loop:
                 asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": state['spk_muted']})), _ws_loop)
@@ -1757,10 +1931,8 @@ class ServerHub(ttk.Window):
     def close_call_ui(self, device_id):
         state = self.active_call_windows.get(device_id)
         if state:
-            try:
-                state['win'].destroy()
-            except Exception:
-                pass
+            try: state['win'].close()
+            except: pass
             del self.active_call_windows[device_id]
             self._append_log('network', f"[VOICE] Call disconnected.")
 
@@ -1821,673 +1993,616 @@ class ServerHub(ttk.Window):
     def _append_log(self, widget_id, message, tag=None):
         segments = list(message) if isinstance(message, (list, tuple)) else [(message, tag or _guess_log_tag(message))]
         with self.log_lock:
-            if widget_id == 'flask': 
-                self.log_buffer_flask.append(segments)
-            elif widget_id == 'network': 
-                self.log_buffer_network.append(segments)
-            elif widget_id == 'cf': 
-                self.log_buffer_cf.append(segments)
+            if widget_id == 'flask': self.log_buffer_flask.append(segments)
+            elif widget_id == 'network': self.log_buffer_network.append(segments)
+            elif widget_id == 'cf': self.log_buffer_cf.append(segments)
 
     def log_flask_event(self, message):
         self._append_log('flask', message)
 
     def flush_log_buffers(self):
-        if not self.winfo_exists():
-            return
         try:
             with self.log_lock:
                 CHUNK_SIZE = 1000
                 flask_logs = self.log_buffer_flask[:CHUNK_SIZE]
                 net_logs = self.log_buffer_network[:CHUNK_SIZE]
                 cf_logs = self.log_buffer_cf[:CHUNK_SIZE]
-                
                 del self.log_buffer_flask[:CHUNK_SIZE]
                 del self.log_buffer_network[:CHUNK_SIZE]
                 del self.log_buffer_cf[:CHUNK_SIZE]
-                
-                pending = len(self.log_buffer_flask) + len(self.log_buffer_network) + len(self.log_buffer_cf)
-
-            if flask_logs:
-                self._write_logs_to_widget(self.log_flask.text, flask_logs)
-            if net_logs:
-                self._write_logs_to_widget(self.log_network.text, net_logs)
-            if cf_logs and hasattr(self, 'log_cf') and self.log_cf:
-                self._write_logs_to_widget(self.log_cf.text, cf_logs)
-                
+            if flask_logs: self._write_logs_to_widget(self.log_flask, flask_logs)
+            if net_logs: self._write_logs_to_widget(self.log_network, net_logs)
+            if cf_logs: self._write_logs_to_widget(self.log_cf, cf_logs)
         except Exception:
             pass
-        finally: 
-            delay = 10 if pending > 0 else 250
-            self.after(delay, self.flush_log_buffers)
 
     def _write_logs_to_widget(self, text_widget, log_batches):
-        if not text_widget.winfo_exists() or not log_batches:
-            return
-        
-        text_widget.configure(state=NORMAL)
-        
-        insert_args = []
+        tag_colors = {
+            "log_default": "#D4D4D4", "log_timestamp": "#757575", "log_device": "#569CD6",
+            "log_success": "#4EC9B0", "log_warning": "#D7BA7D", "log_error": "#F44747",
+            "log_info": "#9CDCFE", "log_register": "#C586C0", "log_checkin": "#CE9178"
+        }
+        html_lines = []
         for segments in log_batches:
-            for txt, tg in segments: 
-                insert_args.append(txt)
-                insert_args.append(tg if tg else "")
-            insert_args.append("\n")
-            insert_args.append("")
+            line_html = ""
+            for txt, tg in segments:
+                color = tag_colors.get(tg, "#D4D4D4")
+                line_html += f"<span style='color:{color};'>{html.escape(txt)}</span>"
+            html_lines.append(line_html)
             
-        text_widget.insert(END, *insert_args)
-        text_widget.see(END)
-        
-        lc = int(text_widget.index('end-1c').split('.')[0])
-        if lc > MAX_LOG_LINES + 500: 
-            text_widget.delete('1.0', f'{lc - MAX_LOG_LINES}.0')
-            
-        text_widget.configure(state=DISABLED)
+        if html_lines:
+            text_widget.appendHtml("<br>".join(html_lines))
 
     def process_gui_queue(self):
-        if not self.winfo_exists():
-            return
         start_time = time.perf_counter()
         processed_count = 0
         try:
             while time.perf_counter() - start_time < 0.02 and processed_count < 500:
-                try:
-                    task = self.gui_queue.get_nowait()
-                except queue.Empty:
-                    break
-                try:
-                    task()
-                except Exception as e:
-                    logging.error(f"GUI task execution failed: {e}")
+                try: task = self.gui_queue.get_nowait()
+                except queue.Empty: break
+                try: task()
+                except Exception as e: logging.error(f"GUI task execution failed: {e}")
                 processed_count += 1
         except Exception:
             pass
-        finally:
-            self.after(15, self.process_gui_queue)
 
     def animation_loop(self):
-        if not self.winfo_exists():
-            return
         try:
             for anim_meter in self.animated_meters.values():
                 anim_meter.tick()
         except Exception:
             pass
-        finally:
-            self.after(16, self.animation_loop) 
 
     def clear_system_logs(self):
-        with self.log_lock:
-            self.log_buffer_flask.clear()
-        self.log_flask.text.configure(state=NORMAL)
-        self.log_flask.text.delete('1.0', END)
-        self.log_flask.text.configure(state=DISABLED)
+        with self.log_lock: self.log_buffer_flask.clear()
+        self.log_flask.clear()
         self._append_log('flask', "[INFO] Operator cleared system logs.")
 
     def clear_network_logs(self):
-        with self.log_lock:
-            self.log_buffer_network.clear()
-        self.log_network.text.configure(state=NORMAL)
-        self.log_network.text.delete('1.0', END)
-        self.log_network.text.configure(state=DISABLED)
+        with self.log_lock: self.log_buffer_network.clear()
+        self.log_network.clear()
         self._append_log('network', "[INFO] Operator cleared network logs.")
 
     def clear_cf_logs(self):
-        with self.log_lock:
-            self.log_buffer_cf.clear()
-        self.log_cf.text.configure(state=NORMAL)
-        self.log_cf.text.delete('1.0', END)
-        self.log_cf.text.configure(state=DISABLED)
+        with self.log_lock: self.log_buffer_cf.clear()
+        self.log_cf.clear()
         self._append_log('cf', "[INFO] Operator cleared Cloudflare logs.")
 
     def copy_to_clipboard(self, text):
-        if not text or text == "Offline":
-            return
-        self.clipboard_clear()
-        self.clipboard_append(text)
-        self.update()
+        if not text or text == "Offline": return
+        QApplication.clipboard().setText(text)
         self._append_log('network', f"[CLIPBOARD] Copied: {text}")
 
     def open_browser(self, url): 
         if url != "Offline" and url != "Pending":
             webbrowser.open(url)
         
-    def toggle_fullscreen(self): 
-        is_fullscreen = self.attributes("-fullscreen")
-        self.attributes("-fullscreen", not is_fullscreen)
+    def toggle_fullscreen(self):
+        if self.isFullScreen(): self.showNormal()
+        else: self.showFullScreen()
 
-    def _configure_custom_styles(self):
-        colors = self.style.colors
-        self.APP_BG = "#1E1E1E"        
-        self.PANEL_BG = "#252526"      
-        self.BORDER = "#3E3E42"        
-        self.TEXT_FG = "#CCCCCC"       
-        self.ACCENT = "#569CD6"        
-        self.SUCCESS_FG = "#4EC9B0"
-        self.WARN_FG = "#D7BA7D"
-        self.ERR_FG = "#F44747"
-        self.configure(background=self.APP_BG)
-        self.style.configure(".", background=self.APP_BG, foreground=self.TEXT_FG, font=("Segoe UI", 9))
-        self.style.configure("TFrame", background=self.APP_BG)
-        self.style.configure("TLabel", background=self.APP_BG, foreground=self.TEXT_FG)
-        self.style.configure("Panel.TFrame", background=self.PANEL_BG)
-        self.style.configure("Panel.TLabel", background=self.PANEL_BG, foreground=self.TEXT_FG)
-        self.style.configure("PanelInfo.TLabel", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 8, "bold"))
-        self.style.configure("Panel.TCheckbutton", background=self.PANEL_BG, foreground=self.TEXT_FG)
-        self.style.configure("TLabelframe", background=self.PANEL_BG, bordercolor=self.BORDER)
-        self.style.configure("TLabelframe.Label", background=self.PANEL_BG, foreground=self.ACCENT, font=("Segoe UI", 9, "bold"))
-        self.style.configure("Card.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
-        self.style.configure("CardTitle.TLabel", background=self.PANEL_BG, foreground="#9D9D9D", font=("Segoe UI", 8, "bold"))
-        for key in ("primary", "info", "success", "warning", "danger", "light", "secondary"):
-            self.style.configure(f"CardValue.{key}.TLabel", background=self.PANEL_BG, foreground=colors.get(key), font=("Segoe UI", 20, "bold"))
-        self.style.configure("CardFlash.TLabel", background=self.PANEL_BG, foreground="#FFD700", font=("Segoe UI", 20, "bold"))
-        self.style.configure("Soft.TFrame", background=self.PANEL_BG, bordercolor=self.BORDER, borderwidth=1, relief="solid")
-        self.style.configure("Treeview.Heading", background=self.PANEL_BG, foreground=self.ACCENT, bordercolor=self.BORDER, relief="flat", font=("Segoe UI", 9, "bold"))
-        self.style.map("Treeview.Heading", background=[("active", "#2D2D30")])
-        self.style.configure("Treeview", bordercolor=self.BORDER, borderwidth=1, background=self.APP_BG, foreground=self.TEXT_FG, fieldbackground=self.APP_BG, rowheight=28)
-        self.style.map('Treeview', background=[('selected', '#094771')]) 
-        self.style.configure("LogHeader.TLabel", background="#2D2D30", foreground=self.SUCCESS_FG, font=("Segoe UI", 9, "bold"), padding=10)
-
-    def _build_status_badge(self, parent, initial_text, bootstyle):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(10, 6))
-        frame.pack(side=LEFT, padx=(0, 8))
-        lbl = ttk.Label(frame, text=initial_text, bootstyle=bootstyle, font=("Segoe UI", 8, "bold"), style="Panel.TLabel")
-        lbl.pack(anchor=CENTER)
+    def _build_status_badge(self, parent_layout, initial_text, color):
+        f = QFrame()
+        f.setStyleSheet("QFrame { background-color:#1E1E22; border: 1px solid #2D2D30; border-radius: 4px; padding: 2px 5px; }")
+        l = QVBoxLayout(f)
+        l.setContentsMargins(4,2,4,2)
+        lbl = QLabel(initial_text)
+        lbl.setStyleSheet(f"color: {color}; font-weight: bold; font-size: 11px; border:none;")
+        l.addWidget(lbl)
+        parent_layout.addWidget(f)
         return lbl
 
-    def _create_log_box(self, parent, title, clear_cmd, side=LEFT, padx=4):
-        frame = ttk.Frame(parent, style="Soft.TFrame")
-        frame.pack(side=side, fill=BOTH, expand=True, padx=padx, pady=0)
-        hdr = ttk.Frame(frame, style="Panel.TFrame")
-        hdr.pack(fill=X)
-        ttk.Label(hdr, text=title if title else "Live Log Feed", style="LogHeader.TLabel").pack(side=LEFT, fill=X, expand=True)
+    def _create_log_box(self, parent_layout, title, clear_cmd):
+        frame = QFrame()
+        frame.setStyleSheet("QFrame { background: #1C1C1E; border: 1px solid #2D2D30; border-radius: 4px; }")
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(0,0,0,0)
+        v.setSpacing(0)
+        
+        hdr = QFrame()
+        hdr.setStyleSheet("background: #202023; border-bottom: 1px solid #2D2D30; border-top-left-radius: 4px; border-top-right-radius: 4px;")
+        h = QHBoxLayout(hdr)
+        h.setContentsMargins(8,3,8,3)
+        l = QLabel(title)
+        l.setStyleSheet("color: #4EC9B0; font-weight: bold; font-size: 11px; border:none;")
+        h.addWidget(l)
+        h.addStretch()
         if clear_cmd:
-            ttk.Button(hdr, text="Clear", bootstyle="secondary-link", command=clear_cmd).pack(side=RIGHT, padx=5)
-        log_box = ScrolledText(frame, font=("Consolas", 8))
-        log_box.pack(fill=BOTH, expand=True, padx=0, pady=0)
-        log_box.text.configure(state=DISABLED, bg="#1E1E1E", fg="#D4D4D4", insertbackground="#D4D4D4", selectbackground="#264F78", borderwidth=0)
-        log_box.text.tag_configure("log_default", foreground="#D4D4D4")
-        log_box.text.tag_configure("log_timestamp", foreground="#858585", font=("Consolas", 8))
-        log_box.text.tag_configure("log_device", foreground=self.ACCENT, font=("Consolas", 8, "bold"))
-        log_box.text.tag_configure("log_success", foreground=self.SUCCESS_FG, font=("Consolas", 8, "bold"))
-        log_box.text.tag_configure("log_warning", foreground=self.WARN_FG, font=("Consolas", 8, "bold"))
-        log_box.text.tag_configure("log_error", foreground=self.ERR_FG, font=("Consolas", 8, "bold"))
-        log_box.text.tag_configure("log_info", foreground="#9CDCFE")
-        log_box.text.tag_configure("log_register", foreground="#C586C0", font=("Consolas", 8, "bold"))
-        log_box.text.tag_configure("log_checkin", foreground="#CE9178", font=("Consolas", 8, "bold"))
-        return log_box
+            btn = QPushButton("Clear")
+            btn.setStyleSheet("background: transparent; border: none; color: #569CD6; font-size: 11px;")
+            btn.clicked.connect(clear_cmd)
+            h.addWidget(btn)
+        v.addWidget(hdr)
+        
+        pt = QPlainTextEdit()
+        pt.setReadOnly(True)
+        pt.setMaximumBlockCount(MAX_LOG_LINES)
+        pt.setStyleSheet("background: #141416; border:none; padding: 4px;")
+        v.addWidget(pt)
+        
+        parent_layout.addWidget(frame)
+        return pt
 
-    def _show_device_menu(self, event):
-        iid = self.tree_devices.identify_row(event.y)
-        if iid and iid != "empty_msg":
-            self.tree_devices.selection_set(iid)
-            self._context_device_id = iid
-            self.device_menu.post(event.x_root, event.y_root)
+    def _show_device_menu(self, pos):
+        item = self.tree_devices.itemAt(pos)
+        if item:
+            row = item.row()
+            self._context_device_id = self.tree_devices.item(row, 6).text()
+            if self._context_device_id == "empty_msg": return
+            
+            menu = QMenu(self)
+            menu.setStyleSheet("QMenu { background-color: #252528; border: 1px solid #3E3E42; } QMenu::item:selected { background-color: #094771; }")
+            m_call = menu.addAction("📞 Call Device")
+            m_ren = menu.addAction("✏️ Rename Device")
+            m_msg = menu.addAction("📨 Send Text Message")
+            
+            action = menu.exec(self.tree_devices.viewport().mapToGlobal(pos))
+            if action == m_call: self._prompt_start_call()
+            elif action == m_ren: self._prompt_rename_device()
+            elif action == m_msg: self._prompt_send_message()
 
     def _prompt_rename_device(self):
         d_id = getattr(self, '_context_device_id', None)
-        if not d_id or d_id == "empty_msg":
-            return
-        
+        if not d_id or d_id == "empty_msg": return
         with device_lock:
-            if d_id not in ACTIVE_DEVICES:
-                return
+            if d_id not in ACTIVE_DEVICES: return
             old_name = ACTIVE_DEVICES[d_id]['name']
-            
-        new_name = simpledialog.askstring("Rename Device", f"Enter new name for '{old_name}':", initialvalue=old_name, parent=self)
-        
-        if new_name and new_name.strip() and new_name.strip() != old_name:
+        new_name, ok = QInputDialog.getText(self, "Rename Device", f"Enter new name for '{old_name}':", text=old_name)
+        if ok and new_name.strip() and new_name.strip() != old_name:
             with device_lock:
                 CUSTOM_DEVICE_NAMES[d_id] = new_name.strip()
-                if d_id in ACTIVE_DEVICES:
-                    ACTIVE_DEVICES[d_id]['name'] = new_name.strip()
+                if d_id in ACTIVE_DEVICES: ACTIVE_DEVICES[d_id]['name'] = new_name.strip()
             try:
-                with open(DEVICE_NAMES_FILE, 'w') as f:
-                    json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
-            except Exception:
-                pass
+                with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
+            except Exception: pass
             self._append_log('network', f"[INFO] Device '{old_name}' renamed to '{new_name.strip()}'.")
 
     def _prompt_send_message(self):
         d_id = getattr(self, '_context_device_id', None)
-        if not d_id or d_id == "empty_msg":
-            return
-        
+        if not d_id or d_id == "empty_msg": return
         with device_lock:
-            if d_id not in ACTIVE_DEVICES:
-                return
+            if d_id not in ACTIVE_DEVICES: return
             d_name = ACTIVE_DEVICES[d_id]['name']
-            
-        msg = simpledialog.askstring("Send Message", f"Enter message to push to '{d_name}':", parent=self)
-        
-        if msg and msg.strip():
-            with device_lock:
-                DEVICE_MESSAGES[d_id] = msg.strip()
+        msg, ok = QInputDialog.getText(self, "Send Message", f"Enter message for '{d_name}':")
+        if ok and msg.strip():
+            with device_lock: DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
 
     def _prompt_start_call(self):
         global _ws_loop
         if not WEBRTC_SUPPORTED:
-            Messagebox.show_error("Missing audio libraries. Please pip install aiortc sounddevice.", "Error")
+            QMessageBox.critical(self, "Error", "Missing audio libraries. Please pip install aiortc sounddevice.")
             return
-            
         d_id = getattr(self, '_context_device_id', None)
-        if not d_id or d_id == "empty_msg":
-            return
-        
+        if not d_id or d_id == "empty_msg": return
         ws = CONNECTED_WS.get(d_id)
         if ws and _ws_loop:
             async def safe_ring():
-                try:
-                    await ws.send(json.dumps({"type": "incoming_call"}))
-                except Exception as e:
-                    logging.error(f"Failed to ring {d_id}: {e}")
-            
+                try: await ws.send(json.dumps({"type": "incoming_call"}))
+                except Exception as e: logging.error(f"Failed to ring {d_id}: {e}")
             asyncio.run_coroutine_threadsafe(safe_ring(), _ws_loop)
             self._append_log('network', f"[VOICE] Ringing device {d_id}...")
         else:
-            Messagebox.show_warning("Device is not connected to the voice server.", "Unavailable")
+            QMessageBox.warning(self, "Unavailable", "Device is not connected to the voice server.")
 
     def _prompt_broadcast_message(self):
-        with device_lock:
-            active_count = len(ACTIVE_DEVICES)
+        with device_lock: active_count = len(ACTIVE_DEVICES)
         if active_count == 0:
-            Messagebox.show_warning("No active devices connected to broadcast to.", "No Devices", parent=self)
+            QMessageBox.warning(self, "No Devices", "No active devices connected to broadcast to.")
             return
-            
-        msg = simpledialog.askstring("Broadcast Message", f"Enter message to broadcast to ALL ({active_count}) active devices:", parent=self)
-        
-        if msg and msg.strip():
+        msg, ok = QInputDialog.getText(self, "Broadcast Message", f"Enter message for ALL ({active_count}) active devices:")
+        if ok and msg.strip():
             with device_lock:
-                for d_id in ACTIVE_DEVICES.keys():
-                    DEVICE_MESSAGES[d_id] = msg.strip()
-            self._append_log('network', f"[INFO] Broadcast message queued for {active_count} devices: {msg.strip()}")
+                for d_id in ACTIVE_DEVICES.keys(): DEVICE_MESSAGES[d_id] = msg.strip()
+            self._append_log('network', f"[INFO] Broadcast queued for {active_count} devices: {msg.strip()}")
 
     def build_ui(self):
-        self._configure_custom_styles()
-        self.root_container = ttk.Frame(self, style="TFrame")
-        self.root_container.pack(fill=BOTH, expand=True)
-        sidebar_outer = ttk.Frame(self.root_container, width=250, style="TFrame")
-        sidebar_outer.pack(side=LEFT, fill=Y)
-        sidebar_outer.pack_propagate(False)
-        self.sidebar_canvas = ttk.Canvas(sidebar_outer, highlightthickness=0, background=self.APP_BG)
-        sidebar_vsb = ttk.Scrollbar(sidebar_outer, orient=VERTICAL, command=self.sidebar_canvas.yview)
-        self.sidebar_canvas.configure(yscrollcommand=sidebar_vsb.set)
-        sidebar_vsb.pack(side=RIGHT, fill=Y)
-        self.sidebar_canvas.pack(side=LEFT, fill=BOTH, expand=True)
-        sidebar = ttk.Frame(self.sidebar_canvas, padding=12, style="TFrame")
-        sidebar_window = self.sidebar_canvas.create_window((0, 0), window=sidebar, anchor="nw")
-        sidebar.bind("<Configure>", lambda e: self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox("all")))
-        self.sidebar_canvas.bind("<Configure>", lambda e: self.sidebar_canvas.itemconfig(sidebar_window, width=e.width))
-        self.sidebar_canvas.bind("<Enter>", lambda e: self.sidebar_canvas.bind_all("<MouseWheel>", lambda ev: self.sidebar_canvas.yview_scroll(int(-1 * (ev.delta / 120)), "units")))
-        self.sidebar_canvas.bind("<Leave>", lambda e: self.sidebar_canvas.unbind_all("<MouseWheel>"))
-
-        ttk.Label(sidebar, text="NETWORK & ROUTING", font=("Segoe UI", 12, "bold"), foreground=self.ACCENT).pack(pady=(0, 12), anchor=W)
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(6, 6, 6, 6)
+        main_layout.setSpacing(6)
         
-        flask_frame = ttk.Labelframe(sidebar, text=" 🌐 High-Speed Engine ", padding=10)
-        flask_frame.pack(fill=X, pady=6)
-        self.btn_start_flask = ttk.Button(flask_frame, text="▶ START ENGINE", bootstyle=SUCCESS, command=self.start_flask)
-        self.btn_start_flask.pack(fill=X, pady=2)
-        self.btn_stop_flask = ttk.Button(flask_frame, text="⏹ STOP ENGINE", bootstyle="danger-outline", state=DISABLED, command=self.stop_flask)
-        self.btn_stop_flask.pack(fill=X, pady=2)
-        ttk.Label(flask_frame, text="Network QR (iOS HTTPS):", style="PanelInfo.TLabel").pack(pady=(8, 4))
-        self.lbl_flask_qr = ttk.Label(flask_frame, style="Panel.TLabel")
-        self.lbl_flask_qr.pack()
+        # --- LEFT SIDEBAR SCROLLABLE WRAPPER ---
+        sidebar_scroll = QScrollArea()
+        sidebar_scroll.setWidgetResizable(True)
+        sidebar_scroll.setFixedWidth(230)
+        sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        sidebar = QWidget()
+        side_layout = QVBoxLayout(sidebar)
+        side_layout.setContentsMargins(4, 4, 4, 4)
+        side_layout.setSpacing(6)
+        
+        lbl_net = QLabel("NETWORK & ROUTING")
+        lbl_net.setStyleSheet("color: #569CD6; font-size: 12px; font-weight: bold;")
+        side_layout.addWidget(lbl_net)
+        
+        # 1. Engine Group
+        grp_eng = QGroupBox("🌐 High-Speed Engine")
+        l_eng = QVBoxLayout(grp_eng)
+        l_eng.setContentsMargins(6, 6, 6, 6)
+        l_eng.setSpacing(4)
+        
+        self.btn_start_flask = QPushButton("▶ START ENGINE")
+        self.btn_start_flask.setStyleSheet("background-color: #107C41; color: white;")
+        self.btn_start_flask.clicked.connect(self.start_flask)
+        self.btn_stop_flask = QPushButton("⏹ STOP ENGINE")
+        self.btn_stop_flask.setStyleSheet("background-color: transparent; border: 1px solid #F44747; color: #F44747;")
+        self.btn_stop_flask.setEnabled(False)
+        self.btn_stop_flask.clicked.connect(self.stop_flask)
+        l_eng.addWidget(self.btn_start_flask)
+        l_eng.addWidget(self.btn_stop_flask)
+        
+        lbl_qr_desc = QLabel("Network QR (iOS HTTPS):")
+        lbl_qr_desc.setStyleSheet("font-size: 10px; color: #888888;")
+        l_eng.addWidget(lbl_qr_desc)
+        
+        self.lbl_flask_qr = QLabel()
+        self.lbl_flask_qr.setAlignment(Qt.AlignCenter)
+        l_eng.addWidget(self.lbl_flask_qr)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
-        self.lbl_flask_link = ttk.Label(flask_frame, text="HTTPS Offline", font=("Segoe UI", 9), style="Panel.TLabel", cursor="hand2")
-        self.lbl_flask_link.pack(pady=4)
-        self.lbl_flask_link.bind("<Button-1>", lambda e: self.open_browser(self.https_url) if self.https_thread else None)
         
-        flask_btn_row1 = ttk.Frame(flask_frame, style="Panel.TFrame")
-        flask_btn_row1.pack(fill=X, pady=(4, 2))
-        ttk.Button(flask_btn_row1, text="Copy HTTPS", bootstyle="success", command=lambda: self.copy_to_clipboard(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(flask_btn_row1, text="Copy HTTP", bootstyle="info", command=lambda: self.copy_to_clipboard(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
-
-        flask_btn_row2 = ttk.Frame(flask_frame, style="Panel.TFrame")
-        flask_btn_row2.pack(fill=X, pady=(2, 2))
-        ttk.Button(flask_btn_row2, text="Open Secure", bootstyle="outline-success", command=lambda: self.open_browser(self.https_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(flask_btn_row2, text="Open Local", bootstyle="outline-info", command=lambda: self.open_browser(self.http_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
-
-        cf_frame = ttk.Labelframe(sidebar, text=" ☁️ Cloudflare Tunnel ", padding=10)
-        cf_frame.pack(fill=X, pady=8)
-        self.btn_start_cf = ttk.Button(cf_frame, text="▶ START TUNNEL", bootstyle=PRIMARY, state=DISABLED, command=self.start_cf)
-        self.btn_start_cf.pack(fill=X, pady=2)
-        self.btn_stop_cf = ttk.Button(cf_frame, text="⏹ STOP TUNNEL", bootstyle="danger-outline", state=DISABLED, command=self.stop_cf)
-        self.btn_stop_cf.pack(fill=X, pady=2)
-        ttk.Label(cf_frame, text="Public Tunnel QR:", style="PanelInfo.TLabel").pack(pady=(8, 4))
-        self.lbl_cf_qr = ttk.Label(cf_frame, style="Panel.TLabel")
-        self.lbl_cf_qr.pack()
+        self.lbl_flask_link = QLabel("HTTPS Offline")
+        self.lbl_flask_link.setStyleSheet("color: #858585; font-size: 10px;")
+        self.lbl_flask_link.setAlignment(Qt.AlignCenter)
+        l_eng.addWidget(self.lbl_flask_link)
+        
+        r1 = QHBoxLayout(); r1.setSpacing(3)
+        b_cpy_s = QPushButton("Copy HTTPS"); b_cpy_s.clicked.connect(lambda: self.copy_to_clipboard(self.https_url))
+        b_cpy_h = QPushButton("Copy HTTP"); b_cpy_h.clicked.connect(lambda: self.copy_to_clipboard(self.http_url))
+        r1.addWidget(b_cpy_s); r1.addWidget(b_cpy_h)
+        l_eng.addLayout(r1)
+        
+        r2 = QHBoxLayout(); r2.setSpacing(3)
+        b_opn_s = QPushButton("Open Secure"); b_opn_s.clicked.connect(lambda: self.open_browser(self.https_url))
+        b_opn_h = QPushButton("Open Local"); b_opn_h.clicked.connect(lambda: self.open_browser(self.http_url))
+        r2.addWidget(b_opn_s); r2.addWidget(b_opn_h)
+        l_eng.addLayout(r2)
+        side_layout.addWidget(grp_eng)
+        
+        # 2. CF Tunnel Group
+        grp_cf = QGroupBox("☁️ Cloudflare Tunnel")
+        l_cf = QVBoxLayout(grp_cf)
+        l_cf.setContentsMargins(6, 6, 6, 6)
+        l_cf.setSpacing(4)
+        
+        self.btn_start_cf = QPushButton("▶ START TUNNEL")
+        self.btn_start_cf.setStyleSheet("background-color: #094771; color: white;")
+        self.btn_start_cf.setEnabled(False)
+        self.btn_start_cf.clicked.connect(self.start_cf)
+        self.btn_stop_cf = QPushButton("⏹ STOP TUNNEL")
+        self.btn_stop_cf.setStyleSheet("background-color: transparent; border: 1px solid #F44747; color: #F44747;")
+        self.btn_stop_cf.setEnabled(False)
+        self.btn_stop_cf.clicked.connect(self.stop_cf)
+        l_cf.addWidget(self.btn_start_cf)
+        l_cf.addWidget(self.btn_stop_cf)
+        
+        self.lbl_cf_qr = QLabel()
+        self.lbl_cf_qr.setAlignment(Qt.AlignCenter)
+        l_cf.addWidget(self.lbl_cf_qr)
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
-        self.lbl_cf_link = ttk.Label(cf_frame, text="Tunnel Offline", font=("Segoe UI", 9), style="Panel.TLabel", cursor="hand2")
-        self.lbl_cf_link.pack(pady=4)
-        self.lbl_cf_link.bind("<Button-1>", lambda e: self.open_browser(self.cloudflare_url) if self.cloudflare_url not in ["Offline", "Pending"] else None)
-        cf_btn_row = ttk.Frame(cf_frame, style="Panel.TFrame")
-        cf_btn_row.pack(fill=X, pady=(4, 2))
-        ttk.Button(cf_btn_row, text="Copy URL", bootstyle="primary", command=lambda: self.copy_to_clipboard(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(0, 2))
-        ttk.Button(cf_btn_row, text="Open URL", bootstyle="outline-primary", command=lambda: self.open_browser(self.cloudflare_url)).pack(side=LEFT, expand=True, fill=X, padx=(2, 0))
-
-        test_frame = ttk.Labelframe(sidebar, text=" 🧪 Simulator Engine ", padding=10)
-        test_frame.pack(fill=X, pady=6)
-        self.test_mode = ttk.BooleanVar(value=False)
-        self.test_date = ttk.StringVar(value="2026-08-30")
-        chk_wrap = ttk.Frame(test_frame, style="Panel.TFrame")
-        chk_wrap.pack(anchor=W, pady=4)
-        self.chk_test = ttk.Checkbutton(chk_wrap, text="Testing Mode OFF", variable=self.test_mode, bootstyle="warning-round-toggle", style="Panel.TCheckbutton", command=self.toggle_test_mode)
-        self.chk_test.pack()
-        self.cb_test_date = ttk.Combobox(test_frame, textvariable=self.test_date, values=["2026-08-30", "2026-08-31", "2026-09-01"], state=DISABLED)
-        self.cb_test_date.pack(fill=X, pady=(4, 0))
-        self.cb_test_date.bind("<<ComboboxSelected>>", lambda e: self.on_test_date_changed())
-
-        contact_frame = ttk.Labelframe(sidebar, text=" 📞 Support & Help ", padding=10)
-        contact_frame.pack(fill=X, pady=(8, 4))
-        ttk.Label(contact_frame, text="Developer Contact:", style="PanelInfo.TLabel").pack(pady=(0, 4))
-        ttk.Label(contact_frame, text="+91 8960446756", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT, style="Panel.TLabel").pack(pady=(0, 6))
-        ttk.Button(contact_frame, text="💬 Chat on WhatsApp", bootstyle="success", command=lambda: self.open_browser("https://wa.me/918960446756")).pack(fill=X)
-
-        content = ttk.Frame(self.root_container, padding=16, style="TFrame")
-        content.pack(side=LEFT, fill=BOTH, expand=True)
         
-        header_container = ttk.Frame(content, style="TFrame")
-        header_container.pack(fill=X, pady=(0, 15))
-        left_hdr = ttk.Frame(header_container, style="TFrame")
-        left_hdr.pack(side=LEFT, fill=Y)
-        ttk.Label(left_hdr, text="TDE UP 2026 — COMMAND CENTER", font=("Segoe UI", 18, "bold"), foreground=self.SUCCESS_FG).pack(anchor=W)
-        bot_hdr = ttk.Frame(left_hdr, style="TFrame")
-        bot_hdr.pack(fill=X, pady=(8, 0))
-        self.lbl_stat_cf = self._build_status_badge(bot_hdr, "● Cloudflare: OFFLINE", SECONDARY)
-        self.lbl_stat_sqlite = self._build_status_badge(bot_hdr, "● SQLITE: CHECKING", INFO)
-        self.lbl_stat_mysql = self._build_status_badge(bot_hdr, "● MYSQL: CHECKING", INFO)
-        self.lbl_stat_audio = self._build_status_badge(bot_hdr, "● VOICE AUDIO: CHECKING", INFO)
-
-        right_hdr = ttk.Frame(header_container, style="TFrame")
-        right_hdr.pack(side=RIGHT, fill=Y)
-        actions_f = ttk.Frame(right_hdr, style="TFrame")
-        actions_f.pack(side=RIGHT, padx=(12, 0))
-        ttk.Button(actions_f, text="⟳ Refresh", bootstyle="outline-light", command=self.refresh_stats).pack(side=TOP, fill=X, pady=(0, 6))
-        ttk.Button(actions_f, text="⛶ Fullscreen", bootstyle="outline-info", command=self.toggle_fullscreen).pack(side=TOP, fill=X)
-        hw_f = ttk.Frame(right_hdr, style="TFrame")
-        hw_f.pack(side=RIGHT)
+        self.lbl_cf_link = QLabel("Tunnel Offline")
+        self.lbl_cf_link.setStyleSheet("color: #858585; font-size: 10px;")
+        self.lbl_cf_link.setAlignment(Qt.AlignCenter)
+        l_cf.addWidget(self.lbl_cf_link)
         
-        self.mini_meter_cpu = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=INFO, subtext="CPU", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"))
-        self.mini_meter_cpu.pack(side=LEFT, padx=4)
-        self.mini_meter_ram = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=WARNING, subtext="RAM", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"))
-        self.mini_meter_ram.pack(side=LEFT, padx=4)
-        self.mini_meter_net = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=100, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=SECONDARY, subtext="OFFLINE", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"), amountformat="{:.1f}")
-        self.mini_meter_net.pack(side=LEFT, padx=4)
-        self.net_tooltip = ToolTip(self.mini_meter_net, text="Checking connection...")
-        self.mini_meter_api = ttk.Meter(hw_f, metersize=96, padding=6, amounttotal=500, amountused=0, metertype="semi", interactive=False, stripethickness=8, meterthickness=10, bootstyle=SUCCESS, subtext="API ms", subtextfont=("Segoe UI", 8), textfont=("Segoe UI", 10, "bold"), amountformat="{:.0f}")
-        self.mini_meter_api.pack(side=LEFT, padx=4)
+        r3 = QHBoxLayout(); r3.setSpacing(3)
+        b_cpy_cf = QPushButton("Copy URL"); b_cpy_cf.clicked.connect(lambda: self.copy_to_clipboard(self.cloudflare_url))
+        b_opn_cf = QPushButton("Open URL"); b_opn_cf.clicked.connect(lambda: self.open_browser(self.cloudflare_url))
+        r3.addWidget(b_cpy_cf); r3.addWidget(b_opn_cf)
+        l_cf.addLayout(r3)
+        side_layout.addWidget(grp_cf)
         
-        net_info_card = ttk.Frame(right_hdr, style="Card.TFrame", padding=(12, 6))
-        net_info_card.pack(side=RIGHT, padx=(0, 15), fill=Y)
-        ttk.Label(net_info_card, text="SYSTEM HEALTH", style="CardTitle.TLabel").grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 4))
-        self.lbl_hdr_local_ping = ttk.Label(net_info_card, text="LAN: WAIT", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
-        self.lbl_hdr_local_ping.grid(row=1, column=0, sticky=W, padx=(0, 12), pady=2)
-        self.lbl_hdr_cloud_ping = ttk.Label(net_info_card, text="WAN: WAIT", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.SUCCESS_FG)
-        self.lbl_hdr_cloud_ping.grid(row=1, column=1, sticky=W, pady=2)
-        self.lbl_hdr_traffic = ttk.Label(net_info_card, text="Traffic: 0 req/s", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground=self.ACCENT)
-        self.lbl_hdr_traffic.grid(row=2, column=0, sticky=W, padx=(0, 12), pady=2)
-        self.lbl_hdr_db_queue = ttk.Label(net_info_card, text="DB Q: 0", font=("Segoe UI", 9, "bold"), style="Panel.TLabel", foreground="#C586C0")
-        self.lbl_hdr_db_queue.grid(row=2, column=1, sticky=W, pady=2)
-
-        ttk.Label(content, text="📊 LIVE TELEMETRY & EVENT METRICS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(0, 4))
-        stats_container = ttk.Frame(content, style="TFrame")
-        stats_container.pack(fill=X, expand=False, pady=(0, 16))
-        row1 = ttk.Frame(stats_container, style="TFrame")
-        row1.pack(fill=X, expand=True, pady=(0, 6))
+        # 3. Simulator Group
+        grp_test = QGroupBox("🧪 Simulator Engine")
+        l_test = QVBoxLayout(grp_test)
+        l_test.setContentsMargins(6, 6, 6, 6)
+        l_test.setSpacing(4)
+        self.chk_test = QCheckBox("Testing Mode OFF")
+        self.chk_test.stateChanged.connect(self.toggle_test_mode)
+        l_test.addWidget(self.chk_test)
+        self.cb_test_date = QComboBox()
+        self.cb_test_date.addItems(["2026-08-30", "2026-08-31", "2026-09-01"])
+        self.cb_test_date.setEnabled(False)
+        self.cb_test_date.currentTextChanged.connect(self.on_test_date_changed)
+        l_test.addWidget(self.cb_test_date)
+        side_layout.addWidget(grp_test)
+        
+        # 4. Support Group
+        grp_sup = QGroupBox("📞 Support")
+        l_sup = QVBoxLayout(grp_sup)
+        l_sup.setContentsMargins(6, 6, 6, 6)
+        l_sup.setSpacing(4)
+        l_sup.addWidget(QLabel("Contact: +91 8960446756"))
+        b_chat = QPushButton("💬 Chat on WhatsApp")
+        b_chat.setStyleSheet("background-color: #107C41; color: white;")
+        b_chat.clicked.connect(lambda: self.open_browser("https://wa.me/918960446756"))
+        l_sup.addWidget(b_chat)
+        side_layout.addWidget(grp_sup)
+        
+        side_layout.addStretch()
+        sidebar_scroll.setWidget(sidebar)
+        main_layout.addWidget(sidebar_scroll)
+        
+        # --- RIGHT MAIN DASHBOARD ---
+        content = QWidget()
+        c_lay = QVBoxLayout(content)
+        c_lay.setContentsMargins(4, 0, 0, 0)
+        c_lay.setSpacing(6)
+        
+        # Header Row
+        hdr_row = QHBoxLayout()
+        hdr_row.setSpacing(6)
+        
+        h_left = QVBoxLayout()
+        h_left.setSpacing(3)
+        lbl_h = QLabel("TDE UP 2026 — COMMAND CENTER")
+        lbl_h.setStyleSheet("color: #4EC9B0; font-size: 16px; font-weight: bold;")
+        h_left.addWidget(lbl_h)
+        
+        # Dynamic Badge Ribbon
+        b_row = QHBoxLayout()
+        b_row.setSpacing(4)
+        self.lbl_stat_cf = self._build_status_badge(b_row, "● Cloudflare: OFFLINE", "#858585")
+        self.lbl_stat_sqlite = self._build_status_badge(b_row, "● SQLITE: MIRROR", "#569CD6")
+        self.lbl_stat_mysql = self._build_status_badge(b_row, "● MYSQL: CHECKING", "#569CD6")
+        self.lbl_stat_audio = self._build_status_badge(b_row, "● VOICE: CHECKING", "#569CD6")
+        b_row.addStretch()
+        h_left.addLayout(b_row)
+        hdr_row.addLayout(h_left, stretch=1)
+        
+        # SPEEDOMETER GAUGES
+        hw_f = QHBoxLayout()
+        hw_f.setSpacing(4)
+        self.mini_meter_cpu = SpeedometerGauge("CPU", "%", 100, "#569CD6")
+        self.mini_meter_ram = SpeedometerGauge("RAM", "%", 100, "#D7BA7D")
+        self.mini_meter_net = SpeedometerGauge("OFFLINE", "MB/s", 100, "#858585")
+        self.mini_meter_api = SpeedometerGauge("API ms", "ms", 500, "#4EC9B0")
+        hw_f.addWidget(self.mini_meter_cpu)
+        hw_f.addWidget(self.mini_meter_ram)
+        hw_f.addWidget(self.mini_meter_net)
+        hw_f.addWidget(self.mini_meter_api)
+        hdr_row.addLayout(hw_f)
+        
+        # System Health Microcard
+        sys_h = QFrame()
+        sys_h.setStyleSheet("QFrame { background: #1C1C1E; border: 1px solid #2D2D30; border-radius: 4px; padding: 2px; }")
+        s_lay = QGridLayout(sys_h)
+        s_lay.setContentsMargins(6, 4, 6, 4)
+        s_lay.setSpacing(2)
+        
+        lbl_sh = QLabel("SYSTEM HEALTH")
+        lbl_sh.setStyleSheet("color: #777777; font-size: 9px; font-weight: bold;")
+        s_lay.addWidget(lbl_sh, 0, 0, 1, 2)
+        
+        self.lbl_hdr_local_ping = QLabel("LAN: WAIT")
+        self.lbl_hdr_local_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size: 10px; border:none;")
+        self.lbl_hdr_cloud_ping = QLabel("WAN: WAIT")
+        self.lbl_hdr_cloud_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size: 10px; border:none;")
+        self.lbl_hdr_traffic = QLabel("Traffic: 0 req/s")
+        self.lbl_hdr_traffic.setStyleSheet("color:#569CD6; font-weight:bold; font-size: 10px; border:none;")
+        self.lbl_hdr_db_queue = QLabel("DB Q: 0")
+        self.lbl_hdr_db_queue.setStyleSheet("color:#C586C0; font-weight:bold; font-size: 10px; border:none;")
+        
+        s_lay.addWidget(self.lbl_hdr_local_ping, 1, 0)
+        s_lay.addWidget(self.lbl_hdr_cloud_ping, 1, 1)
+        s_lay.addWidget(self.lbl_hdr_traffic, 2, 0)
+        s_lay.addWidget(self.lbl_hdr_db_queue, 2, 1)
+        hdr_row.addWidget(sys_h)
+        
+        acts = QVBoxLayout()
+        acts.setSpacing(3)
+        b_ref = QPushButton("⟳ Refresh"); b_ref.clicked.connect(self.refresh_stats)
+        b_full = QPushButton("⛶ Full"); b_full.clicked.connect(self.toggle_fullscreen)
+        acts.addWidget(b_ref); acts.addWidget(b_full)
+        hdr_row.addLayout(acts)
+        
+        c_lay.addLayout(hdr_row)
+        
+        # --- COMPACT LIVE METRICS CARDS (Single/Dual Row) ---
         self.stat_vars = {}
-        self._create_stat_card(row1, "TOTAL ATTENDEES", "0", PRIMARY, "total_att")
-        self._create_stat_card(row1, "KIOSK REGISTRATIONS", "0", INFO, "kiosk_reg")
-        self._create_stat_card(row1, "SQLITE MIRROR SIZE", "0", SUCCESS, "sqlite_total")
-        self._create_stat_card(row1, "ACTIVE SCANNERS", "0", WARNING, "online_scanners")
-        row2 = ttk.Frame(stats_container, style="TFrame")
-        row2.pack(fill=X, expand=True, pady=(0, 0))
-        self._create_stat_card(row2, "TODAY CHECK-IN", "0", SUCCESS, "chk_today")
-        self._create_stat_card(row2, "30th Aug Check-ins", "0", LIGHT, "chk_30")
-        self._create_stat_card(row2, "31st Aug Check-ins", "0", LIGHT, "chk_31")
-        self._create_stat_card(row2, "1st SEPT Check-ins", "0", LIGHT, "chk_01")
-        self._create_stat_card(row2, "TOTAL CHECK-INS", "0", PRIMARY, "chk_total")
-
-        devices_header_row = ttk.Frame(content, style="TFrame")
-        devices_header_row.pack(fill=X, pady=(2, 4))
-        self.lbl_devices_header = ttk.Label(devices_header_row, text="📡 ACTIVE CONNECTED DEVICES (0) — Right-Click to Manage", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT)
-        self.lbl_devices_header.pack(side=LEFT, anchor=W)
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        grid.setContentsMargins(0, 0, 0, 0)
         
-        self.btn_broadcast = ttk.Button(devices_header_row, text="📢 Broadcast to All", bootstyle="warning-outline", command=self._prompt_broadcast_message)
-        self.btn_broadcast.pack(side=RIGHT, padx=(10, 0))
+        def _mk(t, c):
+            f = QFrame()
+            f.setStyleSheet("QFrame { background:#1E1E22; border:1px solid #28282B; border-radius:4px; }")
+            l = QVBoxLayout(f)
+            l.setContentsMargins(4, 3, 4, 3)
+            l.setSpacing(1)
+            lbl_title = QLabel(t)
+            lbl_title.setStyleSheet("color: #777777; font-size: 9px; font-weight: bold; border:none;")
+            l.addWidget(lbl_title, alignment=Qt.AlignCenter)
+            val = QLabel("0")
+            val.setStyleSheet(f"color:{c}; font-size:16px; font-weight:bold; border:none;")
+            l.addWidget(val, alignment=Qt.AlignCenter)
+            return f, val
         
-        self.btn_group_call = ttk.Button(devices_header_row, text="📞 Group Call All", bootstyle="success-outline", command=self._prompt_group_call)
-        self.btn_group_call.pack(side=RIGHT, padx=(10, 0))
+        f1, self.stat_vars["total_att"] = _mk("TOTAL ATTENDEES", "#569CD6"); grid.addWidget(f1, 0, 0)
+        f2, self.stat_vars["kiosk_reg"] = _mk("KIOSK REG", "#9CDCFE"); grid.addWidget(f2, 0, 1)
+        f3, self.stat_vars["sqlite_total"] = _mk("SQLITE MIRROR", "#4EC9B0"); grid.addWidget(f3, 0, 2)
+        f4, self.stat_vars["online_scanners"] = _mk("ACTIVE SCANNERS", "#D7BA7D"); grid.addWidget(f4, 0, 3)
+        f5, self.stat_vars["chk_today"] = _mk("TODAY CHECK-IN", "#4EC9B0"); grid.addWidget(f5, 0, 4)
+        f6, self.stat_vars["chk_30"] = _mk("30 Aug Check-in", "#CCCCCC"); grid.addWidget(f6, 0, 5)
+        f7, self.stat_vars["chk_31"] = _mk("31 Aug Check-in", "#CCCCCC"); grid.addWidget(f7, 0, 6)
+        f8, self.stat_vars["chk_01"] = _mk("01 Sept Check-in", "#CCCCCC"); grid.addWidget(f8, 0, 7)
+        c_lay.addLayout(grid)
         
-        self.lbl_stats_health = ttk.Label(devices_header_row, text="", font=("Segoe UI", 9), bootstyle=WARNING)
-        self.lbl_stats_health.pack(side=RIGHT, anchor=E)
-
-        devices_frame = ttk.Frame(content, style="Soft.TFrame")
-        devices_frame.pack(fill=X, expand=False, pady=(0, 16)) 
-        tree_scroll = ttk.Scrollbar(devices_frame, orient=VERTICAL)
-        tree_scroll.pack(side=RIGHT, fill=Y)
-
-        self.tree_devices = ttk.Treeview(devices_frame, columns=("name", "ip", "page", "battery", "last_seen", "signal"), show="headings", height=4, yscrollcommand=tree_scroll.set)
-        self.tree_devices.heading("name", text="Device Name")
-        self.tree_devices.heading("ip", text="IP Address")
-        self.tree_devices.heading("page", text="Active Page")
-        self.tree_devices.heading("battery", text="Battery")
-        self.tree_devices.heading("last_seen", text="Last Heartbeat")
-        self.tree_devices.heading("signal", text="Signal")
+        # --- SPLITTER: RESIZABLE DEVICES & LOGS ---
+        main_splitter = QSplitter(Qt.Vertical)
+        main_splitter.setChildrenCollapsible(False)
         
-        self.tree_devices.column("name", width=180, anchor=W)
-        self.tree_devices.column("ip", width=110, anchor=W)
-        self.tree_devices.column("page", width=110, anchor=CENTER)
-        self.tree_devices.column("battery", width=90, anchor=CENTER)
-        self.tree_devices.column("last_seen", width=100, anchor=CENTER)
-        self.tree_devices.column("signal", width=80, anchor=CENTER)
-        self.tree_devices.pack(side=LEFT, fill=BOTH, expand=True, padx=(2, 0), pady=2)
+        # 1. Connected Devices Container
+        dev_container = QWidget()
+        dev_layout = QVBoxLayout(dev_container)
+        dev_layout.setContentsMargins(0, 2, 0, 2)
+        dev_layout.setSpacing(3)
         
-        tree_scroll.configure(command=self.tree_devices.yview)
+        dev_hdr = QHBoxLayout()
+        dev_hdr.setSpacing(4)
+        self.lbl_devices_header = QLabel("📡 ACTIVE CONNECTED DEVICES (0) — Right-Click to Manage")
+        self.lbl_devices_header.setStyleSheet("color: #569CD6; font-weight:bold; font-size: 11px;")
+        dev_hdr.addWidget(self.lbl_devices_header)
         
-        self.tree_devices.tag_configure("online", foreground=self.SUCCESS_FG)
-        self.tree_devices.tag_configure("stale", foreground=self.WARN_FG)
-        self.tree_devices.tag_configure("fading", foreground=self.ERR_FG)
-        self.tree_devices.tag_configure("empty", foreground="#858585")
-
-        self.device_menu = tk.Menu(self.tree_devices, tearoff=0, bg="#252526", fg="#CCCCCC")
-        self.device_menu.add_command(label="📞 Call Device", command=self._prompt_start_call)
-        self.device_menu.add_command(label="✏️ Rename Device", command=self._prompt_rename_device)
-        self.device_menu.add_command(label="📨 Send Text Message", command=self._prompt_send_message)
+        self.lbl_stats_health = QLabel("")
+        self.lbl_stats_health.setStyleSheet("color:#D7BA7D; font-size: 10px;")
+        dev_hdr.addWidget(self.lbl_stats_health)
+        dev_hdr.addStretch()
         
-        self.tree_devices.bind("<Button-3>", self._show_device_menu)
-        if platform.system() == "Darwin":
-            self.tree_devices.bind("<Button-2>", self._show_device_menu)
-
-        ttk.Label(content, text="⚙️ SYSTEM EVENT LOGS", font=("Segoe UI", 11, "bold"), foreground=self.ACCENT).pack(anchor=W, pady=(2, 4))
+        btn_bc = QPushButton("📢 Broadcast to All"); btn_bc.clicked.connect(self._prompt_broadcast_message)
+        btn_gc = QPushButton("📞 Group Call All"); btn_gc.clicked.connect(self._prompt_group_call)
+        dev_hdr.addWidget(btn_bc); dev_hdr.addWidget(btn_gc)
+        dev_layout.addLayout(dev_hdr)
         
-        logs_frame = ttk.Frame(content, style="TFrame")
-        logs_frame.pack(fill=BOTH, expand=True, pady=(0, 0))
+        self.tree_devices = QTableWidget(0, 7)
+        self.tree_devices.setHorizontalHeaderLabels(["Device Name", "IP Address", "Active Page", "Battery", "Last Heartbeat", "Signal", "_ID"])
+        self.tree_devices.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tree_devices.hideColumn(6)
+        self.tree_devices.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree_devices.customContextMenuRequested.connect(self._show_device_menu)
+        self.tree_devices.setEditTriggers(QTableWidget.NoEditTriggers)
+        dev_layout.addWidget(self.tree_devices)
+        main_splitter.addWidget(dev_container)
         
-        self.log_flask = self._create_log_box(logs_frame, "📟 System & API Logs", self.clear_system_logs)
+        # 2. Logs Console Container
+        log_container = QWidget()
+        log_layout = QVBoxLayout(log_container)
+        log_layout.setContentsMargins(0, 2, 0, 0)
+        log_layout.setSpacing(3)
         
-        right_logs_wrapper = ttk.Frame(logs_frame, style="TFrame")
-        right_logs_wrapper.pack(side=LEFT, fill=BOTH, expand=True, padx=6, pady=0)
+        log_h = QHBoxLayout()
+        log_h.setSpacing(4)
         
-        self.log_tabs = ttk.Notebook(right_logs_wrapper, bootstyle="info")
-        self.log_tabs.pack(fill=BOTH, expand=True)
+        self.log_flask = self._create_log_box(log_h, "📟 System & API Logs", self.clear_system_logs)
         
-        tab_net = ttk.Frame(self.log_tabs, style="TFrame")
-        self.log_tabs.add(tab_net, text="🌐 Device & Routing")
-        self.log_network = self._create_log_box(tab_net, "Network Events", self.clear_network_logs, side=TOP, padx=0)
+        tabs = QTabWidget()
+        t1 = QWidget(); l1 = QVBoxLayout(t1); l1.setContentsMargins(0,0,0,0)
+        self.log_network = self._create_log_box(l1, "Network Events", self.clear_network_logs)
         
-        tab_cf = ttk.Frame(self.log_tabs, style="TFrame")
-        self.log_tabs.add(tab_cf, text="☁️ Cloudflare Tunnel")
-        self.log_cf = self._create_log_box(tab_cf, "Tunnel Status", self.clear_cf_logs, side=TOP, padx=0)
+        t2 = QWidget(); l2 = QVBoxLayout(t2); l2.setContentsMargins(0,0,0,0)
+        self.log_cf = self._create_log_box(l2, "Tunnel Status", self.clear_cf_logs)
         
-        footer = ttk.Frame(content, style="TFrame")
-        footer.pack(fill=X, pady=(8, 0))
-        ttk.Label(footer, text="Engineered for Event Resilience\nPowered by EllowDigital", font=("Consolas", 9, "bold"), foreground="#D7BA7D", justify=RIGHT).pack(side=RIGHT)
-
-    def on_close(self):
-        try:
-            _global_shutdown_event.set() 
-            if self.http_thread or self.https_thread:
-                self.stop_flask()
-            with self.cf_lock:
-                cf_proc = self.cf_process
-            if cf_proc:
-                self.stop_cf()
-        except Exception:
-            pass
-        finally:
-            self.ping_executor.shutdown(wait=False)
-            self.destroy()
+        tabs.addTab(t1, "🌐 Device Routing")
+        tabs.addTab(t2, "☁️ Cloudflare Tunnel")
+        log_h.addWidget(tabs)
+        
+        log_layout.addLayout(log_h)
+        main_splitter.addWidget(log_container)
+        
+        # Proportional Split (35% Devices Table, 65% Logs)
+        main_splitter.setSizes([200, 360])
+        c_lay.addWidget(main_splitter, stretch=1)
+        
+        ftr = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
+        ftr.setStyleSheet("color: #D7BA7D; font-family: 'Consolas'; font-weight: bold; font-size: 10px;")
+        ftr.setAlignment(Qt.AlignRight)
+        c_lay.addWidget(ftr)
+        
+        main_layout.addWidget(content, stretch=1)
 
     def _create_stat_card(self, parent, title, initial_value, style, var_name):
-        frame = ttk.Frame(parent, style="Card.TFrame", padding=(12, 8), height=70)
-        frame.pack(side=LEFT, fill=BOTH, expand=True, padx=4, pady=0)
-        frame.pack_propagate(False)
-        ttk.Label(frame, text=title, style="CardTitle.TLabel").pack(anchor=CENTER)
-        val_lbl = ttk.Label(frame, text=initial_value, style=f"CardValue.{style}.TLabel")
-        val_lbl.pack(anchor=CENTER, expand=True, pady=(2, 0))
-        self.stat_vars[var_name] = {"label": val_lbl, "style": f"CardValue.{style}.TLabel"}
+        pass
 
     def _set_stat(self, var_name, new_value):
         entry = self.stat_vars.get(var_name)
-        if not entry or entry["label"].cget("text") == str(new_value):
-            return
-        entry["label"].configure(text=str(new_value), style="CardFlash.TLabel")
-        self.after(400, lambda: entry["label"].configure(style=entry["style"]) if entry["label"].winfo_exists() else None)
+        if not entry or entry.text() == str(new_value): return
+        entry.setText(str(new_value))
 
     def update_qr(self, label, data):
-        if not label.winfo_exists():
-            return
-        qr = qrcode.QRCode(version=1, box_size=10, border=1)
+        qr = qrcode.QRCode(version=1, box_size=3, border=1)
         qr.add_data(data)
         qr.make(fit=True)
-        img_tk = ImageTk.PhotoImage(qr.make_image(fill_color="black", back_color="white").resize((90, 90), Image.Resampling.LANCZOS))
-        label.configure(image=img_tk)
-        label.image = img_tk
+        img = qr.make_image(fill_color="black", back_color="white").convert('RGBA')
+        qim = QImage(img.tobytes('raw', 'RGBA'), img.size[0], img.size[1], QImage.Format_RGBA8888)
+        pix = QPixmap.fromImage(qim).scaled(75, 75, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        label.setPixmap(pix)
 
-    def toggle_test_mode(self):
+    def toggle_test_mode(self, state):
         global SERVER_TEST_MODE
-        SERVER_TEST_MODE = self.test_mode.get()
+        SERVER_TEST_MODE = (state == Qt.Checked.value)
         if SERVER_TEST_MODE:
-            self.chk_test.configure(text="Testing Mode ON", bootstyle="danger-round-toggle")
-            self.cb_test_date.configure(state="normal")
-            self._append_log('network', f"[WARNING] Testing Mode ON. Server date overridden to {self.test_date.get()}.")
+            self.chk_test.setText("Testing Mode ON")
+            self.cb_test_date.setEnabled(True)
+            self._append_log('network', f"[WARNING] Testing Mode ON. Server date overridden to {self.cb_test_date.currentText()}.")
         else:
-            self.chk_test.configure(text="Testing Mode OFF", bootstyle="warning-round-toggle")
-            self.cb_test_date.configure(state=DISABLED)
+            self.chk_test.setText("Testing Mode OFF")
+            self.cb_test_date.setEnabled(False)
             self._append_log('network', "[INFO] Testing Mode OFF. Real system date restored.")
         self.refresh_stats()
 
-    def on_test_date_changed(self):
+    def on_test_date_changed(self, text):
         global SERVER_TEST_DATE
-        SERVER_TEST_DATE = self.test_date.get()
+        SERVER_TEST_DATE = text
         self._append_log('network', f"[WARNING] Test date updated globally to: {SERVER_TEST_DATE}")
         self.refresh_stats()
 
-    def _meter_set_style(self, meter, bootstyle, cache_key):
-        if self._meter_cache.get(cache_key) != bootstyle:
-            meter.configure(bootstyle=bootstyle)
-            self._meter_cache[cache_key] = bootstyle
-
-    def _meter_set_subtext(self, meter, text, cache_key):
-        if self._meter_cache.get(cache_key) != text:
-            meter.configure(subtext=text)
-            self._meter_cache[cache_key] = text
-
-    def _meter_set_total(self, meter, total, cache_key):
-        if self._meter_cache.get(cache_key) != total:
-            meter.configure(amounttotal=total)
-            self._meter_cache[cache_key] = total
-
     def refresh_hw_meters(self):
-        if not self.winfo_exists():
-            return
         try:
-            with _telemetry_lock:
-                snap_telemetry = dict(TELEMETRY_DATA)
+            with _telemetry_lock: snap_telemetry = dict(TELEMETRY_DATA)
             c = snap_telemetry.get("cpu", 0)
             r = snap_telemetry.get("ram", 0)
             self.animated_meters["cpu"].set_target(c)
-            self._meter_set_style(self.mini_meter_cpu, SUCCESS if c < 60 else (WARNING if c < 85 else DANGER), "cpu_style")
+            self.mini_meter_cpu.configure(bootstyle="success" if c < 60 else ("warning" if c < 85 else "danger"))
             self.animated_meters["ram"].set_target(r)
-            self._meter_set_style(self.mini_meter_ram, SUCCESS if r < 70 else (WARNING if r < 90 else DANGER), "ram_style")
+            self.mini_meter_ram.configure(bootstyle="success" if r < 70 else ("warning" if r < 90 else "danger"))
 
             net_type = snap_telemetry.get("net_type", "Disconnected")
-            if net_type == "Disconnected" or net_type == "Offline":
+            if net_type in ["Disconnected", "Offline"]:
                 self.animated_meters["net"].set_target(0)
-                self._meter_set_subtext(self.mini_meter_net, "OFFLINE", "net_subtext")
-                self._meter_set_style(self.mini_meter_net, DANGER, "net_style")
-                self.net_tooltip.text = "Internet Disconnected\nNo active interface found."
+                self.mini_meter_net.configure(bootstyle="danger", subtext="OFFLINE")
             else:
                 mbps = snap_telemetry.get("total_mbps", 0.0)
-                dl_mbps = snap_telemetry.get("dl_mbps", 0.0)
-                ul_mbps = snap_telemetry.get("ul_mbps", 0.0)
-                dl_mb = snap_telemetry.get("total_dl_mb", 0.0)
-                ul_mb = snap_telemetry.get("total_ul_mb", 0.0)
-
-                tt_text = (f"Status: Connected\nConnection Type: {net_type}\nInterface Name: {snap_telemetry.get('iface_name', 'N/A')}\nLink Speed: {snap_telemetry.get('link_speed', 0)} Mbps\n\nLive Download: {dl_mbps:.2f} Mbps\nLive Upload: {ul_mbps:.2f} Mbps\nTotal Downloaded: {dl_mb:.1f} MB\nTotal Uploaded: {ul_mb:.1f} MB")
-                cap = 100
-                if mbps > 100:
-                    cap = 1000
-                if mbps > 1000:
-                    cap = 10000
-
-                self._meter_set_total(self.mini_meter_net, cap, "net_cap")
+                cap = 1000 if mbps > 100 else 100
+                self.mini_meter_net.configure(amounttotal=cap, bootstyle="success" if mbps > 1.0 else "info", subtext=net_type.upper()[:7])
                 self.animated_meters["net"].set_target(mbps)
-                self._meter_set_subtext(self.mini_meter_net, net_type.upper()[:7], "net_subtext")
-                self._meter_set_style(self.mini_meter_net, SUCCESS if mbps > 1.0 else INFO, "net_style")
-                self.net_tooltip.text = tt_text
 
             req_sec = TRAFFIC_HISTORY[-1] if len(TRAFFIC_HISTORY) > 0 else 0
-
             with metrics_lock: 
                 if not self.http_thread and not self.https_thread:
                     SERVER_METRICS["avg_process_ms"] = 0.0
                     SERVER_METRICS["req_count"] = 0
                 elif req_sec == 0:
                     SERVER_METRICS["avg_process_ms"] *= 0.5
-                    if SERVER_METRICS["avg_process_ms"] < 1.0:
-                        SERVER_METRICS["avg_process_ms"] = 0.0
-                
+                    if SERVER_METRICS["avg_process_ms"] < 1.0: SERVER_METRICS["avg_process_ms"] = 0.0
                 snap_metrics = dict(SERVER_METRICS)
 
             proc_ms = int(snap_metrics["avg_process_ms"])
             self.animated_meters["api"].set_target(min(proc_ms, 500))
-            
-            if proc_ms < 100:
-                self._meter_set_style(self.mini_meter_api, SUCCESS, "api_style")
-            else:
-                self._meter_set_style(self.mini_meter_api, WARNING if proc_ms < 300 else DANGER, "api_style")
+            self.mini_meter_api.configure(bootstyle="success" if proc_ms < 100 else ("warning" if proc_ms < 300 else "danger"))
 
-            with network_latency_lock:
-                snap_net = dict(NETWORK_LATENCY)
+            with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms = snap_net["local_ms"]
             c_ms = snap_net["cloud_ms"]
 
-            if snap_net["local_status"] == "ONLINE":
-                self.lbl_hdr_local_ping.configure(text=f"LAN: {loc_ms} ms", foreground=self.SUCCESS_FG)
-            else:
-                self.lbl_hdr_local_ping.configure(text="LAN: DOWN", foreground=self.ERR_FG)
+            if snap_net["local_status"] == "ONLINE": 
+                self.lbl_hdr_local_ping.setText(f"LAN: {loc_ms} ms")
+                self.lbl_hdr_local_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:10px; border:none;")
+            else: 
+                self.lbl_hdr_local_ping.setText("LAN: DOWN")
+                self.lbl_hdr_local_ping.setStyleSheet("color:#F44747; font-weight:bold; font-size:10px; border:none;")
 
-            if snap_net["cloud_status"] == "ONLINE":
-                self.lbl_hdr_cloud_ping.configure(text=f"WAN: {c_ms} ms", foreground=self.SUCCESS_FG)
-            else:
-                self.lbl_hdr_cloud_ping.configure(text="WAN: DOWN", foreground=self.WARN_FG)
+            if snap_net["cloud_status"] == "ONLINE": 
+                self.lbl_hdr_cloud_ping.setText(f"WAN: {c_ms} ms")
+                self.lbl_hdr_cloud_ping.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:10px; border:none;")
+            else: 
+                self.lbl_hdr_cloud_ping.setText("WAN: DOWN")
+                self.lbl_hdr_cloud_ping.setStyleSheet("color:#D7BA7D; font-weight:bold; font-size:10px; border:none;")
                 
-            t_color = self.ACCENT if req_sec < 50 else (self.WARN_FG if req_sec < 200 else self.ERR_FG)
-            self.lbl_hdr_traffic.configure(text=f"Traffic: {req_sec} req/s", foreground=t_color)
+            t_color = "#569CD6" if req_sec < 50 else ("#D7BA7D" if req_sec < 200 else "#F44747")
+            self.lbl_hdr_traffic.setText(f"Traffic: {req_sec} req/s")
+            self.lbl_hdr_traffic.setStyleSheet(f"color:{t_color}; font-weight:bold; font-size:10px; border:none;")
             
             q_size = DB_WRITE_QUEUE.qsize()
-            q_color = "#C586C0" if q_size < 100 else (self.WARN_FG if q_size < 1000 else self.ERR_FG)
-            self.lbl_hdr_db_queue.configure(text=f"DB Q: {q_size}", foreground=q_color)
-            
-        except Exception as e:
-            logging.error(f"refresh_hw_meters error: {e}")
-        finally:
-            self.after(1000, self.refresh_hw_meters)
+            q_color = "#C586C0" if q_size < 100 else ("#D7BA7D" if q_size < 1000 else "#F44747")
+            self.lbl_hdr_db_queue.setText(f"DB Q: {q_size}")
+            self.lbl_hdr_db_queue.setStyleSheet(f"color:{q_color}; font-weight:bold; font-size:10px; border:none;")
+        except Exception:
+            pass
 
     def refresh_stats(self):
-        if not self.winfo_exists():
-            return
         try:
             current_time = time.time()
             with device_lock:
@@ -2498,83 +2613,73 @@ class ServerHub(ttk.Window):
                 device_info = {d_id: dict(ACTIVE_DEVICES[d_id]) for d_id in active_ids}
 
             self._set_stat("online_scanners", len(active_ids))
-            if hasattr(self, 'lbl_devices_header'):
-                self.lbl_devices_header.configure(text=f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
+            self.lbl_devices_header.setText(f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
             
-            existing_iids = set(self.tree_devices.get_children())
-                
+            self.tree_devices.setRowCount(0)
             if active_ids:
-                if "empty_msg" in existing_iids:
-                    self.tree_devices.delete("empty_msg")
-                    existing_iids.remove("empty_msg")
-                
-                for d_id in sorted(active_ids, key=lambda i: device_info[i]['name'].lower()):
+                for row, d_id in enumerate(sorted(active_ids, key=lambda i: device_info[i]['name'].lower())):
                     info = device_info[d_id]
                     sec_ago = max(0, int(current_time - info['last_seen']))
-                    sig, tag = ("🟢 Live", "online") if sec_ago < 8 else (("🟡 Slow", "stale") if sec_ago < 15 else ("🟠 Fading", "fading"))
-                    batt = info.get('battery', 'N/A')
-                    page_path = info.get('page', '/')
+                    sig_text, color = ("🟢 Live", "#4EC9B0") if sec_ago < 8 else (("🟡 Slow", "#D7BA7D") if sec_ago < 15 else ("🟠 Fading", "#F44747"))
                     
-                    page_label = {
-                        "/": "Home Portal",
-                        "/scanner": "Scanner",
-                        "/register": "Registration",
-                        "/stats": "Network Stats"
-                    }.get(page_path, page_path)
+                    page_label = {"/": "Home Portal", "/scanner": "Scanner", "/register": "Registration", "/stats": "Network Stats"}.get(info.get('page', '/'), info.get('page', '/'))
 
-                    values = (info['name'], info['ip'], page_label, f"🔋 {batt}", "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig)
-                    if d_id in existing_iids:
-                        self.tree_devices.item(d_id, values=values, tags=(tag,))
-                        existing_iids.remove(d_id)
-                    else:
-                        self.tree_devices.insert("", END, iid=d_id, values=values, tags=(tag,))
-            else: 
-                if not existing_iids or "empty_msg" not in existing_iids:
-                    for row in existing_iids:
-                        self.tree_devices.delete(row)
-                    self.tree_devices.insert("", END, iid="empty_msg", values=("No devices connected yet — awaiting heartbeat...", "", "", "", "", ""), tags=("empty",))
-                existing_iids.discard("empty_msg")
-                
-            for stale_id in existing_iids:
-                self.tree_devices.delete(stale_id)
+                    self.tree_devices.insertRow(row)
+                    items = [
+                        QTableWidgetItem(info['name']), QTableWidgetItem(info['ip']),
+                        QTableWidgetItem(page_label), QTableWidgetItem(f"🔋 {info.get('battery', 'N/A')}"),
+                        QTableWidgetItem("just now" if sec_ago < 2 else f"{sec_ago}s ago"),
+                        QTableWidgetItem(sig_text), QTableWidgetItem(d_id)
+                    ]
+                    for col, it in enumerate(items):
+                        it.setForeground(QColor(color))
+                        self.tree_devices.setItem(row, col, it)
+            else:
+                self.tree_devices.insertRow(0)
+                it = QTableWidgetItem("No devices connected yet — awaiting heartbeat...")
+                it.setForeground(QColor("#858585"))
+                self.tree_devices.setItem(0, 0, it)
+                self.tree_devices.setItem(0, 6, QTableWidgetItem("empty_msg"))
 
             if not self._db_checked:
-                self.lbl_stat_mysql.configure(text="● MYSQL: CHECKING", bootstyle=INFO)
-                self.lbl_stat_sqlite.configure(text="● SQLITE: CHECKING", bootstyle=INFO)
+                self.lbl_stat_mysql.setText("● MYSQL: CHECKING")
+                self.lbl_stat_mysql.setStyleSheet("color:#569CD6; font-weight:bold; border:none;")
+                self.lbl_stat_sqlite.setText("● SQLITE: MIRROR")
+                self.lbl_stat_sqlite.setStyleSheet("color:#569CD6; font-weight:bold; border:none;")
             else:
                 if self.SessionMySQL:
-                    self.lbl_stat_mysql.configure(text="● MYSQL: LIVE", bootstyle=SUCCESS)
+                    self.lbl_stat_mysql.setText("● MYSQL: LIVE")
+                    self.lbl_stat_mysql.setStyleSheet("color:#4EC9B0; font-weight:bold; border:none;")
                 else:
-                    self.lbl_stat_mysql.configure(text="● MYSQL: OFFLINE", bootstyle=DANGER)
-                
+                    self.lbl_stat_mysql.setText("● MYSQL: OFFLINE")
+                    self.lbl_stat_mysql.setStyleSheet("color:#F44747; font-weight:bold; border:none;")
                 if self.SessionSQLite:
-                    self.lbl_stat_sqlite.configure(text="● SQLITE: MIRROR ACTIVE", bootstyle=SUCCESS)
+                    self.lbl_stat_sqlite.setText("● SQLITE: ACTIVE")
+                    self.lbl_stat_sqlite.setStyleSheet("color:#4EC9B0; font-weight:bold; border:none;")
                 else:
-                    self.lbl_stat_sqlite.configure(text="● SQLITE: FAULT", bootstyle=DANGER)
+                    self.lbl_stat_sqlite.setText("● SQLITE: FAULT")
+                    self.lbl_stat_sqlite.setStyleSheet("color:#F44747; font-weight:bold; border:none;")
 
             audio_text, audio_style = global_audio.status_text()
-            self.lbl_stat_audio.configure(text=audio_text, bootstyle=audio_style)
+            c = "#858585" if audio_style == "secondary" else ("#4EC9B0" if audio_style=="success" else ("#D7BA7D" if audio_style=="warning" else "#F44747"))
+            self.lbl_stat_audio.setText(audio_text)
+            self.lbl_stat_audio.setStyleSheet(f"color:{c}; font-weight:bold; border:none;")
 
-            with stats_lock:
-                snap = dict(STATS_CACHE)
-            
+            with stats_lock: snap = dict(STATS_CACHE)
             for k, v in zip(["total_att", "kiosk_reg", "sqlite_total", "chk_30", "chk_31", "chk_01", "chk_today", "chk_total"], 
                             [snap["total_attendees"], snap["total_registrations"], snap["total_attendees"], snap["chk_30"], snap["chk_31"], snap["chk_01"], snap["today_scans"], snap["total_scans"]]): 
                 self._set_stat(k, v)
 
-            if hasattr(self, 'lbl_stats_health'):
-                stale = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
-                if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
-                    self.lbl_stats_health.configure(text=f"⚠ DB Sync Delay ({int(stale)}s). Memory UI remains active.", bootstyle=WARNING)
-                else:
-                    self.lbl_stats_health.configure(text="")
+            stale = (current_time - snap["last_refreshed"]) if snap["last_refreshed"] else None
+            if snap["last_error"] and stale and stale > STATS_REFRESH_INTERVAL_SEC * 4:
+                self.lbl_stats_health.setText(f"⚠ DB Sync Delay ({int(stale)}s)")
+            else:
+                self.lbl_stats_health.setText("")
         except Exception as e:
             logging.error(f"refresh_stats error: {e}")
-        finally:
-            self.after(3000, self.refresh_stats)
 
     def start_flask(self):
-        self.btn_start_flask.configure(state=DISABLED)
+        self.btn_start_flask.setEnabled(False)
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
         start_db_writers()
         self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} Multi-threaded highly-available DB writers ready.")
@@ -2585,75 +2690,68 @@ class ServerHub(ttk.Window):
             self.https_thread.start()
         except Exception as e:
             self._append_log('flask', f"[ERROR] Start failed: {e}")
-            if self.http_thread:
-                self.http_thread.shutdown()
-                self.http_thread = None
+            if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
             self.https_thread = None
             stop_db_writers()
-            self.btn_start_flask.configure(state=NORMAL)
-            Messagebox.show_error(f"Engine failed:\n{e}", "Failed", parent=self)
+            self.btn_start_flask.setEnabled(True)
+            QMessageBox.critical(self, "Failed", f"Engine failed:\n{e}")
             return
 
-        self.btn_stop_flask.configure(state=NORMAL)
-        self.btn_start_cf.configure(state=NORMAL)
+        self.btn_stop_flask.setEnabled(True)
+        self.btn_start_cf.setEnabled(True)
         self.update_qr(self.lbl_flask_qr, self.https_url)
-        self.lbl_flask_link.configure(text=self.https_url, foreground=self.ACCENT)
+        self.lbl_flask_link.setText(self.https_url)
+        self.lbl_flask_link.setStyleSheet("color:#569CD6; font-size:10px;")
         self._append_log('flask', f"[SYSTEM] Waitress HTTP listening: {self.http_url}")
         self._append_log('flask', f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
         
     def stop_flask(self):
-        if self.btn_stop_cf['state'] == NORMAL:
-            self.stop_cf()
-        self.btn_stop_flask.configure(state=DISABLED)
-        self.btn_start_flask.configure(state=DISABLED)
-        self.btn_start_cf.configure(state=DISABLED)
+        if self.btn_stop_cf.isEnabled(): self.stop_cf()
+        self.btn_stop_flask.setEnabled(False)
+        self.btn_start_flask.setEnabled(False)
+        self.btn_start_cf.setEnabled(False)
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
-        self.lbl_flask_link.configure(text="Server Offline", foreground="#858585")
+        self.lbl_flask_link.setText("Server Offline")
+        self.lbl_flask_link.setStyleSheet("color:#858585; font-size:10px;")
         
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopping gracefully... Please wait.")
 
         def _async_stop():
             stop_db_writers()
-            if self.http_thread: 
-                self.http_thread.shutdown()
-                self.http_thread = None
-            if self.https_thread: 
-                self.https_thread.shutdown()
-                self.https_thread = None
-                
-            self.gui_queue.put(lambda: self.btn_start_flask.configure(state=NORMAL))
+            if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
+            if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
+            self.gui_queue.put(lambda: self.btn_start_flask.setEnabled(True))
             self.gui_queue.put(lambda: self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine completely stopped."))
             
         threading.Thread(target=_async_stop, daemon=True).start()
 
     def _animate_cf_connecting(self, tick=0):
-        if not self.winfo_exists() or not self._cf_connecting:
-            return
-        self.lbl_stat_cf.configure(text=f"● Cloudflare: CONNECTING{'.' * (tick % 4)}", bootstyle=WARNING)
-        self.after(450, lambda: self._animate_cf_connecting(tick + 1))
+        if not self._cf_connecting: return
+        self.lbl_stat_cf.setText(f"● CF: CONNECTING{'.' * (tick % 4)}")
+        self.lbl_stat_cf.setStyleSheet("color:#D7BA7D; font-weight:bold; border:none;")
+        QTimer.singleShot(450, lambda: self._animate_cf_connecting(tick + 1))
 
     def _mark_cf_live(self): 
         self._cf_connecting = False
-        self.lbl_stat_cf.configure(text="● Cloudflare: LIVE", bootstyle=SUCCESS)
+        self.lbl_stat_cf.setText("● Cloudflare: LIVE")
+        self.lbl_stat_cf.setStyleSheet("color:#4EC9B0; font-weight:bold; border:none;")
 
     def start_cf(self):
         if not self.http_thread:
             return self._append_log('cf', "[ERROR] Start Local Engine FIRST!")
-        self.btn_start_cf.configure(state=DISABLED)
-        self.btn_stop_cf.configure(state=NORMAL)
+        self.btn_start_cf.setEnabled(False)
+        self.btn_stop_cf.setEnabled(True)
         self._cf_connecting = True
         self._animate_cf_connecting()
-        with self.cf_lock:
-            self.cloudflare_url = "Pending"
+        with self.cf_lock: self.cloudflare_url = "Pending"
             
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
-        self._append_log('cf', "[WARNING] Voice Calling requires local LAN or an advanced Cloudflare config mapping port 5002. Voice over quick-tunnels is disabled.")
+        self._append_log('cf', "[WARNING] Voice Calling requires local LAN or port 5002 mapping.")
 
         def _run_cf():
             try:
                 proc = subprocess.Popen(["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
-                with self.cf_lock:
-                    self.cf_process = proc
+                with self.cf_lock: self.cf_process = proc
                 url_found = False
                 for line in proc.stdout:
                     cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
@@ -2666,10 +2764,9 @@ class ServerHub(ttk.Window):
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             def finalize_tunnel(t_url):
                                 time.sleep(30)
-                                with self.cf_lock:
-                                    self.cloudflare_url = t_url
+                                with self.cf_lock: self.cloudflare_url = t_url
                                 self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
-                                self.gui_queue.put(lambda u=t_url: self.lbl_cf_link.configure(text=u, foreground=self.ACCENT))
+                                self.gui_queue.put(lambda u=t_url: (self.lbl_cf_link.setText(u), self.lbl_cf_link.setStyleSheet("color:#569CD6; font-size:10px;")))
                                 self.gui_queue.put(self._mark_cf_live)
                                 self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
                             threading.Thread(target=finalize_tunnel, args=(tunnel_url,), daemon=True).start()
@@ -2682,32 +2779,48 @@ class ServerHub(ttk.Window):
         threading.Thread(target=_run_cf, daemon=True).start()
         
     def stop_cf(self):
-        self.btn_stop_cf.configure(state=DISABLED)
+        self.btn_stop_cf.setEnabled(False)
         self._cf_connecting = False  
-        self.btn_start_cf.configure(state=NORMAL if self.http_thread else DISABLED)
-        self.lbl_stat_cf.configure(text="● Cloudflare: OFFLINE", bootstyle=SECONDARY)
+        self.btn_start_cf.setEnabled(True if self.http_thread else False)
+        self.lbl_stat_cf.setText("● Cloudflare: OFFLINE")
+        self.lbl_stat_cf.setStyleSheet("color:#858585; font-weight:bold; border:none;")
         with self.cf_lock:
             proc = self.cf_process
             self.cf_process = None
             self.cloudflare_url = "Offline"
         if proc:
             try: 
-                if platform.system() == "Windows":
-                    subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    proc.terminate()
-            except Exception:
-                pass
+                if platform.system() == "Windows": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else: proc.terminate()
+            except Exception: pass
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
-        self.lbl_cf_link.configure(text="Tunnel Offline", foreground="#858585")
+        self.lbl_cf_link.setText("Tunnel Offline")
+        self.lbl_cf_link.setStyleSheet("color:#858585; font-size:10px;")
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Tunnel closed.")
+
+    def closeEvent(self, event):
+        try:
+            _global_shutdown_event.set() 
+            if self.http_thread or self.https_thread: self.stop_flask()
+            with self.cf_lock: cf_proc = self.cf_process
+            if cf_proc: self.stop_cf()
+        except Exception: pass
+        finally:
+            self.ping_executor.shutdown(wait=False)
+            event.accept()
 
 if __name__ == "__main__":
     if os.name == 'nt':
         try:
             my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.hub")
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
-        except Exception:
-            pass
+        except Exception: pass
+    
+    # Initialize Qt with High-DPI support
+    app_qt = QApplication(sys.argv)
+    if hasattr(Qt, 'HighDpiScaleFactorRoundingPolicy'):
+        app_qt.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+        
     app_window = ServerHub()
-    app_window.mainloop()
+    app_window.show()
+    sys.exit(app_qt.exec())
