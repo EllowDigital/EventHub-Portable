@@ -35,7 +35,11 @@
     }
 
     body {
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-family:
+        "Inter",
+        system-ui,
+        -apple-system,
+        sans-serif;
       background-color: var(--bg-dark);
       color: var(--text-main);
       margin: 0;
@@ -392,7 +396,7 @@
     .viewfinder-corners::after,
     .viewfinder-corners div::before,
     .viewfinder-corners div::after {
-      content: '';
+      content: "";
       position: absolute;
       width: 30px;
       height: 30px;
@@ -494,7 +498,9 @@
       width: 100%;
       height: 3px;
       background-color: var(--primary);
-      box-shadow: 0 0 10px var(--primary), 0 0 20px var(--primary);
+      box-shadow:
+        0 0 10px var(--primary),
+        0 0 20px var(--primary);
       position: absolute;
       top: 0;
       will-change: transform, opacity;
@@ -691,7 +697,9 @@
     .input-group input:focus {
       outline: none;
       border-color: var(--primary);
-      box-shadow: 0 0 0 2px rgba(0, 210, 255, 0.2), inset 0 2px 5px rgba(0, 0, 0, 0.3);
+      box-shadow:
+        0 0 0 2px rgba(0, 210, 255, 0.2),
+        inset 0 2px 5px rgba(0, 0, 0, 0.3);
     }
 
     .btn-submit {
@@ -898,7 +906,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.3s ease, backdrop-filter 0.3s ease;
+      transition:
+        background 0.3s ease,
+        backdrop-filter 0.3s ease;
     }
 
     .call-overlay.minimized {
@@ -1066,7 +1076,9 @@
         </svg>
         Hub
       </a>
-      <h3 class="header-title">Live Check-in <span class="version-tag">v2.6</span></h3>
+      <h3 class="header-title">
+        Live Check-in <span class="version-tag">v2.6</span>
+      </h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
         <span id="net-text">Connecting...</span>
@@ -1083,7 +1095,7 @@
 
     <div class="device-identity" onclick="promptDeviceName()">
       Device ID: <span id="display-device-name">Loading...</span>
-      <svg style="vertical-align: middle; margin-left: 5px; color: #888;" width="12" height="12" viewBox="0 0 24 24"
+      <svg style="vertical-align: middle; margin-left: 5px; color: #888" width="12" height="12" viewBox="0 0 24 24"
         fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 20h9"></path>
         <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
@@ -1091,13 +1103,16 @@
     </div>
 
     <div class="tabs">
-      <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">📷 Smart Scan</button>
-      <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">⌨️ Manual ID</button>
+      <button id="tab-qr" class="tab-btn active" onclick="switchMode('qr')">
+        📷 Smart Scan
+      </button>
+      <button id="tab-manual" class="tab-btn" onclick="switchMode('manual')">
+        ⌨️ Manual ID
+      </button>
     </div>
 
     <div class="scanner-wrapper" id="qr-view">
-
-      <div class="controls-row" id="controls-row" style="display: none;">
+      <div class="controls-row" id="controls-row" style="display: none">
         <select id="camera-select" class="camera-selector" onchange="onDeviceChange()">
           <option value="">Detecting Lenses...</option>
         </select>
@@ -1115,10 +1130,15 @@
         </div>
 
         <div class="permission-overlay" id="permission-overlay">
-          <div style="font-size: 2.5rem; margin-bottom: 5px;">📸</div>
+          <div style="font-size: 2.5rem; margin-bottom: 5px">📸</div>
           <h4>Lens Access Required</h4>
-          <p>Please grant camera permission to scan attendee QR passes instantly.</p>
-          <button class="btn-permission" onclick="requestCameraPermissionNatively()">Grant Access</button>
+          <p>
+            Please grant camera permission to scan attendee QR passes
+            instantly.
+          </p>
+          <button class="btn-permission" onclick="requestCameraPermissionNatively()">
+            Grant Access
+          </button>
         </div>
 
         <div class="scan-overlay" id="scan-overlay">
@@ -1141,21 +1161,27 @@
         </div>
       </div>
 
-      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">⏸ Pause Scanner</button>
+      <button class="camera-toggle-btn" id="camera-toggle-btn" onclick="toggleCamera()">
+        ⏸ Pause Scanner
+      </button>
     </div>
 
     <div class="manual-wrapper" id="manual-view">
       <div class="input-group">
         <label>Find by Attendee ID</label>
         <input type="text" id="manual-id" placeholder="TDE26-G-XXXXXX" oninput="formatID(this)" maxlength="14" />
-        <button class="btn-submit" onclick="submitManual('id')">Verify ID Check-in</button>
+        <button class="btn-submit" onclick="submitManual('id')">
+          Verify ID Check-in
+        </button>
       </div>
       <div class="divider">OR</div>
       <div class="input-group">
         <label>Find by Phone Number</label>
         <input type="tel" id="manual-phone" placeholder="10-digit number" maxlength="10"
           oninput="this.value = this.value.replace(/[^0-9]/g, '')" />
-        <button class="btn-submit" onclick="submitManual('phone')">Verify Phone Check-in</button>
+        <button class="btn-submit" onclick="submitManual('phone')">
+          Verify Phone Check-in
+        </button>
       </div>
     </div>
   </div>
@@ -1165,8 +1191,14 @@
   <div id="device-modal">
     <div class="dev-modal-content">
       <h3>Scanner Identity</h3>
-      <p style="font-size: 0.85rem; color: #aaa; margin-bottom: 20px; line-height: 1.4;">
-        Name this device so the Hub can track gate operations (e.g. VIP Gate 1).
+      <p style="
+            font-size: 0.85rem;
+            color: #aaa;
+            margin-bottom: 20px;
+            line-height: 1.4;
+          ">
+        Name this device so the Hub can track gate operations (e.g. VIP Gate
+        1).
       </p>
       <input type="text" id="device-name-input" placeholder="Device Name" />
       <button onclick="saveDeviceName()">Confirm Identity</button>
@@ -1175,40 +1207,106 @@
 
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
-      <h2 style="margin-top:0; color:#000; font-size: 1.3rem;">📨 Hub Message</h2>
-      <p id="operator-msg-text"
-        style="font-size: 1.05rem; font-weight: bold; color: #000; white-space: pre-wrap; margin-bottom: 20px;"></p>
-      <button onclick="closeOperatorMsg()"
-        style="padding: 12px 20px; background: #000; color: var(--warning); border:none; border-radius: 8px; cursor: pointer; font-weight: 900; font-size:1rem; width:100%; box-shadow: 0 2px 10px rgba(0,0,0,0.2); transition: transform 0.2s;">
+      <h2 style="margin-top: 0; color: #000; font-size: 1.3rem">
+        📨 Hub Message
+      </h2>
+      <p id="operator-msg-text" style="
+            font-size: 1.05rem;
+            font-weight: bold;
+            color: #000;
+            white-space: pre-wrap;
+            margin-bottom: 20px;
+          "></p>
+      <button onclick="closeOperatorMsg()" style="
+            padding: 12px 20px;
+            background: #000;
+            color: var(--warning);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 900;
+            font-size: 1rem;
+            width: 100%;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+            transition: transform 0.2s;
+          ">
         Acknowledge Message
       </button>
     </div>
   </div>
 
-  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
-    <div class="active-call-card"
-      style="border-color: var(--primary); box-shadow: 0 0 40px rgba(0, 210, 255, 0.2); animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-      <div
-        style="font-size: 45px; margin-bottom: 15px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
-        📞</div>
-      <h2 style="margin: 0 0 8px 0; color: var(--text-main); font-weight: 900; font-size: 1.3rem;">Incoming Call</h2>
-      <p style="color: var(--text-muted); margin-bottom: 25px; font-size: 0.9rem; font-weight: 500;">Command Hub is
-        dispatching audio...</p>
-      <div style="display: flex; gap: 10px; justify-content: center;">
-        <button onclick="acceptCall()"
-          style="background: var(--success); color: #000; border: none; padding: 12px 20px; border-radius: 30px; font-weight: 900; font-size: 0.9rem; cursor: pointer; flex: 1; transition: transform 0.2s; text-transform: uppercase;">Accept</button>
-        <button onclick="rejectCall()"
-          style="background: var(--danger); color: #fff; border: none; padding: 12px 20px; border-radius: 30px; font-weight: 900; font-size: 0.9rem; cursor: pointer; flex: 1; transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000">
+    <div class="active-call-card" style="
+          border-color: var(--primary);
+          box-shadow: 0 0 40px rgba(0, 210, 255, 0.2);
+          animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        ">
+      <div style="
+            font-size: 45px;
+            margin-bottom: 15px;
+            animation: ringShake 0.4s infinite alternate;
+            display: inline-block;
+          ">
+        📞
+      </div>
+      <h2 style="
+            margin: 0 0 8px 0;
+            color: var(--text-main);
+            font-weight: 900;
+            font-size: 1.3rem;
+          ">
+        Incoming Call
+      </h2>
+      <p style="
+            color: var(--text-muted);
+            margin-bottom: 25px;
+            font-size: 0.9rem;
+            font-weight: 500;
+          ">
+        Command Hub is dispatching audio...
+      </p>
+      <div style="display: flex; gap: 10px; justify-content: center">
+        <button onclick="acceptCall()" style="
+              background: var(--success);
+              color: #000;
+              border: none;
+              padding: 12px 20px;
+              border-radius: 30px;
+              font-weight: 900;
+              font-size: 0.9rem;
+              cursor: pointer;
+              flex: 1;
+              transition: transform 0.2s;
+              text-transform: uppercase;
+            ">
+          Accept
+        </button>
+        <button onclick="rejectCall()" style="
+              background: var(--danger);
+              color: #fff;
+              border: none;
+              padding: 12px 20px;
+              border-radius: 30px;
+              font-weight: 900;
+              font-size: 0.9rem;
+              cursor: pointer;
+              flex: 1;
+              transition: transform 0.2s;
+              text-transform: uppercase;
+            ">
+          Decline
+        </button>
       </div>
     </div>
   </div>
 
-  <div id="active-call-overlay" class="call-overlay" style="display: none;">
+  <div id="active-call-overlay" class="call-overlay" style="display: none">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
         <span class="call-badge pulse-badge">🟢 Live Audio</span>
-        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()"
-          title="Minimize / Maximize">🗕</button>
+        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()" title="Minimize / Maximize">
+          🗕
+        </button>
       </div>
       <div class="call-info">
         <div class="call-avatar" id="call-avatar">🎙️</div>
@@ -1224,19 +1322,30 @@
   </div>
 
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => { });
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => { });
     }
 
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
-      return String(str).replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+      return String(str).replace(
+        /[&<>'"]/g,
+        (tag) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            "'": "&#39;",
+            '"': "&quot;",
+          })[tag] || tag,
+      );
     }
 
     let audioCtx = null;
 
     function initAudio() {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!audioCtx)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
     }
 
@@ -1245,25 +1354,40 @@
         initAudio();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         const now = audioCtx.currentTime;
 
         if (type === "SUCCESS" || type === "OFFLINE") {
-          osc.type = "sine"; osc.frequency.setValueAtTime(880, now); osc.frequency.setValueAtTime(1200, now + 0.1);
-          gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
-          osc.start(now); osc.stop(now + 0.3);
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(880, now);
+          osc.frequency.setValueAtTime(1200, now + 0.1);
+          gain.gain.setValueAtTime(0.8, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+          osc.start(now);
+          osc.stop(now + 0.3);
         } else if (type === "ERROR") {
-          osc.type = "sawtooth"; osc.frequency.setValueAtTime(150, now);
-          gain.gain.setValueAtTime(0.8, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
-          osc.start(now); osc.stop(now + 0.4);
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(150, now);
+          gain.gain.setValueAtTime(0.8, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+          osc.start(now);
+          osc.stop(now + 0.4);
         } else if (type === "DUPLICATE") {
-          osc.type = "square"; osc.frequency.setValueAtTime(400, now);
-          gain.gain.setValueAtTime(0.5, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
-          osc.start(now); osc.stop(now + 0.15);
+          osc.type = "square";
+          osc.frequency.setValueAtTime(400, now);
+          gain.gain.setValueAtTime(0.5, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+          osc.start(now);
+          osc.stop(now + 0.15);
         } else if (type === "ALERT") {
-          osc.type = "triangle"; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(800, now + 0.2);
-          gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-          osc.start(now); osc.stop(now + 0.5);
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(600, now);
+          osc.frequency.setValueAtTime(800, now + 0.2);
+          gain.gain.setValueAtTime(1.0, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now);
+          osc.stop(now + 0.5);
         }
       } catch (e) { }
     }
@@ -1271,7 +1395,7 @@
     function closeOperatorMsg() {
       const modal = document.getElementById("operator-msg-modal");
       modal.classList.remove("show");
-      setTimeout(() => modal.style.display = "none", 250);
+      setTimeout(() => (modal.style.display = "none"), 250);
     }
 
     let html5QrCode = null;
@@ -1281,36 +1405,45 @@
 
     let currentTrack = null;
     let nativeZoomSupported = false;
-    let minZoom = 1; let maxZoom = 3; let zoomTarget = 1.0;
+    let minZoom = 1;
+    let maxZoom = 3;
+    let zoomTarget = 1.0;
 
     let zoomTimeout = null;
     let autoZoomInterval = null;
     let currentAppliedZoom = -1;
 
-    let isSyncing = false; let isFetching = false;
+    let isSyncing = false;
+    let isFetching = false;
     let camerasList = [];
 
-    let lastScannedId = ""; let lastScanTime = 0; const DEBOUNCE_MS = 4000;
+    let lastScannedId = "";
+    let lastScanTime = 0;
+    const DEBOUNCE_MS = 4000;
     let availableQualitiesPopulated = false;
 
     async function requestCameraPermissionNatively() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        stream.getTracks().forEach(track => track.stop());
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+        });
+        stream.getTracks().forEach((track) => track.stop());
         document.getElementById("permission-overlay").style.display = "none";
-        await fetchCameras(); await startHardware();
-      } catch (err) { showToast("Permission denied by system. Check settings.", "ERROR"); }
+        await fetchCameras();
+        await startHardware();
+      } catch (err) {
+        showToast("Permission denied by system. Check settings.", "ERROR");
+      }
     }
 
     async function fetchCameras() {
       try {
         const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length) {
-
           // Filter out front-facing cameras based on common labels
-          let backCameras = devices.filter(device => {
+          let backCameras = devices.filter((device) => {
             const label = device.label.toLowerCase();
-            return !label.includes('front') && !label.includes('user');
+            return !label.includes("front") && !label.includes("user");
           });
 
           // Fallback if the filtering accidentally removes everything
@@ -1335,7 +1468,9 @@
           });
           document.getElementById("controls-row").style.display = "flex";
         }
-      } catch (err) { document.getElementById("permission-overlay").style.display = "flex"; }
+      } catch (err) {
+        document.getElementById("permission-overlay").style.display = "flex";
+      }
     }
 
     function onDeviceChange() {
@@ -1345,7 +1480,10 @@
 
     async function onCameraChange() {
       if (isCameraTransitioning) return;
-      if (isCameraActive) { await stopHardware(); await startHardware(); }
+      if (isCameraActive) {
+        await stopHardware();
+        await startHardware();
+      }
     }
 
     function onCameraStarted(btn) {
@@ -1368,54 +1506,84 @@
         const select = document.getElementById("camera-select");
         const qualitySelect = document.getElementById("quality-select");
 
-        const cameraId = (select && select.value !== "") ? select.value : null;
+        const cameraId = select && select.value !== "" ? select.value : null;
         // Default to "auto" quality to prevent resolution constraints from blocking the camera load
         const quality = qualitySelect ? qualitySelect.value : "auto";
 
-        btn.innerHTML = "⏳ Initializing Lens..."; btn.classList.remove("paused");
+        btn.innerHTML = "⏳ Initializing Lens...";
+        btn.classList.remove("paused");
         document.getElementById("permission-overlay").style.display = "none";
 
         // Always fallback to environment (back) camera if specific ID is not present
-        const cameraTarget = cameraId ? cameraId : { facingMode: "environment" };
+        const cameraTarget = cameraId
+          ? cameraId
+          : { facingMode: "environment" };
 
         let currentScanConfig = {
           fps: 15,
           qrbox: { width: 250, height: 250 },
           formatsToSupport: [0],
           aspectRatio: 1.0,
-          useBarCodeDetectorIfSupported: true
+          useBarCodeDetectorIfSupported: true,
         };
 
         if (quality !== "auto") {
           currentScanConfig.videoConstraints = {};
           if (quality === "4k") {
-            currentScanConfig.videoConstraints = { width: { ideal: 3840 }, height: { ideal: 2160 } };
+            currentScanConfig.videoConstraints = {
+              width: { ideal: 3840 },
+              height: { ideal: 2160 },
+            };
           } else if (quality === "1080p") {
-            currentScanConfig.videoConstraints = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+            currentScanConfig.videoConstraints = {
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+            };
           } else if (quality === "720p") {
-            currentScanConfig.videoConstraints = { width: { ideal: 1280 }, height: { ideal: 720 } };
+            currentScanConfig.videoConstraints = {
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            };
           } else if (quality === "480p") {
-            currentScanConfig.videoConstraints = { width: { ideal: 640 }, height: { ideal: 480 } };
+            currentScanConfig.videoConstraints = {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+            };
             currentScanConfig.fps = 10;
           }
         }
 
         try {
-          await html5QrCode.start(cameraTarget, currentScanConfig, onScanSuccess);
+          await html5QrCode.start(
+            cameraTarget,
+            currentScanConfig,
+            onScanSuccess,
+          );
           onCameraStarted(btn);
         } catch (err) {
-          console.warn("Camera failed with custom quality settings, retrying with defaults...", err);
+          console.warn(
+            "Camera failed with custom quality settings, retrying with defaults...",
+            err,
+          );
 
           try {
             delete currentScanConfig.videoConstraints;
-            await html5QrCode.start(cameraTarget, currentScanConfig, onScanSuccess);
+            await html5QrCode.start(
+              cameraTarget,
+              currentScanConfig,
+              onScanSuccess,
+            );
             onCameraStarted(btn);
           } catch (fallbackErr) {
             console.error("Camera completely failed to start:", fallbackErr);
-            document.getElementById("permission-overlay").style.display = "flex";
-            btn.innerHTML = "▶ Resume Scanner"; btn.classList.add("paused");
+            document.getElementById("permission-overlay").style.display =
+              "flex";
+            btn.innerHTML = "▶ Resume Scanner";
+            btn.classList.add("paused");
           }
-        } finally { isCameraTransitioning = false; }
+        } finally {
+          isCameraTransitioning = false;
+        }
       }
     }
 
@@ -1424,12 +1592,19 @@
         document.getElementById("zoom-controls").style.display = "flex";
         currentTrack = html5QrCode.getRunningTrack();
 
-        nativeZoomSupported = false; minZoom = 1; maxZoom = 3;
+        nativeZoomSupported = false;
+        minZoom = 1;
+        maxZoom = 3;
 
         if (currentTrack) {
           const cap = currentTrack.getCapabilities();
 
-          if (!availableQualitiesPopulated && cap && cap.width && cap.width.max) {
+          if (
+            !availableQualitiesPopulated &&
+            cap &&
+            cap.width &&
+            cap.width.max
+          ) {
             populateDynamicQuality(cap.width.max);
             availableQualitiesPopulated = true;
           }
@@ -1443,7 +1618,10 @@
 
         zoomTarget = minZoom;
         const slider = document.getElementById("zoom-slider");
-        slider.min = minZoom; slider.max = maxZoom; slider.step = (maxZoom - minZoom) / 20; slider.value = minZoom;
+        slider.min = minZoom;
+        slider.max = maxZoom;
+        slider.step = (maxZoom - minZoom) / 20;
+        slider.value = minZoom;
 
         slider.replaceWith(slider.cloneNode(true));
         const newSlider = document.getElementById("zoom-slider");
@@ -1464,13 +1642,18 @@
         { value: "1080p", label: "1080p (High)", minWidth: 1920 },
         { value: "720p", label: "720p (Cooling/Eco)", minWidth: 1280 },
         { value: "480p", label: "480p (Max Battery)", minWidth: 640 },
-        { value: "auto", label: "Auto Quality", minWidth: 0 }
+        { value: "auto", label: "Auto Quality", minWidth: 0 },
       ];
 
       let foundSelected = false;
 
-      options.forEach(opt => {
-        if (maxWidth >= opt.minWidth || opt.value === "480p" || opt.value === "720p" || opt.value === "auto") {
+      options.forEach((opt) => {
+        if (
+          maxWidth >= opt.minWidth ||
+          opt.value === "480p" ||
+          opt.value === "720p" ||
+          opt.value === "auto"
+        ) {
           const el = document.createElement("option");
           el.value = opt.value;
           el.text = opt.label;
@@ -1498,7 +1681,8 @@
     function adjustZoom(delta) {
       zoomTarget = Math.max(minZoom, Math.min(maxZoom, zoomTarget + delta));
       document.getElementById("zoom-slider").value = zoomTarget;
-      document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
+      document.getElementById("zoom-val-display").innerText =
+        zoomTarget.toFixed(1) + "x";
       resetAutoZoomTimer();
       applyDebouncedZoom();
     }
@@ -1511,10 +1695,15 @@
 
         const applyZoomLogic = () => {
           if (nativeZoomSupported && currentTrack) {
-            try { currentTrack.applyConstraints({ advanced: [{ zoom: zoomTarget }] }).catch(() => { }); } catch (e) { }
+            try {
+              currentTrack
+                .applyConstraints({ advanced: [{ zoom: zoomTarget }] })
+                .catch(() => { });
+            } catch (e) { }
           } else {
             const videoEl = document.querySelector("#reader video");
-            if (videoEl) videoEl.style.transform = `scale(${zoomTarget}) translateZ(0)`;
+            if (videoEl)
+              videoEl.style.transform = `scale(${zoomTarget}) translateZ(0)`;
           }
         };
 
@@ -1535,17 +1724,20 @@
           const badge = document.getElementById("auto-zoom-badge");
           badge.style.opacity = 1;
 
-          let newZoom = toggle ? minZoom : minZoom + (maxZoom - minZoom) * 0.2;
+          let newZoom = toggle
+            ? minZoom
+            : minZoom + (maxZoom - minZoom) * 0.2;
           zoomTarget = Math.max(minZoom, Math.min(maxZoom, newZoom));
 
           document.getElementById("zoom-slider").value = zoomTarget;
-          document.getElementById("zoom-val-display").innerText = zoomTarget.toFixed(1) + "x";
+          document.getElementById("zoom-val-display").innerText =
+            zoomTarget.toFixed(1) + "x";
 
           applyDebouncedZoom();
           toggle = !toggle;
 
           setTimeout(() => {
-            requestAnimationFrame(() => badge.style.opacity = 0);
+            requestAnimationFrame(() => (badge.style.opacity = 0));
           }, 800);
         });
       }, 5000);
@@ -1557,11 +1749,16 @@
     }
 
     const scannerBox = document.getElementById("scanner-box");
-    scannerBox.addEventListener("wheel", (e) => {
-      if (!isCameraActive) return;
-      e.preventDefault();
-      if (e.deltaY < 0) adjustZoom(0.1); else adjustZoom(-0.1);
-    }, { passive: false });
+    scannerBox.addEventListener(
+      "wheel",
+      (e) => {
+        if (!isCameraActive) return;
+        e.preventDefault();
+        if (e.deltaY < 0) adjustZoom(0.1);
+        else adjustZoom(-0.1);
+      },
+      { passive: false },
+    );
 
     async function stopHardware() {
       if (isCameraTransitioning) return;
@@ -1572,28 +1769,38 @@
           if (html5QrCode.getState() === 2) await html5QrCode.stop();
           isCameraActive = false;
           const btn = document.getElementById("camera-toggle-btn");
-          btn.innerHTML = "▶ Resume Scanner"; btn.classList.add("paused");
+          btn.innerHTML = "▶ Resume Scanner";
+          btn.classList.add("paused");
           document.getElementById("scan-overlay").style.display = "none";
-          document.getElementById("viewfinder-corners").style.display = "none";
+          document.getElementById("viewfinder-corners").style.display =
+            "none";
           document.getElementById("zoom-controls").style.display = "none";
-        } catch (e) { } finally { isCameraTransitioning = false; }
+        } catch (e) {
+        } finally {
+          isCameraTransitioning = false;
+        }
       }
     }
 
     async function toggleCamera() {
-      if (isCameraActive) await stopHardware(); else await startHardware();
+      if (isCameraActive) await stopHardware();
+      else await startHardware();
     }
 
     async function switchMode(mode) {
       if (isCameraTransitioning) return;
       document.getElementById("result-card").classList.remove("show");
       if (mode === "qr") {
-        document.getElementById("tab-qr").classList.add("active"); document.getElementById("tab-manual").classList.remove("active");
-        document.getElementById("qr-view").style.display = "block"; document.getElementById("manual-view").style.display = "none";
+        document.getElementById("tab-qr").classList.add("active");
+        document.getElementById("tab-manual").classList.remove("active");
+        document.getElementById("qr-view").style.display = "block";
+        document.getElementById("manual-view").style.display = "none";
         await startHardware();
       } else {
-        document.getElementById("tab-manual").classList.add("active"); document.getElementById("tab-qr").classList.remove("active");
-        document.getElementById("manual-view").style.display = "block"; document.getElementById("qr-view").style.display = "none";
+        document.getElementById("tab-manual").classList.add("active");
+        document.getElementById("tab-qr").classList.remove("active");
+        document.getElementById("manual-view").style.display = "block";
+        document.getElementById("qr-view").style.display = "none";
         await stopHardware();
       }
     }
@@ -1610,24 +1817,39 @@
 
     function submitManual(type) {
       if (isProcessing) return;
-      let val = type === "id" ? document.getElementById("manual-id").value.trim() : document.getElementById("manual-phone").value.trim();
-      if (type === "id" && !/^TDE26-[BGME]-[A-Z0-9]{6}$/i.test(val)) return showToast("Invalid Format.", "ERROR");
-      if (type === "phone" && val.length !== 10) return showToast("Phone must be exactly 10 digits", "ERROR");
+      let val =
+        type === "id"
+          ? document.getElementById("manual-id").value.trim()
+          : document.getElementById("manual-phone").value.trim();
+      if (type === "id" && !/^TDE26-[BGME]-[A-Z0-9]{6}$/i.test(val))
+        return showToast("Invalid Format.", "ERROR");
+      if (type === "phone" && val.length !== 10)
+        return showToast("Phone must be exactly 10 digits", "ERROR");
 
       const now = Date.now();
-      if (val === lastScannedId && (now - lastScanTime < 1500)) return;
-      lastScannedId = val; lastScanTime = now;
+      if (val === lastScannedId && now - lastScanTime < 1500) return;
+      lastScannedId = val;
+      lastScanTime = now;
       processCheckin(val, type);
-      document.getElementById("manual-id").value = ""; document.getElementById("manual-phone").value = "";
+      document.getElementById("manual-id").value = "";
+      document.getElementById("manual-phone").value = "";
     }
 
     function getDeviceId() {
       let id = localStorage.getItem("hub_device_id");
-      if (!id) { id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15); localStorage.setItem("hub_device_id", id); }
+      if (!id) {
+        id =
+          "dev_" +
+          Math.random().toString(36).substring(2, 15) +
+          Math.random().toString(36).substring(2, 15);
+        localStorage.setItem("hub_device_id", id);
+      }
       return id;
     }
 
-    function getDeviceName() { return localStorage.getItem("hub_device_name") || "Unnamed Scanner"; }
+    function getDeviceName() {
+      return localStorage.getItem("hub_device_name") || "Unnamed Scanner";
+    }
 
     function initDeviceName() {
       let name = localStorage.getItem("hub_device_name");
@@ -1648,7 +1870,7 @@
 
         const modal = document.getElementById("device-modal");
         modal.classList.remove("show");
-        setTimeout(() => modal.style.display = "none", 250);
+        setTimeout(() => (modal.style.display = "none"), 250);
 
         syncServerStatus();
       }
@@ -1661,7 +1883,9 @@
       setTimeout(() => modal.classList.add("show"), 10);
     }
 
-    function getOfflineQueue() { return JSON.parse(localStorage.getItem("offline_scans") || "[]"); }
+    function getOfflineQueue() {
+      return JSON.parse(localStorage.getItem("offline_scans") || "[]");
+    }
 
     function saveOfflineQueue(queue) {
       localStorage.setItem("offline_scans", JSON.stringify(queue));
@@ -1671,25 +1895,40 @@
     function updateOfflineBadge() {
       const queue = getOfflineQueue();
       const badge = document.getElementById("offline-badge");
-      if (queue.length > 0) { badge.style.display = "block"; document.getElementById("offline-count").textContent = queue.length; }
-      else { badge.style.display = "none"; }
+      if (queue.length > 0) {
+        badge.style.display = "block";
+        document.getElementById("offline-count").textContent = queue.length;
+      } else {
+        badge.style.display = "none";
+      }
     }
 
     async function processOfflineQueue() {
       if (isSyncing || !navigator.onLine) return;
       let queue = getOfflineQueue();
       if (queue.length === 0) return;
-      isSyncing = true; let remainingQueue = [];
+      isSyncing = true;
+      let remainingQueue = [];
       for (let i = 0; i < queue.length; i++) {
         try {
           queue[i].device_id = getDeviceId();
-          let res = await fetch("/api/checkin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(queue[i]) });
+          let res = await fetch("/api/checkin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(queue[i]),
+          });
           if (!res.ok && res.status >= 500) remainingQueue.push(queue[i]);
-        } catch (e) { remainingQueue.push(queue[i]); }
+        } catch (e) {
+          remainingQueue.push(queue[i]);
+        }
       }
       saveOfflineQueue(remainingQueue);
       isSyncing = false;
-      if (remainingQueue.length < queue.length) showToast(`Synced ${queue.length - remainingQueue.length} offline records!`, "SUCCESS");
+      if (remainingQueue.length < queue.length)
+        showToast(
+          `Synced ${queue.length - remainingQueue.length} offline records!`,
+          "SUCCESS",
+        );
     }
 
     async function syncServerStatus() {
@@ -1701,7 +1940,10 @@
         testDate = document.getElementById("test-mode-date");
 
       if (!navigator.onLine) {
-        dot.className = "net-dot net-offline"; text.textContent = "Offline"; testBanner.style.display = "none"; return;
+        dot.className = "net-dot net-offline";
+        text.textContent = "Offline";
+        testBanner.style.display = "none";
+        return;
       }
 
       isFetching = true;
@@ -1711,13 +1953,14 @@
         device_id: getDeviceId(),
         device_name: getDeviceName(),
         page: window.location.pathname,
-        battery: "N/A"
+        battery: "N/A",
       };
 
       if (navigator.getBattery) {
         try {
           const b = await navigator.getBattery();
-          payload.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : '');
+          payload.battery =
+            Math.round(b.level * 100) + "%" + (b.charging ? " AC" : "");
         } catch (e) { }
       }
 
@@ -1730,34 +1973,51 @@
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-          signal: c.signal
+          signal: c.signal,
         });
         clearTimeout(id);
 
         const dur = performance.now() - start;
 
-        if (dur < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
-        else if (dur < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; }
-        else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
+        if (dur < 400) {
+          dot.className = "net-dot net-excellent";
+          text.textContent = "Excellent";
+        } else if (dur < 1200) {
+          dot.className = "net-dot net-fair";
+          text.textContent = "Good";
+        } else {
+          dot.className = "net-dot net-poor";
+          text.textContent = "Slow";
+        }
 
         if (response.ok) {
           try {
             const data = await response.json();
 
-            if (data.canonical_name && data.canonical_name !== "Unknown Device") {
-              const currentLocalName = localStorage.getItem("hub_device_name");
+            if (
+              data.canonical_name &&
+              data.canonical_name !== "Unknown Device"
+            ) {
+              const currentLocalName =
+                localStorage.getItem("hub_device_name");
               if (data.canonical_name !== currentLocalName) {
                 localStorage.setItem("hub_device_name", data.canonical_name);
-                document.getElementById("display-device-name").textContent = data.canonical_name;
+                document.getElementById("display-device-name").textContent =
+                  data.canonical_name;
               }
             }
 
-            if (data.test_mode) { testBanner.style.display = "block"; testDate.textContent = escapeHTML(data.test_date) || "Unknown"; }
-            else { testBanner.style.display = "none"; }
+            if (data.test_mode) {
+              testBanner.style.display = "block";
+              testDate.textContent = escapeHTML(data.test_date) || "Unknown";
+            } else {
+              testBanner.style.display = "none";
+            }
 
             if (data.message) {
               const msgBox = document.getElementById("operator-msg-modal");
-              document.getElementById("operator-msg-text").innerText = data.message;
+              document.getElementById("operator-msg-text").innerText =
+                data.message;
               msgBox.style.display = "flex";
               setTimeout(() => msgBox.classList.add("show"), 10);
               playAudioTone("ALERT");
@@ -1767,8 +2027,11 @@
           } catch (err) { }
         }
       } catch (e) {
-        dot.className = "net-dot net-poor"; text.textContent = "Connecting...";
-      } finally { isFetching = false; }
+        dot.className = "net-dot net-poor";
+        text.textContent = "Connecting...";
+      } finally {
+        isFetching = false;
+      }
     }
 
     function processCheckin(identifier, type = "id") {
@@ -1776,19 +2039,32 @@
       isProcessing = true;
 
       const payload = {
-        attendee_id: identifier, search_type: type, device_name: getDeviceName(), device_id: getDeviceId(), offline_scan_time: new Date().toISOString(),
+        attendee_id: identifier,
+        search_type: type,
+        device_name: getDeviceName(),
+        device_id: getDeviceId(),
+        offline_scan_time: new Date().toISOString(),
       };
 
-      fetch("/api/checkin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) })
-        .then((r) => r.json().then((data) => ({ status: r.status, body: data })))
+      fetch("/api/checkin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+        .then((r) =>
+          r.json().then((data) => ({ status: r.status, body: data })),
+        )
         .then((res) => {
           let sType = "ERROR";
           if (res.status === 200) sType = "SUCCESS";
-          else if (res.body.message && res.body.message.includes("Already")) sType = "DUPLICATE";
+          else if (res.body.message && res.body.message.includes("Already"))
+            sType = "DUPLICATE";
           showToast(res.body.message, sType);
         })
         .catch(() => {
-          let queue = getOfflineQueue(); queue.push(payload); saveOfflineQueue(queue);
+          let queue = getOfflineQueue();
+          queue.push(payload);
+          saveOfflineQueue(queue);
           showToast(`Saved Offline: ${identifier}`, "OFFLINE");
         });
     }
@@ -1803,18 +2079,27 @@
       else if (type === "OFFLINE") card.className = "res-offline show";
       else card.className = "res-error show";
 
-      playAudioTone(type); clearTimeout(toastTimeout);
-      toastTimeout = setTimeout(() => { card.classList.remove("show"); isProcessing = false; }, 3500);
+      playAudioTone(type);
+      clearTimeout(toastTimeout);
+      toastTimeout = setTimeout(() => {
+        card.classList.remove("show");
+        isProcessing = false;
+      }, 3500);
     }
 
     function onScanSuccess(decoded) {
       if (isProcessing) return;
       let id = decoded.trim();
-      try { const p = JSON.parse(id); if (typeof p === "object" && p !== null) id = p.attendeeId || p.id || id; } catch (e) { }
+      try {
+        const p = JSON.parse(id);
+        if (typeof p === "object" && p !== null)
+          id = p.attendeeId || p.id || id;
+      } catch (e) { }
 
       const now = Date.now();
-      if (id === lastScannedId && (now - lastScanTime < DEBOUNCE_MS)) return;
-      lastScannedId = id; lastScanTime = now;
+      if (id === lastScannedId && now - lastScanTime < DEBOUNCE_MS) return;
+      lastScannedId = id;
+      lastScanTime = now;
       processCheckin(id, "id");
     }
 
@@ -1859,13 +2144,18 @@
       ringInterval = setInterval(() => {
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         osc.type = "square";
         osc.frequency.setValueAtTime(440, audioCtx.currentTime);
         osc.frequency.setValueAtTime(480, audioCtx.currentTime + 0.2);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.0);
-        osc.start(); osc.stop(audioCtx.currentTime + 1.0);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 1.0,
+        );
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.0);
       }, 2000);
     }
 
@@ -1877,11 +2167,16 @@
     }
 
     function connectCallServer() {
-      if (wsCall && (wsCall.readyState === WebSocket.OPEN || wsCall.readyState === WebSocket.CONNECTING)) {
+      if (
+        wsCall &&
+        (wsCall.readyState === WebSocket.OPEN ||
+          wsCall.readyState === WebSocket.CONNECTING)
+      ) {
         return;
       }
 
-      const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+      const protocol =
+        window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
       try {
@@ -1891,22 +2186,23 @@
           try {
             const data = JSON.parse(event.data);
 
-            if (data.type === 'incoming_call') {
-              document.getElementById("incoming-call-modal").style.display = "flex";
+            if (data.type === "incoming_call") {
+              document.getElementById("incoming-call-modal").style.display =
+                "flex";
               playRingingTone();
-            }
-            else if (data.type === 'answer' && peerConnection) {
-              await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-            }
-            else if (data.type === 'server_muted') {
+            } else if (data.type === "answer" && peerConnection) {
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+              );
+            } else if (data.type === "server_muted") {
               remoteAudio.muted = data.muted;
-            }
-            else if (data.type === 'client_muted') {
+            } else if (data.type === "client_muted") {
               if (localStream) {
-                localStream.getAudioTracks().forEach(track => { track.enabled = !data.muted; });
+                localStream.getAudioTracks().forEach((track) => {
+                  track.enabled = !data.muted;
+                });
               }
-            }
-            else if (data.type === 'call_ended') {
+            } else if (data.type === "call_ended") {
               endCall(false);
             }
           } catch (parseError) { }
@@ -1931,9 +2227,9 @@
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true
+            autoGainControl: true,
           },
-          video: false
+          video: false,
         });
 
         document.getElementById("active-call-overlay").style.display = "flex";
@@ -1942,14 +2238,22 @@
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
 
-        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        peerConnection = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
 
-        localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
+        localStream.getTracks().forEach((track) => {
+          peerConnection.addTrack(track, localStream);
+        });
 
         peerConnection.ontrack = (event) => {
           if (!remoteAudio.srcObject) {
             remoteAudio.srcObject = event.streams[0];
-            remoteAudio.play().catch(e => console.warn("Audio play blocked by browser:", e));
+            remoteAudio
+              .play()
+              .catch((e) =>
+                console.warn("Audio play blocked by browser:", e),
+              );
           }
         };
 
@@ -1957,12 +2261,12 @@
         await peerConnection.setLocalDescription(offer);
 
         await new Promise((resolve) => {
-          if (peerConnection.iceGatheringState === 'complete') {
+          if (peerConnection.iceGatheringState === "complete") {
             resolve();
           } else {
             const timeout = setTimeout(resolve, 2000);
             peerConnection.onicegatheringstatechange = () => {
-              if (peerConnection.iceGatheringState === 'complete') {
+              if (peerConnection.iceGatheringState === "complete") {
                 clearTimeout(timeout);
                 resolve();
               }
@@ -1971,21 +2275,38 @@
         });
 
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-          wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
+          wsCall.send(
+            JSON.stringify({
+              type: "offer",
+              sdp: peerConnection.localDescription.sdp,
+            }),
+          );
         }
-
       } catch (err) {
-        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.");
+        alert(
+          "Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.",
+        );
         rejectCall();
       }
     }
 
-    function rejectCall() { endCall(true); }
+    function rejectCall() {
+      endCall(true);
+    }
 
     function endCall(sendPing = true) {
-      if (peerConnection) { peerConnection.close(); peerConnection = null; }
-      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-      if (remoteAudio.srcObject) { remoteAudio.pause(); remoteAudio.srcObject = null; }
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+        localStream = null;
+      }
+      if (remoteAudio.srcObject) {
+        remoteAudio.pause();
+        remoteAudio.srcObject = null;
+      }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
@@ -1994,27 +2315,40 @@
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
-        wsCall.send(JSON.stringify({ type: 'call_ended' }));
+        wsCall.send(JSON.stringify({ type: "call_ended" }));
       }
     }
 
-    document.getElementById('nav-hub-btn').addEventListener('click', function (e) {
-      if (peerConnection && peerConnection.connectionState === 'connected') {
-        e.preventDefault();
-        window.open(this.href, '_blank');
-        showToast("Call Active: Hub opened safely in a new tab.", "SUCCESS");
-      }
-    });
+    document
+      .getElementById("nav-hub-btn")
+      .addEventListener("click", function (e) {
+        if (
+          peerConnection &&
+          peerConnection.connectionState === "connected"
+        ) {
+          e.preventDefault();
+          window.open(this.href, "_blank");
+          showToast(
+            "Call Active: Hub opened safely in a new tab.",
+            "SUCCESS",
+          );
+        }
+      });
 
     document.addEventListener("click", initAudio, { once: true });
 
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") syncServerStatus(); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") syncServerStatus();
+    });
 
     window.addEventListener("load", async () => {
-      initDeviceName(); updateOfflineBadge();
-      await fetchCameras(); startHardware();
+      initDeviceName();
+      updateOfflineBadge();
+      await fetchCameras();
+      startHardware();
       connectCallServer();
-      setInterval(syncServerStatus, 3000); syncServerStatus();
+      setInterval(syncServerStatus, 3000);
+      syncServerStatus();
     });
   </script>
 </body>

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 
 <head>
@@ -29,7 +29,7 @@
       --offline: #555555;
       --text-main: #ffffff;
       --text-muted: #8b93a5;
-      --font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-ui: "Inter", system-ui, -apple-system, sans-serif;
       --radius-sm: 6px;
       --radius-md: 10px;
       --radius-lg: 16px;
@@ -42,8 +42,12 @@
       font-family: var(--font-ui);
       background-color: var(--bg-pure-black);
       background-image:
-        radial-gradient(circle at 50% -20%, rgba(0, 210, 255, 0.12), transparent 60%),
-        radial-gradient(circle at 50% 120%, rgba(0, 230, 118, 0.05), transparent 60%);
+        radial-gradient(circle at 50% -20%,
+          rgba(0, 210, 255, 0.12),
+          transparent 60%),
+        radial-gradient(circle at 50% 120%,
+          rgba(0, 230, 118, 0.05),
+          transparent 60%);
       color: var(--text-main);
       margin: 0;
       padding: 0;
@@ -170,7 +174,9 @@
       border-radius: var(--radius-md);
       cursor: pointer;
       transition: var(--transition);
-      background: linear-gradient(145deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+      background: linear-gradient(145deg,
+          rgba(255, 255, 255, 0.1),
+          rgba(255, 255, 255, 0.02));
       border: 1px solid rgba(255, 255, 255, 0.1);
       color: var(--text-main);
       text-decoration: none;
@@ -178,7 +184,9 @@
     }
 
     .btn:hover {
-      background: linear-gradient(145deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
+      background: linear-gradient(145deg,
+          rgba(255, 255, 255, 0.15),
+          rgba(255, 255, 255, 0.05));
       border-color: rgba(255, 255, 255, 0.3);
       transform: translateY(-1px);
       box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
@@ -225,7 +233,9 @@
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      transition: background 0.3s, box-shadow 0.3s;
+      transition:
+        background 0.3s,
+        box-shadow 0.3s;
     }
 
     .status-online {
@@ -280,7 +290,9 @@
 
     .stat-card {
       position: relative;
-      background: linear-gradient(160deg, var(--surface-light) 0%, var(--surface) 100%);
+      background: linear-gradient(160deg,
+          var(--surface-light) 0%,
+          var(--surface) 100%);
       border-radius: var(--radius-lg);
       padding: 18px 14px;
       /* Shrunk */
@@ -332,7 +344,9 @@
     .stat-card:hover {
       transform: translateY(-4px) scale(1.01);
       border-color: var(--card-color, rgba(255, 255, 255, 0.2));
-      box-shadow: 0 12px 25px rgba(0, 0, 0, 0.5), 0 0 15px rgba(var(--card-color-rgb), 0.1);
+      box-shadow:
+        0 12px 25px rgba(0, 0, 0, 0.5),
+        0 0 15px rgba(var(--card-color-rgb), 0.1);
     }
 
     .stat-card:hover::before {
@@ -378,7 +392,9 @@
       font-weight: 900;
       line-height: 1;
       z-index: 2;
-      background: linear-gradient(135deg, #ffffff 0%, var(--card-color, #8b93a5) 100%);
+      background: linear-gradient(135deg,
+          #ffffff 0%,
+          var(--card-color, #8b93a5) 100%);
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
@@ -413,7 +429,9 @@
       stroke-linecap: round;
       stroke-dasharray: 125.6;
       stroke-dashoffset: 125.6;
-      transition: stroke-dashoffset 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275), stroke 0.4s;
+      transition:
+        stroke-dashoffset 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+        stroke 0.4s;
     }
 
     .speedo-text {
@@ -587,7 +605,9 @@
     .latency-bar {
       height: 100%;
       border-radius: 10px;
-      transition: width 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.4s ease;
+      transition:
+        width 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+        background 0.4s ease;
     }
 
     .latency-text {
@@ -674,7 +694,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.3s ease, backdrop-filter 0.3s ease;
+      transition:
+        background 0.3s ease,
+        backdrop-filter 0.3s ease;
     }
 
     .call-overlay.minimized {
@@ -872,7 +894,6 @@
 </head>
 
 <body>
-
   <main class="app-container">
     <header class="header">
       <button class="btn" onclick="handleNavigation('/')">
@@ -885,13 +906,14 @@
       </button>
       <h2 class="header-title">Network Intelligence</h2>
       <div class="status-wrapper">
-        <span id="hub-status-text" class="status-text" style="color: var(--text-muted);">CONNECTING...</span>
+        <span id="hub-status-text" class="status-text" style="color: var(--text-muted)">CONNECTING...</span>
         <span id="hub-status-dot" class="status-dot status-offline"></span>
       </div>
     </header>
 
     <div id="test-mode-banner" class="banner warning">
-      ⚠️ SYSTEM IN SIMULATION MODE (DATE: <span id="test-mode-date">...</span>)
+      ⚠️ SYSTEM IN SIMULATION MODE (DATE:
+      <span id="test-mode-date">...</span>)
     </div>
     <div id="offline-banner" class="banner danger">
       🚫 CONNECTION REFUSED — HUB IS OFFLINE
@@ -910,7 +932,7 @@
             </defs>
             <path class="speedo-track" d="M 10 50 A 40 40 0 0 1 90 50" />
             <path id="speedo-gauge" class="speedo-fill" d="M 10 50 A 40 40 0 0 1 90 50"
-              style="stroke: url(#speedoGrad);" />
+              style="stroke: url(#speedoGrad)" />
           </svg>
           <div class="speedo-text">
             <div id="hub-latency" class="val">--</div>
@@ -964,8 +986,14 @@
           </thead>
           <tbody id="device-table-body">
             <tr>
-              <td colspan="4"
-                style="text-align: center; color: var(--text-muted); padding: 40px; font-weight: 700; font-size:1rem; white-space: normal;">
+              <td colspan="4" style="
+                    text-align: center;
+                    color: var(--text-muted);
+                    padding: 40px;
+                    font-weight: 700;
+                    font-size: 1rem;
+                    white-space: normal;
+                  ">
                 Scanning network for connected gateways...
               </td>
             </tr>
@@ -980,40 +1008,108 @@
 
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
-      <h2 style="margin-top:0; color:#000; font-size:1.3rem;">📨 Hub Message</h2>
-      <p id="operator-msg-text"
-        style="font-size: 1.1rem; font-weight: 800; color: #000; white-space: pre-wrap; margin-bottom: 20px;"></p>
-      <button onclick="closeOperatorMsg()"
-        style="padding: 12px 20px; background: #000; color: var(--warning); border:none; border-radius: 10px; cursor: pointer; font-weight: 900; font-size:1rem; width:100%; box-shadow: 0 6px 15px rgba(0,0,0,0.4); transition: transform 0.2s;">
+      <h2 style="margin-top: 0; color: #000; font-size: 1.3rem">
+        📨 Hub Message
+      </h2>
+      <p id="operator-msg-text" style="
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #000;
+            white-space: pre-wrap;
+            margin-bottom: 20px;
+          "></p>
+      <button onclick="closeOperatorMsg()" style="
+            padding: 12px 20px;
+            background: #000;
+            color: var(--warning);
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 900;
+            font-size: 1rem;
+            width: 100%;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4);
+            transition: transform 0.2s;
+          ">
         Acknowledge Order
       </button>
     </div>
   </div>
 
-  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
-    <div class="active-call-card"
-      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-      <div
-        style="font-size: 50px; margin-bottom: 20px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
-        📞</div>
-      <h2 style="margin: 0 0 8px 0; color: var(--text-main); font-weight: 900; font-size: 1.5rem;">Incoming Call</h2>
-      <p style="color: var(--text-muted); margin-bottom: 25px; font-size: 0.95rem; font-weight: 600;">Command Hub is
-        dispatching audio...</p>
-      <div style="display: flex; gap: 12px; justify-content: center;">
-        <button onclick="acceptCall()"
-          style="background: var(--success); color: #000; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
-        <button onclick="rejectCall()"
-          style="background: var(--danger); color: #fff; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000">
+    <div class="active-call-card" style="
+          border-color: var(--primary);
+          box-shadow: 0 0 60px rgba(0, 210, 255, 0.25);
+          animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        ">
+      <div style="
+            font-size: 50px;
+            margin-bottom: 20px;
+            animation: ringShake 0.4s infinite alternate;
+            display: inline-block;
+          ">
+        📞
+      </div>
+      <h2 style="
+            margin: 0 0 8px 0;
+            color: var(--text-main);
+            font-weight: 900;
+            font-size: 1.5rem;
+          ">
+        Incoming Call
+      </h2>
+      <p style="
+            color: var(--text-muted);
+            margin-bottom: 25px;
+            font-size: 0.95rem;
+            font-weight: 600;
+          ">
+        Command Hub is dispatching audio...
+      </p>
+      <div style="display: flex; gap: 12px; justify-content: center">
+        <button onclick="acceptCall()" style="
+              background: var(--success);
+              color: #000;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 25px;
+              font-weight: 900;
+              font-size: 0.95rem;
+              cursor: pointer;
+              flex: 1;
+              box-shadow: 0 6px 15px rgba(0, 230, 118, 0.3);
+              transition: transform 0.2s;
+              text-transform: uppercase;
+            ">
+          Accept
+        </button>
+        <button onclick="rejectCall()" style="
+              background: var(--danger);
+              color: #fff;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 25px;
+              font-weight: 900;
+              font-size: 0.95rem;
+              cursor: pointer;
+              flex: 1;
+              box-shadow: 0 6px 15px rgba(255, 68, 68, 0.3);
+              transition: transform 0.2s;
+              text-transform: uppercase;
+            ">
+          Decline
+        </button>
       </div>
     </div>
   </div>
 
-  <div id="active-call-overlay" class="call-overlay" style="display: none;">
+  <div id="active-call-overlay" class="call-overlay" style="display: none">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
         <span class="call-badge pulse-badge">🟢 Live Audio</span>
-        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()"
-          title="Minimize / Maximize">🗕</button>
+        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()" title="Minimize / Maximize">
+          🗕
+        </button>
       </div>
 
       <div class="call-info">
@@ -1031,15 +1127,16 @@
   </div>
 
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => { });
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => { });
     }
 
     let isFetching = false;
     let audioCtx = null;
 
     function initAudio() {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!audioCtx)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
     }
 
@@ -1048,12 +1145,17 @@
         initAudio();
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         const now = audioCtx.currentTime;
         if (type === "ALERT") {
-          osc.type = "triangle"; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(800, now + 0.2);
-          gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-          osc.start(now); osc.stop(now + 0.5);
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(600, now);
+          osc.frequency.setValueAtTime(800, now + 0.2);
+          gain.gain.setValueAtTime(1.0, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now);
+          osc.stop(now + 0.5);
         }
       } catch (e) { }
     }
@@ -1068,8 +1170,8 @@
     }
 
     function handleNavigation(url) {
-      if (peerConnection && peerConnection.connectionState === 'connected') {
-        window.open(url, '_blank');
+      if (peerConnection && peerConnection.connectionState === "connected") {
+        window.open(url, "_blank");
         showToast("Call Active: Hub opened safely in a new tab.");
       } else {
         window.location.href = url;
@@ -1086,7 +1188,10 @@
     function getDeviceId() {
       let id = localStorage.getItem("hub_device_id");
       if (!id) {
-        id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        id =
+          "dev_" +
+          Math.random().toString(36).substring(2, 15) +
+          Math.random().toString(36).substring(2, 15);
         localStorage.setItem("hub_device_id", id);
       }
       return id;
@@ -1099,21 +1204,29 @@
     function closeOperatorMsg() {
       const modal = document.getElementById("operator-msg-modal");
       modal.classList.remove("show");
-      setTimeout(() => modal.style.display = "none", 300);
+      setTimeout(() => (modal.style.display = "none"), 300);
     }
 
     const escapeHTML = (str) => {
       if (!str) return "Unknown Device";
-      return String(str).replace(/[&<>'"]/g, tag => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-      }[tag] || tag));
+      return String(str).replace(
+        /[&<>'"]/g,
+        (tag) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            "'": "&#39;",
+            '"': "&quot;",
+          })[tag] || tag,
+      );
     };
 
     const DOM = {
-      gauge: document.getElementById('speedo-gauge'),
-      latencyVal: document.getElementById('hub-latency'),
-      hubStatusText: document.getElementById('hub-status-text'),
-      hubStatusDot: document.getElementById('hub-status-dot'),
+      gauge: document.getElementById("speedo-gauge"),
+      latencyVal: document.getElementById("hub-latency"),
+      hubStatusText: document.getElementById("hub-status-text"),
+      hubStatusDot: document.getElementById("hub-status-dot"),
       testBanner: document.getElementById("test-mode-banner"),
       offlineBanner: document.getElementById("offline-banner"),
       tbody: document.getElementById("device-table-body"),
@@ -1121,7 +1234,7 @@
       totReg: document.getElementById("tot-reg"),
       totScans: document.getElementById("tot-scans"),
       todayScans: document.getElementById("today-scans"),
-      testDate: document.getElementById("test-mode-date")
+      testDate: document.getElementById("test-mode-date"),
     };
 
     function updateSpeedometer(ping) {
@@ -1132,8 +1245,8 @@
         return;
       }
       DOM.latencyVal.innerText = ping;
-      const quality = Math.max(5, Math.min(100, 100 - (ping / 10)));
-      DOM.gauge.style.strokeDashoffset = 125.6 - (125.6 * (quality / 100));
+      const quality = Math.max(5, Math.min(100, 100 - ping / 10));
+      DOM.gauge.style.strokeDashoffset = 125.6 - 125.6 * (quality / 100);
 
       if (ping >= 600) {
         DOM.gauge.style.stroke = "var(--danger)";
@@ -1151,21 +1264,36 @@
         return;
       }
 
-      deviceEntries.sort((a, b) => (a[1].name || "").localeCompare(b[1].name || ""));
+      deviceEntries.sort((a, b) =>
+        (a[1].name || "").localeCompare(b[1].name || ""),
+      );
 
       deviceEntries.forEach(([deviceId, info]) => {
-        const secondsAgo = Math.max(0, Math.round(Date.now() / 1000 - info.last_seen));
+        const secondsAgo = Math.max(
+          0,
+          Math.round(Date.now() / 1000 - info.last_seen),
+        );
 
         let statusClass = "badge-success";
         let statusText = "Online";
         let colorVar = "var(--success)";
         let healthScore = 100;
 
-        if (secondsAgo > 10) { statusClass = "badge-warning"; statusText = "Lagging"; colorVar = "var(--warning)"; healthScore = 60; }
-        if (secondsAgo > 20) { statusClass = "badge-danger"; statusText = "Dropping"; colorVar = "var(--danger)"; healthScore = 20; }
+        if (secondsAgo > 10) {
+          statusClass = "badge-warning";
+          statusText = "Lagging";
+          colorVar = "var(--warning)";
+          healthScore = 60;
+        }
+        if (secondsAgo > 20) {
+          statusClass = "badge-danger";
+          statusText = "Dropping";
+          colorVar = "var(--danger)";
+          healthScore = 20;
+        }
 
         const safeName = escapeHTML(info.name);
-        const batt = escapeHTML(info.battery || 'N/A');
+        const batt = escapeHTML(info.battery || "N/A");
 
         const tr = document.createElement("tr");
         tr.innerHTML = `
@@ -1214,13 +1342,14 @@
         device_id: getDeviceId(),
         device_name: getDeviceName(),
         page: window.location.pathname,
-        battery: "N/A"
+        battery: "N/A",
       };
 
       if (navigator.getBattery) {
         try {
           const b = await navigator.getBattery();
-          payload.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : '');
+          payload.battery =
+            Math.round(b.level * 100) + "%" + (b.charging ? " AC" : "");
         } catch (e) { }
       }
 
@@ -1234,9 +1363,12 @@
             cache: "no-store",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
-            signal: controller.signal
+            signal: controller.signal,
           }).catch(() => null),
-          fetch("/api/network-data", { cache: "no-store", signal: controller.signal }).catch(() => null)
+          fetch("/api/network-data", {
+            cache: "no-store",
+            signal: controller.signal,
+          }).catch(() => null),
         ]);
 
         clearTimeout(timeoutId);
@@ -1245,8 +1377,15 @@
         if (statusRes && statusRes.ok) {
           const statusData = await statusRes.json();
 
-          if (statusData.canonical_name && statusData.canonical_name !== getDeviceName() && statusData.canonical_name !== "Unknown Device") {
-            localStorage.setItem("hub_device_name", statusData.canonical_name);
+          if (
+            statusData.canonical_name &&
+            statusData.canonical_name !== getDeviceName() &&
+            statusData.canonical_name !== "Unknown Device"
+          ) {
+            localStorage.setItem(
+              "hub_device_name",
+              statusData.canonical_name,
+            );
           }
 
           if (statusData.test_mode) {
@@ -1258,7 +1397,8 @@
 
           if (statusData.message) {
             const msgBox = document.getElementById("operator-msg-modal");
-            document.getElementById("operator-msg-text").innerText = statusData.message;
+            document.getElementById("operator-msg-text").innerText =
+              statusData.message;
             msgBox.style.display = "flex";
             setTimeout(() => msgBox.classList.add("show"), 10);
             playAudioTone("ALERT");
@@ -1272,10 +1412,30 @@
           DOM.hubStatusDot.className = "status-dot status-online";
           DOM.hubStatusDot.style.background = "";
 
-          animateValue(DOM.scanners, parseInt(DOM.scanners.innerText) || 0, Object.keys(data.active_devices || {}).length, 600);
-          animateValue(DOM.totReg, parseInt(DOM.totReg.innerText) || 0, data.global_stats?.total_registrations || 0, 600);
-          animateValue(DOM.totScans, parseInt(DOM.totScans.innerText) || 0, data.global_stats?.total_scans || 0, 600);
-          animateValue(DOM.todayScans, parseInt(DOM.todayScans.innerText) || 0, data.global_stats?.today_scans || 0, 600);
+          animateValue(
+            DOM.scanners,
+            parseInt(DOM.scanners.innerText) || 0,
+            Object.keys(data.active_devices || {}).length,
+            600,
+          );
+          animateValue(
+            DOM.totReg,
+            parseInt(DOM.totReg.innerText) || 0,
+            data.global_stats?.total_registrations || 0,
+            600,
+          );
+          animateValue(
+            DOM.totScans,
+            parseInt(DOM.totScans.innerText) || 0,
+            data.global_stats?.total_scans || 0,
+            600,
+          );
+          animateValue(
+            DOM.todayScans,
+            parseInt(DOM.todayScans.innerText) || 0,
+            data.global_stats?.today_scans || 0,
+            600,
+          );
 
           renderTable(data.active_devices || {});
         } else {
@@ -1353,13 +1513,18 @@
       ringInterval = setInterval(() => {
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         osc.type = "square";
         osc.frequency.setValueAtTime(440, audioCtx.currentTime);
         osc.frequency.setValueAtTime(480, audioCtx.currentTime + 0.2);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.0);
-        osc.start(); osc.stop(audioCtx.currentTime + 1.0);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 1.0,
+        );
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.0);
       }, 2000);
     }
 
@@ -1371,11 +1536,16 @@
     }
 
     function connectCallServer() {
-      if (wsCall && (wsCall.readyState === WebSocket.OPEN || wsCall.readyState === WebSocket.CONNECTING)) {
+      if (
+        wsCall &&
+        (wsCall.readyState === WebSocket.OPEN ||
+          wsCall.readyState === WebSocket.CONNECTING)
+      ) {
         return;
       }
 
-      const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+      const protocol =
+        window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
       try {
@@ -1385,22 +1555,23 @@
           try {
             const data = JSON.parse(event.data);
 
-            if (data.type === 'incoming_call') {
-              document.getElementById("incoming-call-modal").style.display = "flex";
+            if (data.type === "incoming_call") {
+              document.getElementById("incoming-call-modal").style.display =
+                "flex";
               playRingingTone();
-            }
-            else if (data.type === 'answer' && peerConnection) {
-              await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-            }
-            else if (data.type === 'server_muted') {
+            } else if (data.type === "answer" && peerConnection) {
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+              );
+            } else if (data.type === "server_muted") {
               remoteAudio.muted = data.muted;
-            }
-            else if (data.type === 'client_muted') {
+            } else if (data.type === "client_muted") {
               if (localStream) {
-                localStream.getAudioTracks().forEach(track => { track.enabled = !data.muted; });
+                localStream.getAudioTracks().forEach((track) => {
+                  track.enabled = !data.muted;
+                });
               }
-            }
-            else if (data.type === 'call_ended') {
+            } else if (data.type === "call_ended") {
               endCall(false);
             }
           } catch (parseError) { }
@@ -1426,9 +1597,9 @@
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true
+            autoGainControl: true,
           },
-          video: false
+          video: false,
         });
 
         document.getElementById("active-call-overlay").style.display = "flex";
@@ -1437,30 +1608,38 @@
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
 
-        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        peerConnection = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
 
-        localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
+        localStream.getTracks().forEach((track) => {
+          peerConnection.addTrack(track, localStream);
+        });
 
         peerConnection.ontrack = (event) => {
           if (!remoteAudio.srcObject) {
             remoteAudio.srcObject = event.streams[0];
             // FIX 3: Explicit play command to force mobile browsers to wake the speaker
-            remoteAudio.play().catch(e => console.warn("Audio play blocked by browser:", e));
+            remoteAudio
+              .play()
+              .catch((e) =>
+                console.warn("Audio play blocked by browser:", e),
+              );
           }
         };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
 
-        // FIX 4: ICE GATHERING TIMEOUT. 
+        // FIX 4: ICE GATHERING TIMEOUT.
         // Wait up to 2 seconds for the Google STUN server to find your phone's Public IP before sending it to the PC.
         await new Promise((resolve) => {
-          if (peerConnection.iceGatheringState === 'complete') {
+          if (peerConnection.iceGatheringState === "complete") {
             resolve();
           } else {
             const timeout = setTimeout(resolve, 2000);
             peerConnection.onicegatheringstatechange = () => {
-              if (peerConnection.iceGatheringState === 'complete') {
+              if (peerConnection.iceGatheringState === "complete") {
                 clearTimeout(timeout);
                 resolve();
               }
@@ -1469,21 +1648,38 @@
         });
 
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-          wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
+          wsCall.send(
+            JSON.stringify({
+              type: "offer",
+              sdp: peerConnection.localDescription.sdp,
+            }),
+          );
         }
-
       } catch (err) {
-        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.");
+        alert(
+          "Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.",
+        );
         rejectCall();
       }
     }
 
-    function rejectCall() { endCall(true); }
+    function rejectCall() {
+      endCall(true);
+    }
 
     function endCall(sendPing = true) {
-      if (peerConnection) { peerConnection.close(); peerConnection = null; }
-      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-      if (remoteAudio.srcObject) { remoteAudio.pause(); remoteAudio.srcObject = null; }
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+        localStream = null;
+      }
+      if (remoteAudio.srcObject) {
+        remoteAudio.pause();
+        remoteAudio.srcObject = null;
+      }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
@@ -1492,25 +1688,29 @@
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
-        wsCall.send(JSON.stringify({ type: 'call_ended' }));
+        wsCall.send(JSON.stringify({ type: "call_ended" }));
       }
     }
 
     window.addEventListener("beforeunload", function (e) {
       if (peerConnection && peerConnection.connectionState === "connected") {
-        const confirmationMessage = "Leaving this page will end your active voice call. Continue?";
+        const confirmationMessage =
+          "Leaving this page will end your active voice call. Continue?";
         (e || window.event).returnValue = confirmationMessage;
         return confirmationMessage;
       }
     });
 
     document.addEventListener("DOMContentLoaded", () => {
-      document.querySelectorAll('.btn').forEach(card => {
-        if (card.getAttribute('onclick')) return;
-        card.addEventListener('click', function (e) {
-          if (peerConnection && peerConnection.connectionState === 'connected') {
+      document.querySelectorAll(".btn").forEach((card) => {
+        if (card.getAttribute("onclick")) return;
+        card.addEventListener("click", function (e) {
+          if (
+            peerConnection &&
+            peerConnection.connectionState === "connected"
+          ) {
             e.preventDefault();
-            window.open(this.href, '_blank');
+            window.open(this.href, "_blank");
             showToast("Call Active: Page safely opened in a new tab.");
           }
         });
@@ -1518,7 +1718,9 @@
     });
 
     document.addEventListener("click", initAudio, { once: true });
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") fetchStats(); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") fetchStats();
+    });
 
     window.addEventListener("DOMContentLoaded", () => {
       fetchStats();
