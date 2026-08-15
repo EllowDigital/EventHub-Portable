@@ -1066,7 +1066,7 @@
         </svg>
         Hub
       </a>
-      <h3 class="header-title">Live Check-in <span class="version-tag">v3.0</span></h3>
+      <h3 class="header-title">Live Check-in <span class="version-tag">v2.6</span></h3>
       <div id="network-pill" class="network-pill">
         <span id="net-dot" class="net-dot net-offline"></span>
         <span id="net-text">Connecting...</span>
@@ -1102,8 +1102,8 @@
           <option value="">Detecting Lenses...</option>
         </select>
         <select id="quality-select" class="camera-selector" onchange="onCameraChange()">
-          <option value="auto">Auto Quality</option>
-          <option value="720p" selected>720p (Cooling/Eco)</option>
+          <option value="auto" selected>Auto Quality</option>
+          <option value="720p">720p (Cooling/Eco)</option>
           <option value="480p">480p (Battery Saver)</option>
         </select>
       </div>
@@ -1306,15 +1306,28 @@
       try {
         const devices = await Html5Qrcode.getCameras();
         if (devices && devices.length) {
-          camerasList = devices;
+
+          // Filter out front-facing cameras based on common labels
+          let backCameras = devices.filter(device => {
+            const label = device.label.toLowerCase();
+            return !label.includes('front') && !label.includes('user');
+          });
+
+          // Fallback if the filtering accidentally removes everything
+          if (backCameras.length === 0) {
+            backCameras = devices;
+          }
+
+          camerasList = backCameras;
           const select = document.getElementById("camera-select");
 
           const previousValue = select.value;
           select.innerHTML = "";
 
-          devices.forEach((device, index) => {
+          backCameras.forEach((device, index) => {
             const option = document.createElement("option");
-            option.value = device.id; option.text = device.label || `Lens ${index + 1}`;
+            option.value = device.id;
+            option.text = device.label || `Back Lens ${index + 1}`;
             if (device.id === previousValue) {
               option.selected = true;
             }
@@ -1356,12 +1369,13 @@
         const qualitySelect = document.getElementById("quality-select");
 
         const cameraId = (select && select.value !== "") ? select.value : null;
-        const quality = qualitySelect ? qualitySelect.value : "720p";
+        // Default to "auto" quality to prevent resolution constraints from blocking the camera load
+        const quality = qualitySelect ? qualitySelect.value : "auto";
 
         btn.innerHTML = "⏳ Initializing Lens..."; btn.classList.remove("paused");
         document.getElementById("permission-overlay").style.display = "none";
 
-        // FIX 1: MUST pass device string directly to cameraIdOrConfig. Not an object!
+        // Always fallback to environment (back) camera if specific ID is not present
         const cameraTarget = cameraId ? cameraId : { facingMode: "environment" };
 
         let currentScanConfig = {
@@ -1372,7 +1386,6 @@
           useBarCodeDetectorIfSupported: true
         };
 
-        // FIX 2: Apply resolution preferences safely in videoConstraints using "ideal"
         if (quality !== "auto") {
           currentScanConfig.videoConstraints = {};
           if (quality === "4k") {
@@ -1393,7 +1406,6 @@
         } catch (err) {
           console.warn("Camera failed with custom quality settings, retrying with defaults...", err);
 
-          // FALLBACK FIX: If specific resolution causes a crash, strip the constraints and try again.
           try {
             delete currentScanConfig.videoConstraints;
             await html5QrCode.start(cameraTarget, currentScanConfig, onScanSuccess);
@@ -1473,7 +1485,7 @@
       if (!foundSelected && select.options.length > 0) {
         let defaultSet = false;
         for (let i = 0; i < select.options.length; i++) {
-          if (select.options[i].value === "720p") {
+          if (select.options[i].value === "auto") {
             select.options[i].selected = true;
             defaultSet = true;
             break;
