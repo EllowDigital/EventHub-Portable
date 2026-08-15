@@ -2,7 +2,6 @@ import os
 import sys
 import csv
 import math
-import queue
 import random
 import threading
 import time
@@ -22,14 +21,14 @@ from sqlalchemy import select, update, delete
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
-from PySide6.QtCore import Qt, QTimer, QRectF
+from PySide6.QtCore import Qt, QTimer, QRectF, QObject, Signal, Slot
 from PySide6.QtGui import QIcon, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem, 
     QTabWidget, QPlainTextEdit, QGroupBox, QComboBox, 
     QHeaderView, QMessageBox, QFrame, QSplitter, QScrollArea, 
-    QSizePolicy, QLineEdit, QSpinBox, QDoubleSpinBox, QFileDialog
+    QSizePolicy, QLineEdit, QSpinBox, QDoubleSpinBox, QFileDialog, QFormLayout
 )
 
 # --- MATPLOTLIB INTEGRATION FOR QT ---
@@ -46,6 +45,7 @@ except ImportError:
 # PATHS & SCHEMA IMPORTS
 # ==============================================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = SCRIPT_DIR
 APP_DIR = os.path.join(SCRIPT_DIR, "app")
 
 if SCRIPT_DIR not in sys.path: sys.path.insert(0, SCRIPT_DIR)
@@ -62,7 +62,6 @@ SYNTHETIC_NAME_PREFIX = "Enterprise Tester"
 DEFAULT_POOL_CAP = 20000
 DEFAULT_EVENT_DAYS = "30 August,31 August,1 September"
 DEFAULT_EVENT_YEAR = 2026
-UI_TICK_MS = 250  
 
 # ==============================================================================
 # DATA CLASSES & METRICS
@@ -194,7 +193,7 @@ def fetch_attendee_pool(session_factory, cap_per_table, exclude_synthetic=True):
         counts["kiosk"] = len(pool) - kiosk_start
     return pool, counts
 
-def load_full_attendee_pool(session_factories, cap_per_table, log_fn):
+def load_full_attendee_pool(session_factories, cap_per_table, log_signal):
     combined = []
     seen_ids = set()
     counts_total = Counter()
@@ -203,7 +202,7 @@ def load_full_attendee_pool(session_factories, cap_per_table, log_fn):
         if not factory: continue
         try: rows, counts = fetch_attendee_pool(factory, cap_per_table, exclude_synthetic=True)
         except Exception as e:
-            log_fn(f"WARNING: could not read attendees from {backend_name.upper()}: {e}")
+            log_signal.emit(f"WARNING: could not read attendees from {backend_name.upper()}: {e}")
             continue
         added = 0
         for ref in rows:
@@ -212,7 +211,7 @@ def load_full_attendee_pool(session_factories, cap_per_table, log_fn):
             combined.append(ref)
             added += 1
         counts_total[backend_name] += added
-        log_fn(f"[{backend_name.upper()}] Loaded {added} real attendees ({counts['attendees']} base, {counts['kiosk']} kiosk).")
+        log_signal.emit(f"[{backend_name.upper()}] Loaded {added} real attendees ({counts['attendees']} base, {counts['kiosk']} kiosk).")
     return combined, counts_total
 
 def reset_synthetic_checkin_history(session_factory):
@@ -241,10 +240,19 @@ def clear_all_kiosk_registrations(session_factory):
         return r1.rowcount
 
 # ==============================================================================
+# PYSIDE6 SIGNALS (HANG-FREE UI COMMUNICATION)
+# ==============================================================================
+class AppSignals(QObject):
+    log_msg = Signal(str)
+    metrics_update = Signal(dict, list, list, list, int, int) # metrics, chk_rts, reg_rts, tree_items, live_rps, peak_rps
+    btn_state = Signal(str, str, bool) # target_btn_name, text, is_enabled
+    reset_ui = Signal()
+    pool_loaded = Signal(int, dict)
+
+# ==============================================================================
 # CUSTOM PYSIDE6 WIDGETS
 # ==============================================================================
 class SpeedometerGauge(QWidget):
-    """ Hardware Accelerated PySide6 Speedometer Gauge for RPS tracking """
     def __init__(self, subtext="RPS", unit="req/s", max_val=100, good_is_high=False, parent=None):
         super().__init__(parent)
         self.subtext = subtext
@@ -253,8 +261,8 @@ class SpeedometerGauge(QWidget):
         self.current_val = 0.0
         self.target_val = 0.0
         self.good_is_high = good_is_high
-        self.setMinimumSize(120, 100)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(120, 110)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
     def set_target(self, val):
         self.target_val = float(val)
@@ -293,7 +301,7 @@ class SpeedometerGauge(QWidget):
         if active_span != 0: painter.drawArc(arc_rect, 200 * 16, active_span)
 
         painter.setPen(dynamic_color)
-        font_size = max(14, int(diameter * 0.25))
+        font_size = max(16, int(diameter * 0.28))
         painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
         val_text = str(int(round(self.current_val)))
         val_rect = QRectF(margin_x, margin_y + (diameter * 0.2), diameter, diameter * 0.45)
@@ -312,9 +320,14 @@ class SpeedometerGauge(QWidget):
 class EnterpriseStressTestApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EventHub Portable (v2.6) — Stress / Load Tester")
+        self.setWindowTitle("TDE UP 2026 - Enterprise Load Injector (PySide6)")
         self.resize(1300, 850)
         self.setMinimumSize(1100, 700)
+        
+        # Integrate Application Icon securely
+        icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         
         self.setStyleSheet("""
             QMainWindow, QWidget { background-color: #161618; color: #D4D4D4; font-family: 'Segoe UI', sans-serif; font-size: 12px; }
@@ -326,13 +339,13 @@ class EnterpriseStressTestApp(QMainWindow):
             QPushButton:pressed { background-color: #1E1E22; border-color: #4EC9B0; }
             QPushButton:disabled { background-color: #161618; color: #555555; border-color: #2A2A2C; }
             
-            QPushButton#btnStart { background-color: #107C41; color: white; border: 1px solid #107C41; padding: 10px; font-size: 13px;}
-            QPushButton#btnStart:hover { background-color: #0c5e31; }
-            QPushButton#btnStart:disabled { background-color: #0c5e31; color: #ffffff; border: 1px solid #0c5e31; }
+            QPushButton#btn_start { background-color: #107C41; color: white; border: 1px solid #107C41; padding: 10px; font-size: 13px;}
+            QPushButton#btn_start:hover { background-color: #0c5e31; }
+            QPushButton#btn_start:disabled { background-color: #0c5e31; color: #ffffff; border: 1px solid #0c5e31; }
             
-            QPushButton#btnStop { background-color: transparent; color: #F44747; border: 1px solid #F44747; padding: 10px; font-size: 13px;}
-            QPushButton#btnStop:hover { background-color: rgba(244, 71, 71, 0.1); }
-            QPushButton#btnStop:disabled { background-color: transparent; color: #555555; border: 1px solid #2A2A2C; }
+            QPushButton#btn_stop { background-color: transparent; color: #F44747; border: 1px solid #F44747; padding: 10px; font-size: 13px;}
+            QPushButton#btn_stop:hover { background-color: rgba(244, 71, 71, 0.1); }
+            QPushButton#btn_stop:disabled { background-color: transparent; color: #555555; border: 1px solid #2A2A2C; }
             
             QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #252528; color: #FFFFFF; border: 1px solid #3E3E42; border-radius: 4px; padding: 5px; }
             QLineEdit:focus, QSpinBox:focus { border: 1px solid #569CD6; }
@@ -347,33 +360,37 @@ class EnterpriseStressTestApp(QMainWindow):
             QSplitter::handle { background-color: #2D2D30; width: 4px; margin: 0px 4px; border-radius: 2px; }
         """)
 
-        # Core State
+        # Threading/Queues
         self.stats_queue = queue.Queue()
-        self.ui_queue = queue.Queue()
-        self.user_queue = queue.Queue()
+        self.user_pool = []
+        self.pool_counts = Counter()
+        self.pool_lock = threading.Lock()
+        
+        # Signal Connections
+        self.signals = AppSignals()
+        self.signals.log_msg.connect(self._ui_log)
+        self.signals.btn_state.connect(self._ui_btn_state)
+        self.signals.pool_loaded.connect(self._ui_pool_loaded)
+        self.signals.metrics_update.connect(self._ui_update_metrics)
+        self.signals.reset_ui.connect(self.reset_stats)
 
+        # Metrics Data
         self.data_lock = threading.Lock()
         self.metrics = Counter()
         self.rts_checkin = deque(maxlen=10000)
         self.rts_register = deque(maxlen=10000)
         self.results_history = deque(maxlen=100000)
         self.tree_buffer = []
-        
         self.recent_activity = deque()
         self.peak_rps = 0
-
         self.throughput_history = deque(maxlen=300)
         self.plot_rts_history = deque(maxlen=300)
 
+        # Run State
         self.is_running = False
         self.start_time = 0.0
         self.test_duration = 0
         self.sync_barrier = None
-        self._last_rendered_total = -1
-
-        self.pool_lock = threading.Lock()
-        self.user_pool = []
-        self.pool_counts = Counter()
         self._session_factories = None
 
         self.stat_widgets = {}
@@ -383,51 +400,70 @@ class EnterpriseStressTestApp(QMainWindow):
 
         self.setup_ui()
 
-        # Dedicated Aggregator Thread
+        # Dedicated High-Speed Aggregator Thread
         threading.Thread(target=self._data_aggregator_loop, daemon=True).start()
 
         # Setup Hardware Accelerated UI Timers
-        self.timer_gui = QTimer(self)
-        self.timer_gui.timeout.connect(self.update_gui_loop)
-        self.timer_gui.start(UI_TICK_MS)
-        
         self.timer_anim = QTimer(self)
         self.timer_anim.timeout.connect(self.animation_loop)
         self.timer_anim.start(16) 
 
         self.reload_attendee_pool(initial=True)
 
-    def log(self, msg):
-        self.ui_queue.put(("log", msg))
-
     # ==========================================================================
-    # BACKGROUND AGGREGATOR
+    # BACKGROUND AGGREGATOR (100% Hang-Free)
     # ==========================================================================
     def _data_aggregator_loop(self):
+        last_emit = time.time()
         while True:
-            try: code, rt, env_name, req_type, identifier = self.stats_queue.get()
-            except Exception: continue
+            try:
+                code, rt, env_name, req_type, identifier = self.stats_queue.get(timeout=0.1)
+                
+                bucket = classify_status(code)
+                now = time.time()
+                clock = time.strftime("%H:%M:%S")
 
-            bucket = classify_status(code)
+                with self.data_lock:
+                    self.metrics["total"] += 1
+                    self.metrics[bucket] += 1
+                    self.recent_activity.append(now)
+
+                    if rt > 0:
+                        if req_type == "checkin": self.rts_checkin.append(rt)
+                        elif req_type == "register": self.rts_register.append(rt)
+
+                    record = (clock, env_name, req_type, code, f"{rt:.0f}", identifier)
+                    self.results_history.append(record)
+
+                    self.tree_buffer.append(record)
+                    if len(self.tree_buffer) > 40: self.tree_buffer.pop(0)
+
+                self.stats_queue.task_done()
+            except queue.Empty:
+                pass
+            
+            # Emit batch updates to the UI exactly every 500ms to prevent freezing
             now = time.time()
-            clock = time.strftime("%H:%M:%S")
+            if now - last_emit >= 0.5:
+                self._emit_metrics(now)
+                last_emit = now
 
-            with self.data_lock:
-                self.metrics["total"] += 1
-                self.metrics[bucket] += 1
-                self.recent_activity.append(now)
-
-                if rt > 0:
-                    if req_type == "checkin": self.rts_checkin.append(rt)
-                    elif req_type == "register": self.rts_register.append(rt)
-
-                record = (clock, env_name, req_type, code, f"{rt:.0f}", identifier)
-                self.results_history.append(record)
-
-                self.tree_buffer.append(record)
-                if len(self.tree_buffer) > 40: self.tree_buffer.pop(0)
-
-            self.stats_queue.task_done()
+    def _emit_metrics(self, now):
+        with self.data_lock:
+            # Clean old activity for RPS calculation
+            while self.recent_activity and now - self.recent_activity[0] > 1.0:
+                self.recent_activity.popleft()
+            
+            live_rps = len(self.recent_activity)
+            if live_rps > self.peak_rps: self.peak_rps = live_rps
+            
+            metrics_snap = dict(self.metrics)
+            chk_snap = list(self.rts_checkin)
+            reg_snap = list(self.rts_register)
+            tree_snap = list(self.tree_buffer)
+            self.tree_buffer.clear()
+            
+            self.signals.metrics_update.emit(metrics_snap, chk_snap, reg_snap, tree_snap, live_rps, self.peak_rps)
 
     def _get_sessions(self):
         if self._session_factories is None:
@@ -438,70 +474,58 @@ class EnterpriseStressTestApp(QMainWindow):
     # DATABASE TOOLS & UNIVERSAL BUTTON STATE ENGINE
     # ==========================================================================
     def reload_attendee_pool(self, initial=False):
-        if self.is_running: return self.log("Stop test before reloading pool.")
+        if self.is_running: return self.signals.log_msg.emit("Stop test before reloading pool.")
         
-        self.btn_reload.setText("⏳ LOADING...")
-        self.btn_reload.setEnabled(False)
-        if not initial: self.btn_start.setEnabled(False)
+        self.signals.btn_state.emit("btn_reload", "⏳ LOADING...", False)
+        if not initial: self.signals.btn_state.emit("btn_start", "▶ INJECT LOAD", False)
         
         cap = self.pool_cap_var.value()
-        self.log("Connecting to database to load the real attendee pool...")
+        self.signals.log_msg.emit("Connecting to database to load the real attendee pool...")
         threading.Thread(target=self._load_pool_worker, args=(cap,), daemon=True).start()
 
     def _load_pool_worker(self, cap):
         try:
             sessions = self._get_sessions()
-            pool, counts = load_full_attendee_pool(sessions, cap, log_fn=self.log)
+            pool, counts = load_full_attendee_pool(sessions, cap, log_signal=self.signals.log_msg)
             with self.pool_lock:
                 self.user_pool = pool
                 self.pool_counts = counts
-            if pool: self.log(f"SUCCESS: {len(pool)} real attendees loaded and available for check-in testing.")
-            else: self.log("WARNING: No attendees found. Run a Registration load test to create synthetic attendees first.")
-        except Exception as e: self.log(f"ERROR loading attendee pool: {e}")
+            if pool: self.signals.log_msg.emit(f"SUCCESS: {len(pool)} real attendees loaded and available for check-in testing.")
+            else: self.signals.log_msg.emit("WARNING: No attendees found. Run a Registration load test to create synthetic attendees first.")
+        except Exception as e: self.signals.log_msg.emit(f"ERROR loading attendee pool: {e}")
         finally:
-            self.ui_queue.put(("pool_loaded", None))
-            self.ui_queue.put(("btn_success", ("btn_reload", "✅ LOADED", "🔄 Reload Attendee Pool")))
-            self.ui_queue.put(("enable_widget", "btn_start"))
-
-    def _refresh_pool_label(self):
-        with self.pool_lock:
-            n = len(self.user_pool)
-            counts = dict(self.pool_counts)
-        if n == 0:
-            self.lbl_pool_status.setText("Pool: 0 attendees loaded")
-            self.lbl_pool_status.setStyleSheet("color: #F44747; font-weight: bold;")
-        else:
-            detail = ", ".join(f"{v} from {k}" for k, v in counts.items())
-            self.lbl_pool_status.setText(f"Pool: {n} real attendees ready ({detail})")
-            self.lbl_pool_status.setStyleSheet("color: #4EC9B0; font-weight: bold;")
+            self.signals.pool_loaded.emit(len(self.user_pool), dict(self.pool_counts))
+            self.signals.btn_state.emit("btn_reload", "✅ LOADED", True)
+            self.signals.btn_state.emit("btn_start", "▶ INJECT LOAD", True)
+            # Auto-reset text after delay
+            QTimer.singleShot(2000, lambda: self.signals.btn_state.emit("btn_reload", "🔄 Reload Attendee Pool", True))
 
     def on_reset_synthetic_history(self):
-        if self.is_running: return self.log("Stop test before modifying database.")
+        if self.is_running: return self.signals.log_msg.emit("Stop test before modifying database.")
         res = QMessageBox.warning(self, "Reset Test History", f"Clear checkin_history ONLY for '{SYNTHETIC_NAME_PREFIX} *' attendees?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if res != QMessageBox.StandardButton.Yes: return
         
-        self.log("Resetting synthetic check-in history...")
-        self.btn_reset_synth.setText("⏳ WORKING...")
-        self.btn_reset_synth.setEnabled(False)
+        self.signals.log_msg.emit("Resetting synthetic check-in history...")
+        self.signals.btn_state.emit("btn_reset_synth", "⏳ WORKING...", False)
         threading.Thread(target=self._reset_synth_worker, daemon=True).start()
 
     def _reset_synth_worker(self):
         try:
             sessions = self._get_sessions()
             touched = sum(1 for backend in ("mysql", "sqlite") if sessions.get(backend) and not reset_synthetic_checkin_history(sessions.get(backend)))
-            self.log(f"Test check-in history reset on active backend(s).")
-        except Exception as e: self.log(f"ERROR resetting history: {e}")
+            self.signals.log_msg.emit(f"Test check-in history reset on active backend(s).")
+        except Exception as e: self.signals.log_msg.emit(f"ERROR resetting history: {e}")
         finally:
-            self.ui_queue.put(("btn_success", ("btn_reset_synth", "✅ CLEARED", "🧹 Reset History")))
+            self.signals.btn_state.emit("btn_reset_synth", "✅ CLEARED", True)
+            QTimer.singleShot(2000, lambda: self.signals.btn_state.emit("btn_reset_synth", "🧹 Reset History", True))
 
     def on_purge_synthetic(self):
-        if self.is_running: return self.log("Stop test before modifying database.")
+        if self.is_running: return self.signals.log_msg.emit("Stop test before modifying database.")
         res = QMessageBox.warning(self, "Purge Synthetic Data", f"PERMANENTLY DELETE every '{SYNTHETIC_NAME_PREFIX} *' attendee? Cannot be undone.", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if res != QMessageBox.StandardButton.Yes: return
         
-        self.log("Purging synthetic test attendees...")
-        self.btn_purge_synth.setText("⏳ PURGING...")
-        self.btn_purge_synth.setEnabled(False)
+        self.signals.log_msg.emit("Purging synthetic test attendees...")
+        self.signals.btn_state.emit("btn_purge_synth", "⏳ PURGING...", False)
         threading.Thread(target=self._purge_synth_worker, daemon=True).start()
 
     def _purge_synth_worker(self):
@@ -513,20 +537,20 @@ class EnterpriseStressTestApp(QMainWindow):
                 if factory:
                     n1, n2 = purge_synthetic_attendees(factory)
                     total_a += n1; total_k += n2
-            self.log(f"Purged {total_a} main attendees + {total_k} kiosk records.")
-            self.ui_queue.put(("reload_pool", None))
-        except Exception as e: self.log(f"ERROR purging data: {e}")
+            self.signals.log_msg.emit(f"Purged {total_a} main attendees + {total_k} kiosk records.")
+            self.reload_attendee_pool()
+        except Exception as e: self.signals.log_msg.emit(f"ERROR purging data: {e}")
         finally:
-            self.ui_queue.put(("btn_success", ("btn_purge_synth", "✅ PURGED", "🗑️ Purge Data")))
+            self.signals.btn_state.emit("btn_purge_synth", "✅ PURGED", True)
+            QTimer.singleShot(2000, lambda: self.signals.btn_state.emit("btn_purge_synth", "🗑️ Purge Data", True))
 
     def on_reset_all_history(self):
-        if self.is_running: return self.log("Stop test before modifying database.")
+        if self.is_running: return self.signals.log_msg.emit("Stop test before modifying database.")
         res = QMessageBox.warning(self, "Wipe ALL Check-ins", "DANGER: Erase check-in history for EVERY attendee globally?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if res != QMessageBox.StandardButton.Yes: return
         
-        self.log("Wiping ALL check-in history globally...")
-        self.btn_reset_all.setText("⏳ WIPING...")
-        self.btn_reset_all.setEnabled(False)
+        self.signals.log_msg.emit("Wiping ALL check-in history globally...")
+        self.signals.btn_state.emit("btn_reset_all", "⏳ WIPING...", False)
         threading.Thread(target=self._reset_all_worker, daemon=True).start()
 
     def _reset_all_worker(self):
@@ -535,35 +559,36 @@ class EnterpriseStressTestApp(QMainWindow):
             for backend in ("mysql", "sqlite"):
                 factory = sessions.get(backend)
                 if factory: reset_all_checkin_history(factory)
-            self.log(f"GLOBAL check-in history wiped.")
-            self.ui_queue.put(("reload_pool", None))
-        except Exception as e: self.log(f"ERROR wiping history: {e}")
+            self.signals.log_msg.emit(f"GLOBAL check-in history wiped.")
+            self.reload_attendee_pool()
+        except Exception as e: self.signals.log_msg.emit(f"ERROR wiping history: {e}")
         finally:
-            self.ui_queue.put(("btn_success", ("btn_reset_all", "✅ WIPED", "☢️ Wipe ALL Check-ins")))
+            self.signals.btn_state.emit("btn_reset_all", "✅ WIPED", True)
+            QTimer.singleShot(2000, lambda: self.signals.btn_state.emit("btn_reset_all", "☢️ Wipe ALL Check-ins", True))
 
     def on_clear_kiosk(self):
-        if self.is_running: return self.log("Stop test before modifying database.")
+        if self.is_running: return self.signals.log_msg.emit("Stop test before modifying database.")
         res = QMessageBox.warning(self, "Clear Kiosk", "DANGER: Delete EVERY registration record from the Offline Kiosk table?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if res != QMessageBox.StandardButton.Yes: return
         
-        self.log("Clearing offline kiosk registrations...")
-        self.btn_clear_kiosk.setText("⏳ CLEARING...")
-        self.btn_clear_kiosk.setEnabled(False)
+        self.signals.log_msg.emit("Clearing offline kiosk registrations...")
+        self.signals.btn_state.emit("btn_clear_kiosk", "⏳ CLEARING...", False)
         threading.Thread(target=self._clear_kiosk_worker, daemon=True).start()
 
     def _clear_kiosk_worker(self):
         try:
             sessions = self._get_sessions()
             total_k = sum(clear_all_kiosk_registrations(sessions.get(backend)) for backend in ("mysql", "sqlite") if sessions.get(backend))
-            self.log(f"Cleared {total_k} total kiosk registrations.")
-            self.ui_queue.put(("reload_pool", None))
-        except Exception as e: self.log(f"ERROR clearing kiosk: {e}")
+            self.signals.log_msg.emit(f"Cleared {total_k} total kiosk registrations.")
+            self.reload_attendee_pool()
+        except Exception as e: self.signals.log_msg.emit(f"ERROR clearing kiosk: {e}")
         finally:
-            self.ui_queue.put(("btn_success", ("btn_clear_kiosk", "✅ CLEARED", "☢️ Clear ALL Kiosk Reg")))
+            self.signals.btn_state.emit("btn_clear_kiosk", "✅ CLEARED", True)
+            QTimer.singleShot(2000, lambda: self.signals.btn_state.emit("btn_clear_kiosk", "☢️ Clear ALL Kiosk Reg", True))
 
 
     # ==========================================================================
-    # UI CONSTRUCTION (PySide6)
+    # UI CONSTRUCTION (Anti-Crop & Anti-Overlap)
     # ==========================================================================
     def setup_ui(self):
         central = QWidget()
@@ -583,7 +608,7 @@ class EnterpriseStressTestApp(QMainWindow):
         
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
-        scroll_area.setMinimumWidth(380)
+        # Removed hardcoded min-width to allow perfect QSplitter resizing
         
         control_container = QWidget()
         self.control_layout = QVBoxLayout(control_container)
@@ -605,7 +630,7 @@ class EnterpriseStressTestApp(QMainWindow):
         self.right_layout.addWidget(self.tabs)
         main_splitter.addWidget(right_panel)
         
-        main_splitter.setSizes([400, 900])
+        main_splitter.setSizes([380, 920])
 
         self._build_dashboard_tab()
         self._build_analytics_tab()
@@ -613,64 +638,51 @@ class EnterpriseStressTestApp(QMainWindow):
         self._build_log_tab()
 
     def _build_control_panel(self):
-        # 1. Routing Targets
+        # 1. Routing Targets (QFormLayout avoids cropping)
         grp_targets = QGroupBox("1. Routing Targets")
-        lay_targets = QVBoxLayout(grp_targets)
+        lay_targets = QFormLayout(grp_targets)
         
         self.http_var = QLineEdit("http://127.0.0.1:5000")
         self.https_var = QLineEdit("https://127.0.0.1:5001")
         self.cloudflare_var = QLineEdit("")
         
-        for label_text, var in [("Waitress Engine (HTTP):", self.http_var), ("Cheroot Engine (HTTPS):", self.https_var), ("Cloudflare Tunnel (optional):", self.cloudflare_var)]:
-            lbl = QLabel(label_text); lbl.setStyleSheet("font-weight: bold; color: #D4D4D4;")
-            lay_targets.addWidget(lbl)
-            lay_targets.addWidget(var)
-            
+        lay_targets.addRow("Waitress (HTTP):", self.http_var)
+        lay_targets.addRow("Cheroot (HTTPS):", self.https_var)
+        lay_targets.addRow("Cloudflare Tunnel:", self.cloudflare_var)
         self.control_layout.addWidget(grp_targets)
 
-        # 2. Load Profile
+        # 2. Load Profile (QFormLayout)
         grp_profile = QGroupBox("2. Load Profile")
-        lay_profile = QVBoxLayout(grp_profile)
+        lay_profile = QFormLayout(grp_profile)
         
-        lbl_action = QLabel("Action Distribution:"); lbl_action.setStyleSheet("font-weight: bold;")
         self.action_var = QComboBox()
         self.action_var.addItems(["Strict Registrations (Kiosk Simulation)", "Strict Check-ins (Scanner Simulation)", "Mixed Load (50% Check-in / 50% Reg)"])
-        lay_profile.addWidget(lbl_action); lay_profile.addWidget(self.action_var)
+        lay_profile.addRow("Action Distribution:", self.action_var)
 
-        lbl_sync = QLabel("Concurrency Attack Strategy:"); lbl_sync.setStyleSheet("font-weight: bold;")
         self.sync_var = QComboBox()
         self.sync_var.addItems(["Synchronized Millisecond Stampede", "Human Pacing (1-3s delays)", "Gradual Ramp-Up (Stress Growth)"])
-        lay_profile.addWidget(lbl_sync); lay_profile.addWidget(self.sync_var)
+        lay_profile.addRow("Attack Strategy:", self.sync_var)
 
-        lbl_days = QLabel("Event Days (comma-separated):"); lbl_days.setStyleSheet("font-weight: bold;")
         self.event_days_var = QLineEdit(DEFAULT_EVENT_DAYS)
-        lay_profile.addWidget(lbl_days); lay_profile.addWidget(self.event_days_var)
+        lay_profile.addRow("Event Days:", self.event_days_var)
 
-        h_year = QHBoxLayout()
-        lbl_year = QLabel("Event Year:"); lbl_year.setStyleSheet("font-weight: bold;")
         self.event_year_var = QLineEdit(str(DEFAULT_EVENT_YEAR))
-        h_year.addWidget(lbl_year); h_year.addWidget(self.event_year_var)
-        lay_profile.addLayout(h_year)
-        
+        lay_profile.addRow("Event Year:", self.event_year_var)
         self.control_layout.addWidget(grp_profile)
 
-        # 3. Execution Parameters
+        # 3. Execution Parameters (QFormLayout)
         grp_exec = QGroupBox("3. Execution Parameters")
-        lay_exec = QGridLayout(grp_exec)
+        lay_exec = QFormLayout(grp_exec)
         
         self.threads_var = QSpinBox(); self.threads_var.setRange(1, 1000); self.threads_var.setValue(18)
         self.duration_var = QSpinBox(); self.duration_var.setRange(1, 3600); self.duration_var.setValue(60)
         self.rampup_var = QSpinBox(); self.rampup_var.setRange(0, 3600); self.rampup_var.setValue(5)
         self.timeout_var = QDoubleSpinBox(); self.timeout_var.setRange(0.1, 60.0); self.timeout_var.setValue(8.0)
         
-        params = [("Devices PER Target:", self.threads_var), ("Test Duration (sec):", self.duration_var), 
-                  ("Ramp-Up Window (sec):", self.rampup_var), ("Request Timeout (sec):", self.timeout_var)]
-        
-        for idx, (label_text, var) in enumerate(params):
-            lbl = QLabel(label_text); lbl.setStyleSheet("font-weight: bold;")
-            lay_exec.addWidget(lbl, idx, 0)
-            lay_exec.addWidget(var, idx, 1)
-
+        lay_exec.addRow("Devices PER Target:", self.threads_var)
+        lay_exec.addRow("Test Duration (sec):", self.duration_var)
+        lay_exec.addRow("Ramp-Up Window (sec):", self.rampup_var)
+        lay_exec.addRow("Request Timeout (sec):", self.timeout_var)
         self.control_layout.addWidget(grp_exec)
 
         # 4. Database Tools
@@ -686,15 +698,18 @@ class EnterpriseStressTestApp(QMainWindow):
         h_cap.addWidget(lbl_cap); h_cap.addWidget(self.pool_cap_var)
         lay_db.addLayout(h_cap)
 
-        self.btn_reload = QPushButton("🔄 Reload Attendee Pool"); self.btn_reload.setStyleSheet("background-color: #005A9E;")
+        self.btn_reload = QPushButton("🔄 Reload Attendee Pool"); self.btn_reload.setObjectName("btn_reload")
+        self.btn_reload.setStyleSheet("background-color: #005A9E;")
         self.btn_reload.clicked.connect(lambda: self.reload_attendee_pool(initial=False))
         lay_db.addWidget(self.btn_reload)
 
         lbl_synth = QLabel("Synthetic Test Data:"); lbl_synth.setStyleSheet("font-weight: bold; margin-top: 10px;")
         lay_db.addWidget(lbl_synth)
         h_synth = QHBoxLayout()
-        self.btn_reset_synth = QPushButton("🧹 Reset History"); self.btn_reset_synth.clicked.connect(self.on_reset_synthetic_history)
-        self.btn_purge_synth = QPushButton("🗑️ Purge Data"); self.btn_purge_synth.setStyleSheet("color: #F44747; border-color: #F44747;")
+        self.btn_reset_synth = QPushButton("🧹 Reset History"); self.btn_reset_synth.setObjectName("btn_reset_synth")
+        self.btn_reset_synth.clicked.connect(self.on_reset_synthetic_history)
+        self.btn_purge_synth = QPushButton("🗑️ Purge Data"); self.btn_purge_synth.setObjectName("btn_purge_synth")
+        self.btn_purge_synth.setStyleSheet("color: #F44747; border-color: #F44747;")
         self.btn_purge_synth.clicked.connect(self.on_purge_synthetic)
         h_synth.addWidget(self.btn_reset_synth); h_synth.addWidget(self.btn_purge_synth)
         lay_db.addLayout(h_synth)
@@ -702,9 +717,11 @@ class EnterpriseStressTestApp(QMainWindow):
         lbl_global = QLabel("Global Live Data (DANGER):"); lbl_global.setStyleSheet("font-weight: bold; color: #F44747; margin-top: 10px;")
         lay_db.addWidget(lbl_global)
         h_global = QHBoxLayout()
-        self.btn_reset_all = QPushButton("☢️ Wipe ALL Check-ins"); self.btn_reset_all.setStyleSheet("background-color: #8C2323; color: white;")
+        self.btn_reset_all = QPushButton("☢️ Wipe ALL Check-ins"); self.btn_reset_all.setObjectName("btn_reset_all")
+        self.btn_reset_all.setStyleSheet("background-color: #8C2323; color: white;")
         self.btn_reset_all.clicked.connect(self.on_reset_all_history)
-        self.btn_clear_kiosk = QPushButton("☢️ Clear ALL Kiosk Reg"); self.btn_clear_kiosk.setStyleSheet("background-color: #8C2323; color: white;")
+        self.btn_clear_kiosk = QPushButton("☢️ Clear ALL Kiosk Reg"); self.btn_clear_kiosk.setObjectName("btn_clear_kiosk")
+        self.btn_clear_kiosk.setStyleSheet("background-color: #8C2323; color: white;")
         self.btn_clear_kiosk.clicked.connect(self.on_clear_kiosk)
         h_global.addWidget(self.btn_reset_all); h_global.addWidget(self.btn_clear_kiosk)
         lay_db.addLayout(h_global)
@@ -713,14 +730,14 @@ class EnterpriseStressTestApp(QMainWindow):
 
         # Execution Buttons
         h_exec = QHBoxLayout()
-        self.btn_start = QPushButton("▶ INJECT LOAD"); self.btn_start.setObjectName("btnStart")
+        self.btn_start = QPushButton("▶ INJECT LOAD"); self.btn_start.setObjectName("btn_start")
         self.btn_start.clicked.connect(self.start_test); self.btn_start.setEnabled(False)
-        self.btn_stop = QPushButton("■ HALT"); self.btn_stop.setObjectName("btnStop")
+        self.btn_stop = QPushButton("■ HALT"); self.btn_stop.setObjectName("btn_stop")
         self.btn_stop.clicked.connect(self.stop_test); self.btn_stop.setEnabled(False)
         h_exec.addWidget(self.btn_start); h_exec.addWidget(self.btn_stop)
         self.control_layout.addLayout(h_exec)
 
-        self.btn_rep = QPushButton("📄 Export Summary Report")
+        self.btn_rep = QPushButton("📄 Export Summary Report"); self.btn_rep.setObjectName("btn_rep")
         self.btn_rep.clicked.connect(self.export_summary_report)
         self.control_layout.addWidget(self.btn_rep)
 
@@ -754,7 +771,7 @@ class EnterpriseStressTestApp(QMainWindow):
             h_cards.addWidget(f)
         layout.addLayout(h_cards)
 
-        # Matplotlib Graph
+        # Matplotlib Graph (Throttled for Performance)
         if MATPLOTLIB_AVAILABLE:
             fig, (self.ax_tps, self.ax_rt) = plt.subplots(2, 1, figsize=(8, 4), facecolor="#161618")
             for ax in (self.ax_tps, self.ax_rt):
@@ -868,9 +885,9 @@ class EnterpriseStressTestApp(QMainWindow):
                        ("Cloudflare", self.cloudflare_var.text().strip().rstrip("/"))]
         targets = [(name, url) for name, url in raw_targets if url]
         
-        if not targets: return self.log("ERROR: no routing targets provided. Fill in at least one target URL.")
+        if not targets: return self.signals.log_msg.emit("ERROR: no routing targets provided. Fill in at least one target URL.")
         bad = [url for _, url in targets if not (url.startswith("http://") or url.startswith("https://"))]
-        if bad: self.log(f"WARNING: target(s) missing http(s):// scheme: {', '.join(bad)}")
+        if bad: self.signals.log_msg.emit(f"WARNING: target(s) missing http(s):// scheme: {', '.join(bad)}")
 
         dev_count = self.threads_var.value()
         duration = self.duration_var.value()
@@ -882,7 +899,7 @@ class EnterpriseStressTestApp(QMainWindow):
         
         with self.pool_lock: pool_empty = not self.user_pool
         if pool_empty and "Strict Check-in" in mode:
-            return self.log("FATAL: attendee pool is empty. Reload pool or switch to Registration/Mixed mode.")
+            return self.signals.log_msg.emit("FATAL: attendee pool is empty. Reload pool or switch to Registration/Mixed mode.")
 
         event_days_raw = [d.strip() for d in self.event_days_var.text().split(",") if d.strip()]
         try: event_year = int(self.event_year_var.text())
@@ -891,14 +908,12 @@ class EnterpriseStressTestApp(QMainWindow):
         event_dates = parse_event_days(event_days_raw, event_year)
         if not event_dates: event_dates = parse_event_days(DEFAULT_EVENT_DAYS.split(","), DEFAULT_EVENT_YEAR)
 
-        self.reset_stats()
+        self.signals.reset_ui.emit()
         
         # --- UI STATE UPDATE (START) ---
-        self.btn_start.setEnabled(False)
-        self.btn_start.setText("✅ RUNNING...")
-        self.btn_reload.setEnabled(False)
-        self.btn_stop.setEnabled(True)
-        self.btn_stop.setText("■ HALT")
+        self.signals.btn_state.emit("btn_start", "✅ RUNNING...", False)
+        self.signals.btn_state.emit("btn_reload", "🔄 Reload Attendee Pool", False)
+        self.signals.btn_state.emit("btn_stop", "■ HALT", True)
         
         self.is_running = True
 
@@ -915,7 +930,7 @@ class EnterpriseStressTestApp(QMainWindow):
         self.test_duration = duration
         run_config = RunConfig(mode=mode, sync_mode=sync_mode, timeout=timeout_limit, event_day_labels=tuple(event_days_raw), event_dates=tuple(event_dates))
 
-        self.log(f"Test initialized — {total_threads} virtual devices on {len(targets)} target(s).")
+        self.signals.log_msg.emit(f"Test initialized — {total_threads} virtual devices on {len(targets)} target(s).")
 
         thread_id_counter = 0
         for env_name, base_url in targets:
@@ -929,55 +944,21 @@ class EnterpriseStressTestApp(QMainWindow):
         self.is_running = False
         
         # --- UI STATE UPDATE (STOPPING) ---
-        self.btn_stop.setText("⏳ STOPPING...")
-        self.btn_stop.setEnabled(False)
-        self.btn_start.setEnabled(False) 
+        self.signals.btn_state.emit("btn_stop", "⏳ STOPPING...", False)
+        self.signals.btn_state.emit("btn_start", "✅ RUNNING...", False) 
         
         if self.sync_barrier: self.sync_barrier.abort()
-        self.log("Halt requested — waiting for in-flight requests to finish...")
+        self.signals.log_msg.emit("Halt requested — waiting for in-flight requests to finish...")
 
         # Background thread to safely reset the UI after threads have stopped
         threading.Thread(target=self._wait_for_shutdown, daemon=True).start()
 
     def _wait_for_shutdown(self):
         time.sleep(1.5) # Wait buffer for http requests to timeout or complete
-        self.ui_queue.put(("reset_buttons", None))
-        self.log("All devices stopped. System ready.")
-
-    def closeEvent(self, event):
-        self.stop_test()
-        event.accept()
-
-    def reset_stats(self):
-        with self.data_lock:
-            self.metrics = Counter()
-            self.rts_checkin.clear()
-            self.rts_register.clear()
-            self.results_history.clear()
-            self.recent_activity.clear()
-            self.tree_buffer.clear()
-            self.peak_rps = 0
-            self._last_rendered_total = -1
-
-        self.throughput_history.clear()
-        self.plot_rts_history.clear()
-
-        for key, widget in self.stat_widgets.items(): widget.setText("0")
-        
-        self.meter_chk.set_target(0); self.meter_chk.current_val = 0
-        self.meter_reg.set_target(0); self.meter_reg.current_val = 0
-        
-        self.tree.setRowCount(0)
-        
-        # Set explicitly to N/A
-        for widgets in (self.chk_metrics, self.reg_metrics):
-            for key, widget in widgets.items(): 
-                widget.setText("N/A" if key != "Total Processed:" else "0")
-                widget.setStyleSheet("font-weight: bold; color: #555555;")
-            
-        for lbl in self.err_labels.values(): lbl.setText("0")
-        self.lbl_verdict.setText("⚪ IDLE — System Armed.")
-        self.lbl_verdict.setStyleSheet("color: #D4D4D4; font-size: 16px; font-weight: bold;")
+        self.signals.log_msg.emit("All devices stopped. System ready.")
+        self.signals.btn_state.emit("btn_start", "▶ INJECT LOAD", True)
+        self.signals.btn_state.emit("btn_reload", "🔄 Reload Attendee Pool", True)
+        self.signals.btn_state.emit("btn_stop", "■ HALT", False)
 
     def api_worker(self, env_name, base_url, thread_id, run_config: RunConfig, start_delay):
         if start_delay > 0: time.sleep(start_delay)
@@ -1013,7 +994,7 @@ class EnterpriseStressTestApp(QMainWindow):
                         with self.pool_lock: pool_snapshot = self.user_pool
                         if pool_snapshot: user = random.choice(pool_snapshot)
                         elif "Strict Check-in" in run_config.mode:
-                            self.log("FATAL: attendee pool exhausted mid-run. Halting."); self.is_running = False; break
+                            self.signals.log_msg.emit("FATAL: attendee pool exhausted mid-run. Halting."); self.is_running = False; break
                         else: is_checkin = False
 
                 try:
@@ -1045,6 +1026,12 @@ class EnterpriseStressTestApp(QMainWindow):
 
                 if self.is_running and not self.sync_barrier and "Human" in run_config.sync_mode:
                     time.sleep(random.uniform(1.0, 3.0))
+                    
+                # Time limit check inside thread
+                if self.is_running and self.test_duration and (time.time() - self.start_time) >= self.test_duration:
+                    self.signals.log_msg.emit("Time limit reached. Halting traffic...")
+                    self.stop_test()
+                    break
         finally:
             session.close()
 
@@ -1054,71 +1041,33 @@ class EnterpriseStressTestApp(QMainWindow):
             self.meter_reg.tick()
         except Exception: pass
 
-    def _reset_btn_text(self, btn, text):
-        if not btn.text().startswith("⏳"):
+    # ==========================================================================
+    # PYSIDE6 SIGNAL SLOTS (Thread-Safe UI Updates)
+    # ==========================================================================
+    @Slot(str)
+    def _ui_log(self, msg):
+        ts = time.strftime('%H:%M:%S')
+        self.log_txt.appendPlainText(f"[{ts}] {msg}")
+        
+    @Slot(str, str, bool)
+    def _ui_btn_state(self, btn_name, text, enabled):
+        btn = getattr(self, btn_name, None)
+        if btn:
             btn.setText(text)
-
-    def update_gui_loop(self):
-        # 1. Process UI/Log Queue
-        log_msgs = []
-        for _ in range(30):
-            try:
-                kind, payload = self.ui_queue.get_nowait()
-                if kind == "log": log_msgs.append(payload)
-                elif kind == "enable_widget": getattr(self, payload).setEnabled(True)
-                elif kind == "disable_widget": getattr(self, payload).setEnabled(False)
-                elif kind == "pool_loaded": self._refresh_pool_label()
-                elif kind == "reload_pool": self.reload_attendee_pool()
-                elif kind == "reset_buttons":
-                    self.btn_start.setText("▶ INJECT LOAD")
-                    self.btn_start.setEnabled(True)
-                    self.btn_reload.setEnabled(True)
-                    self.btn_stop.setText("■ HALT")
-                    self.btn_stop.setEnabled(False)
-                elif kind == "btn_success":
-                    btn_name, success_text, original_text = payload
-                    btn = getattr(self, btn_name)
-                    btn.setText(success_text)
-                    btn.setEnabled(True)
-                    QTimer.singleShot(2500, lambda b=btn, t=original_text: self._reset_btn_text(b, t))
-            except queue.Empty: break
-
-        if log_msgs:
-            ts = time.strftime('%H:%M:%S')
-            for msg in log_msgs: self.log_txt.appendPlainText(f"[{ts}] {msg}")
-
-        # 2. Update Run Time
-        now = time.time()
-        if self.is_running:
-            elapsed = now - self.start_time
-            if self.test_duration and elapsed >= self.test_duration:
-                self.log("Time limit reached. Halting traffic..."); self.stop_test()
-
-        # 3. Pull Data Snapshot
-        with self.data_lock:
-            total = self.metrics.get("total", 0)
-
-            if total == self._last_rendered_total and self.is_running: return
-
-            self._last_rendered_total = total
-            metrics_snap = dict(self.metrics)
-
-            while self.recent_activity and now - self.recent_activity[0] > 1.0:
-                self.recent_activity.popleft()
+            btn.setEnabled(enabled)
             
-            live_rps = len(self.recent_activity)
-            if live_rps > self.peak_rps: self.peak_rps = live_rps
+    @Slot(int, dict)
+    def _ui_pool_loaded(self, total, counts):
+        self._refresh_pool_label()
 
-            rts_checkin_snap = list(self.rts_checkin)
-            rts_register_snap = list(self.rts_register)
-            all_rts = rts_checkin_snap + rts_register_snap
-
-            tree_items = list(self.tree_buffer)
-            self.tree_buffer.clear()
-
-        # 4. Render Updates
+    @Slot(dict, list, list, list, int, int)
+    def _ui_update_metrics(self, metrics_snap, chk_snap, reg_snap, tree_snap, live_rps, peak_rps):
+        total = metrics_snap.get("total", 0)
+        
+        all_rts = chk_snap + reg_snap
         latest_rt = all_rts[-1] if all_rts else 0
 
+        # Adjust meter max for display scale
         if live_rps > self.meter_chk.max_val:
             new_max = math.ceil(live_rps * 1.3)
             self.meter_chk.max_val = new_max
@@ -1136,10 +1085,10 @@ class EnterpriseStressTestApp(QMainWindow):
         self.stat_widgets["Success %"].setStyleSheet(f"font-size:24px; font-weight:bold; border:none; color: {'#4EC9B0' if success_rate >= 98 else ('#D7BA7D' if success_rate >= 90 else '#F44747')};")
         self.stat_widgets["Avg RT (ms)"].setText(f"{avg_rt:.0f}")
         self.stat_widgets["Live RPS"].setText(str(live_rps))
-        self.stat_widgets["Peak RPS"].setText(str(self.peak_rps))
+        self.stat_widgets["Peak RPS"].setText(str(peak_rps))
 
-        self._update_analytics_column(self.chk_metrics, rts_checkin_snap)
-        self._update_analytics_column(self.reg_metrics, rts_register_snap)
+        self._update_analytics_column(self.chk_metrics, chk_snap)
+        self._update_analytics_column(self.reg_metrics, reg_snap)
 
         for key, lbl in self.err_labels.items(): lbl.setText(str(metrics_snap.get(key, 0)))
 
@@ -1154,9 +1103,10 @@ class EnterpriseStressTestApp(QMainWindow):
         elif "DEGRADED" in level: self.lbl_verdict.setStyleSheet("color: #D7BA7D; font-size: 16px; font-weight: bold;")
         elif "HEALTHY" in level: self.lbl_verdict.setStyleSheet("color: #4EC9B0; font-size: 16px; font-weight: bold;")
 
-        # 5. TreeView Batched Injection
-        if tree_items:
-            for item in tree_items:
+        # 5. TreeView Batched Injection (No repaints while inserting)
+        if tree_snap:
+            self.tree.setUpdatesEnabled(False)
+            for item in tree_snap:
                 self.tree.insertRow(0)
                 code = item[3]
                 color = QColor("#4EC9B0") if code == 200 else (QColor("#D7BA7D") if isinstance(code, int) and code < 500 else QColor("#F44747"))
@@ -1164,19 +1114,51 @@ class EnterpriseStressTestApp(QMainWindow):
                     tw_item = QTableWidgetItem(str(val))
                     tw_item.setForeground(color)
                     self.tree.setItem(0, col, tw_item)
-                    
             while self.tree.rowCount() > 50: self.tree.removeRow(50)
+            self.tree.setUpdatesEnabled(True)
 
         # 6. Smooth Plotly Updates
         self.throughput_history.append(live_rps)
         self.plot_rts_history.append(latest_rt)
 
         if MATPLOTLIB_AVAILABLE and hasattr(self, 'line_tps'):
-            self.line_tps.set_data(range(len(self.throughput_history)), list(self.throughput_history))
-            self.ax_tps.relim(); self.ax_tps.autoscale_view()
-            self.line_rt.set_data(range(len(self.plot_rts_history)), list(self.plot_rts_history))
-            self.ax_rt.relim(); self.ax_rt.autoscale_view()
-            self.canvas.draw_idle()
+            # Only draw if the tab is visible to save CPU!
+            if self.tabs.currentIndex() == 0:
+                self.line_tps.set_data(range(len(self.throughput_history)), list(self.throughput_history))
+                self.ax_tps.relim(); self.ax_tps.autoscale_view()
+                self.line_rt.set_data(range(len(self.plot_rts_history)), list(self.plot_rts_history))
+                self.ax_rt.relim(); self.ax_rt.autoscale_view()
+                self.canvas.draw_idle()
+
+    @Slot()
+    def reset_stats(self):
+        with self.data_lock:
+            self.metrics = Counter()
+            self.rts_checkin.clear()
+            self.rts_register.clear()
+            self.results_history.clear()
+            self.recent_activity.clear()
+            self.tree_buffer.clear()
+            self.peak_rps = 0
+
+        self.throughput_history.clear()
+        self.plot_rts_history.clear()
+
+        for key, widget in self.stat_widgets.items(): widget.setText("0")
+        
+        self.meter_chk.set_target(0); self.meter_chk.current_val = 0
+        self.meter_reg.set_target(0); self.meter_reg.current_val = 0
+        
+        self.tree.setRowCount(0)
+        
+        for widgets in (self.chk_metrics, self.reg_metrics):
+            for key, widget in widgets.items(): 
+                widget.setText("N/A" if key != "Total Processed:" else "0")
+                widget.setStyleSheet("font-weight: bold; color: #555555;")
+            
+        for lbl in self.err_labels.values(): lbl.setText("0")
+        self.lbl_verdict.setText("⚪ IDLE — System Armed.")
+        self.lbl_verdict.setStyleSheet("color: #D4D4D4; font-size: 16px; font-weight: bold;")
 
     def _update_analytics_column(self, widgets, data):
         n = len(data)
@@ -1212,11 +1194,10 @@ class EnterpriseStressTestApp(QMainWindow):
         widgets["Min / Max ms:"].setText(f"{sorted_data[0]:.0f} / {sorted_data[-1]:.0f}")
         widgets["Min / Max ms:"].setStyleSheet("font-weight: bold; color: #569CD6;")
 
-
     def export_summary_report(self):
         with self.data_lock:
             total = self.metrics.get("total", 0)
-            if total == 0: return self.log("Nothing to export yet — run a test first.")
+            if total == 0: return self.signals.log_msg.emit("Nothing to export yet — run a test first.")
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Text Report", "", "Text Report (*.txt)")
         if not file_path: return
@@ -1227,14 +1208,14 @@ class EnterpriseStressTestApp(QMainWindow):
         
         try:
             with open(file_path, "w", encoding="utf-8") as f: f.write(self._build_report_text())
-            self.log(f"Summary report saved to {file_path}")
+            self.signals.log_msg.emit(f"Summary report saved to {file_path}")
             self.btn_rep.setText("✅ SAVED")
         except OSError as e: 
-            self.log(f"ERROR saving report: {e}")
+            self.signals.log_msg.emit(f"ERROR saving report: {e}")
             self.btn_rep.setText("❌ ERROR")
         finally:
             self.btn_rep.setEnabled(True)
-            QTimer.singleShot(2500, lambda: self._reset_btn_text(self.btn_rep, "📄 Export Summary Report"))
+            QTimer.singleShot(2500, lambda: self.signals.btn_state.emit("btn_rep", "📄 Export Summary Report", True))
 
     def _build_report_text(self):
         with self.data_lock:

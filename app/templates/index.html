@@ -37,11 +37,19 @@
     }
 
     body {
-      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      font-family:
+        "Inter",
+        system-ui,
+        -apple-system,
+        sans-serif;
       background-color: var(--bg-dark);
       background-image:
-        radial-gradient(circle at 50% -20%, rgba(0, 210, 255, 0.12), transparent 50%),
-        radial-gradient(circle at 50% 120%, rgba(0, 230, 118, 0.05), transparent 50%);
+        radial-gradient(circle at 50% -20%,
+          rgba(0, 210, 255, 0.12),
+          transparent 50%),
+        radial-gradient(circle at 50% 120%,
+          rgba(0, 230, 118, 0.05),
+          transparent 50%);
       color: var(--text-light);
       margin: 0;
       padding: 0;
@@ -63,7 +71,9 @@
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      transition: opacity 0.5s ease, visibility 0.5s ease;
+      transition:
+        opacity 0.5s ease,
+        visibility 0.5s ease;
     }
 
     #preloader.fade-out {
@@ -221,7 +231,9 @@
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      transition: background 0.3s, box-shadow 0.3s;
+      transition:
+        background 0.3s,
+        box-shadow 0.3s;
     }
 
     .net-excellent {
@@ -279,7 +291,9 @@
     }
 
     .install-banner {
-      background: linear-gradient(135deg, rgba(0, 210, 255, 0.15), rgba(0, 210, 255, 0.05));
+      background: linear-gradient(135deg,
+          rgba(0, 210, 255, 0.15),
+          rgba(0, 210, 255, 0.05));
       color: var(--primary);
       border: 1px solid rgba(0, 210, 255, 0.4);
       cursor: pointer;
@@ -368,7 +382,9 @@
       align-items: center;
       padding: 20px;
       /* Shrunk padding */
-      background: linear-gradient(160deg, var(--surface-light) 0%, var(--surface) 100%);
+      background: linear-gradient(160deg,
+          var(--surface-light) 0%,
+          var(--surface) 100%);
       border: 1px solid var(--glass-border);
       border-radius: var(--radius-lg);
       text-decoration: none;
@@ -410,7 +426,9 @@
     .menu-card:hover {
       transform: translateY(-4px) scale(1.01);
       border-color: rgba(255, 255, 255, 0.15);
-      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 15px rgba(255, 255, 255, 0.05);
+      box-shadow:
+        0 12px 30px rgba(0, 0, 0, 0.5),
+        0 0 15px rgba(255, 255, 255, 0.05);
     }
 
     .menu-card:hover::before {
@@ -465,7 +483,11 @@
     /* --- COMPACT SUPPORT BOX --- */
     .support-box {
       width: 100%;
-      background: radial-gradient(ellipse at top, rgba(255, 170, 0, 0.08) 0%, transparent 70%), rgba(16, 19, 26, 0.8);
+      background:
+        radial-gradient(ellipse at top,
+          rgba(255, 170, 0, 0.08) 0%,
+          transparent 70%),
+        rgba(16, 19, 26, 0.8);
       border: 1px dashed rgba(255, 170, 0, 0.3);
       border-radius: var(--radius-lg);
       padding: 20px;
@@ -612,7 +634,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.3s ease, backdrop-filter 0.3s ease;
+      transition:
+        background 0.3s ease,
+        backdrop-filter 0.3s ease;
     }
 
     .call-overlay.minimized {
@@ -776,7 +800,6 @@
 </head>
 
 <body>
-
   <!-- Smooth Compact Preloader -->
   <div id="preloader">
     <div class="loader-ring"></div>
@@ -801,12 +824,15 @@
     </div>
 
     <div id="unsynced-warning" class="banner unsynced-warning">
-      ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records trapped!
-      <br><span class="subtext">Open Scanner/Registration while online to sync.</span>
+      ⏳ WARNING: You have <span id="unsynced-count">0</span> unsynced records
+      trapped! <br /><span class="subtext">Open Scanner/Registration while online to sync.</span>
     </div>
 
     <div class="header">
-      <h1>TDE UP <span class="highlight">2026</span> <span class="version-tag">V2.6</span></h1>
+      <h1>
+        TDE UP <span class="highlight">2026</span>
+        <span class="version-tag">V2.6</span>
+      </h1>
       <p>Operations Portal</p>
     </div>
 
@@ -816,7 +842,8 @@
         <div class="card-content">
           <div class="card-title">Live Scanner</div>
           <div class="card-desc">
-            Instantly scan attendee QR badges or verify IDs. Safely queues data if offline.
+            Instantly scan attendee QR badges or verify IDs. Safely queues
+            data if offline.
           </div>
         </div>
       </a>
@@ -826,7 +853,8 @@
         <div class="card-content">
           <div class="card-title">Kiosk Registration</div>
           <div class="card-desc">
-            Register new walk-in attendees quickly. Auto-generates verified ID codes.
+            Register new walk-in attendees quickly. Auto-generates verified ID
+            codes.
           </div>
         </div>
       </a>
@@ -836,7 +864,8 @@
         <div class="card-content">
           <div class="card-title">Network Statistics</div>
           <div class="card-desc">
-            Monitor live device connections, global sync status, and event metrics.
+            Monitor live device connections, global sync status, and event
+            metrics.
           </div>
         </div>
       </a>
@@ -859,40 +888,108 @@
 
   <div id="operator-msg-modal">
     <div class="msg-modal-content">
-      <h2 style="margin-top:0; color:#000; font-size: 1.4rem;">📨 Hub Message</h2>
-      <p id="operator-msg-text"
-        style="font-size: 1.1rem; font-weight: 800; color: #000; white-space: pre-wrap; margin-bottom: 20px;"></p>
-      <button onclick="closeOperatorMsg()"
-        style="padding: 12px 20px; background: #000; color: var(--warning); border:none; border-radius: 10px; cursor: pointer; font-weight: 900; font-size:1rem; width:100%; box-shadow: 0 6px 20px rgba(0,0,0,0.3); transition: transform 0.2s;">
+      <h2 style="margin-top: 0; color: #000; font-size: 1.4rem">
+        📨 Hub Message
+      </h2>
+      <p id="operator-msg-text" style="
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #000;
+            white-space: pre-wrap;
+            margin-bottom: 20px;
+          "></p>
+      <button onclick="closeOperatorMsg()" style="
+            padding: 12px 20px;
+            background: #000;
+            color: var(--warning);
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 900;
+            font-size: 1rem;
+            width: 100%;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            transition: transform 0.2s;
+          ">
         Acknowledge Message
       </button>
     </div>
   </div>
 
-  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000;">
-    <div class="active-call-card"
-      style="border-color: var(--primary); box-shadow: 0 0 60px rgba(0, 210, 255, 0.25); animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
-      <div
-        style="font-size: 50px; margin-bottom: 20px; animation: ringShake 0.4s infinite alternate; display: inline-block;">
-        📞</div>
-      <h2 style="margin: 0 0 8px 0; color: var(--text-light); font-weight: 900; font-size: 1.5rem;">Incoming Call</h2>
-      <p style="color: var(--text-dim); margin-bottom: 30px; font-size: 0.9rem; font-weight: 600;">Command Hub is
-        dispatching audio...</p>
-      <div style="display: flex; gap: 12px; justify-content: center;">
-        <button onclick="acceptCall()"
-          style="background: var(--success); color: #000; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(0, 230, 118, 0.3); transition: transform 0.2s; text-transform: uppercase;">Accept</button>
-        <button onclick="rejectCall()"
-          style="background: var(--danger); color: #fff; border: none; padding: 12px 24px; border-radius: 25px; font-weight: 900; font-size: 0.95rem; cursor: pointer; flex: 1; box-shadow: 0 6px 15px rgba(255, 68, 68, 0.3); transition: transform 0.2s; text-transform: uppercase;">Decline</button>
+  <div id="incoming-call-modal" class="call-overlay" style="display: none; z-index: 100000">
+    <div class="active-call-card" style="
+          border-color: var(--primary);
+          box-shadow: 0 0 60px rgba(0, 210, 255, 0.25);
+          animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        ">
+      <div style="
+            font-size: 50px;
+            margin-bottom: 20px;
+            animation: ringShake 0.4s infinite alternate;
+            display: inline-block;
+          ">
+        📞
+      </div>
+      <h2 style="
+            margin: 0 0 8px 0;
+            color: var(--text-light);
+            font-weight: 900;
+            font-size: 1.5rem;
+          ">
+        Incoming Call
+      </h2>
+      <p style="
+            color: var(--text-dim);
+            margin-bottom: 30px;
+            font-size: 0.9rem;
+            font-weight: 600;
+          ">
+        Command Hub is dispatching audio...
+      </p>
+      <div style="display: flex; gap: 12px; justify-content: center">
+        <button onclick="acceptCall()" style="
+              background: var(--success);
+              color: #000;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 25px;
+              font-weight: 900;
+              font-size: 0.95rem;
+              cursor: pointer;
+              flex: 1;
+              box-shadow: 0 6px 15px rgba(0, 230, 118, 0.3);
+              transition: transform 0.2s;
+              text-transform: uppercase;
+            ">
+          Accept
+        </button>
+        <button onclick="rejectCall()" style="
+              background: var(--danger);
+              color: #fff;
+              border: none;
+              padding: 12px 24px;
+              border-radius: 25px;
+              font-weight: 900;
+              font-size: 0.95rem;
+              cursor: pointer;
+              flex: 1;
+              box-shadow: 0 6px 15px rgba(255, 68, 68, 0.3);
+              transition: transform 0.2s;
+              text-transform: uppercase;
+            ">
+          Decline
+        </button>
       </div>
     </div>
   </div>
 
-  <div id="active-call-overlay" class="call-overlay" style="display: none;">
+  <div id="active-call-overlay" class="call-overlay" style="display: none">
     <div class="active-call-card" id="active-call-card">
       <div class="call-card-header">
         <span class="call-badge pulse-badge">🟢 Live Audio</span>
-        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()"
-          title="Minimize / Maximize">🗕</button>
+        <button id="btn-minimize-call" class="btn-icon" onclick="toggleMinimizeCall()" title="Minimize / Maximize">
+          🗕
+        </button>
       </div>
       <div class="call-info">
         <div class="call-avatar" id="call-avatar">🎙️</div>
@@ -921,63 +1018,88 @@
       setInterval(syncServerStatus, 4000);
     });
 
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => { });
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => { });
     }
 
     // --- PWA Installation Logic ---
     let deferredPrompt;
-    window.addEventListener('beforeinstallprompt', (e) => {
+    window.addEventListener("beforeinstallprompt", (e) => {
       e.preventDefault();
       deferredPrompt = e;
-      const installBtn = document.getElementById('install-banner');
-      installBtn.style.display = 'block';
+      const installBtn = document.getElementById("install-banner");
+      installBtn.style.display = "block";
 
-      installBtn.addEventListener('click', async () => {
-        installBtn.style.display = 'none';
+      installBtn.addEventListener("click", async () => {
+        installBtn.style.display = "none";
         deferredPrompt.prompt();
         const { outcome } = await deferredPrompt.userChoice;
         deferredPrompt = null;
       });
     });
 
-    window.addEventListener('appinstalled', (e) => {
-      document.getElementById('install-banner').style.display = 'none';
+    window.addEventListener("appinstalled", (e) => {
+      document.getElementById("install-banner").style.display = "none";
       deferredPrompt = null;
     });
 
     function escapeHTML(str) {
       if (!str) return "Unknown Device";
-      return String(str).replace(/[&<>'"]/g, tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag));
+      return String(str).replace(
+        /[&<>'"]/g,
+        (tag) =>
+          ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            "'": "&#39;",
+            '"': "&quot;",
+          })[tag] || tag,
+      );
     }
 
     let audioCtx = null;
     function initAudio() {
-      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (!audioCtx)
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
     }
 
     function playClick() {
       try {
         initAudio();
-        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
-        osc.type = "sine"; osc.frequency.setValueAtTime(600, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.3, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 0.1,
+        );
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
       } catch (e) { }
     }
 
     function playAudioTone(type) {
       try {
         initAudio();
-        const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         const now = audioCtx.currentTime;
         if (type === "ALERT") {
-          osc.type = "triangle"; osc.frequency.setValueAtTime(600, now); osc.frequency.setValueAtTime(800, now + 0.2);
-          gain.gain.setValueAtTime(1.0, now); gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-          osc.start(now); osc.stop(now + 0.5);
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(600, now);
+          osc.frequency.setValueAtTime(800, now + 0.2);
+          gain.gain.setValueAtTime(1.0, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+          osc.start(now);
+          osc.stop(now + 0.5);
         }
       } catch (e) { }
     }
@@ -994,18 +1116,23 @@
     function getDeviceId() {
       let id = localStorage.getItem("hub_device_id");
       if (!id) {
-        id = "dev_" + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+        id =
+          "dev_" +
+          Math.random().toString(36).substring(2, 15) +
+          Math.random().toString(36).substring(2, 15);
         localStorage.setItem("hub_device_id", id);
       }
       return id;
     }
 
-    function getDeviceName() { return localStorage.getItem("hub_device_name") || "Hub Operations"; }
+    function getDeviceName() {
+      return localStorage.getItem("hub_device_name") || "Hub Operations";
+    }
 
     function closeOperatorMsg() {
       const modal = document.getElementById("operator-msg-modal");
       modal.classList.remove("show");
-      setTimeout(() => modal.style.display = "none", 300);
+      setTimeout(() => (modal.style.display = "none"), 300);
     }
 
     function checkPendingSyncs() {
@@ -1047,13 +1174,14 @@
         device_id: getDeviceId(),
         device_name: getDeviceName(),
         page: window.location.pathname,
-        battery: "N/A"
+        battery: "N/A",
       };
 
       if (navigator.getBattery) {
         try {
           const b = await navigator.getBattery();
-          payload.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' AC' : '');
+          payload.battery =
+            Math.round(b.level * 100) + "%" + (b.charging ? " AC" : "");
         } catch (e) { }
       }
 
@@ -1066,21 +1194,32 @@
           cache: "no-store",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
-          signal: controller.signal
+          signal: controller.signal,
         });
         clearTimeout(timeoutId);
 
         const duration = performance.now() - startTime;
 
-        if (duration < 400) { dot.className = "net-dot net-excellent"; text.textContent = "Excellent"; }
-        else if (duration < 1200) { dot.className = "net-dot net-fair"; text.textContent = "Good"; }
-        else { dot.className = "net-dot net-poor"; text.textContent = "Slow"; }
+        if (duration < 400) {
+          dot.className = "net-dot net-excellent";
+          text.textContent = "Excellent";
+        } else if (duration < 1200) {
+          dot.className = "net-dot net-fair";
+          text.textContent = "Good";
+        } else {
+          dot.className = "net-dot net-poor";
+          text.textContent = "Slow";
+        }
 
         if (response.ok) {
           try {
             const data = await response.json();
 
-            if (data.canonical_name && data.canonical_name !== getDeviceName() && data.canonical_name !== "Unknown Device") {
+            if (
+              data.canonical_name &&
+              data.canonical_name !== getDeviceName() &&
+              data.canonical_name !== "Unknown Device"
+            ) {
               localStorage.setItem("hub_device_name", data.canonical_name);
             }
 
@@ -1093,7 +1232,8 @@
 
             if (data.message) {
               const msgBox = document.getElementById("operator-msg-modal");
-              document.getElementById("operator-msg-text").innerText = data.message;
+              document.getElementById("operator-msg-text").innerText =
+                data.message;
               msgBox.style.display = "flex";
               setTimeout(() => msgBox.classList.add("show"), 10);
               playAudioTone("ALERT");
@@ -1150,13 +1290,18 @@
       ringInterval = setInterval(() => {
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
         osc.type = "square";
         osc.frequency.setValueAtTime(440, audioCtx.currentTime);
         osc.frequency.setValueAtTime(480, audioCtx.currentTime + 0.2);
         gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 1.0);
-        osc.start(); osc.stop(audioCtx.currentTime + 1.0);
+        gain.gain.exponentialRampToValueAtTime(
+          0.01,
+          audioCtx.currentTime + 1.0,
+        );
+        osc.start();
+        osc.stop(audioCtx.currentTime + 1.0);
       }, 2000);
     }
 
@@ -1168,11 +1313,16 @@
     }
 
     function connectCallServer() {
-      if (wsCall && (wsCall.readyState === WebSocket.OPEN || wsCall.readyState === WebSocket.CONNECTING)) {
+      if (
+        wsCall &&
+        (wsCall.readyState === WebSocket.OPEN ||
+          wsCall.readyState === WebSocket.CONNECTING)
+      ) {
         return;
       }
 
-      const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+      const protocol =
+        window.location.protocol === "https:" ? "wss://" : "ws://";
       const wsUrl = `${protocol}${window.location.hostname}:5002/?device_id=${getDeviceId()}`;
 
       try {
@@ -1182,22 +1332,23 @@
           try {
             const data = JSON.parse(event.data);
 
-            if (data.type === 'incoming_call') {
-              document.getElementById("incoming-call-modal").style.display = "flex";
+            if (data.type === "incoming_call") {
+              document.getElementById("incoming-call-modal").style.display =
+                "flex";
               playRingingTone();
-            }
-            else if (data.type === 'answer' && peerConnection) {
-              await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-            }
-            else if (data.type === 'server_muted') {
+            } else if (data.type === "answer" && peerConnection) {
+              await peerConnection.setRemoteDescription(
+                new RTCSessionDescription({ type: "answer", sdp: data.sdp }),
+              );
+            } else if (data.type === "server_muted") {
               remoteAudio.muted = data.muted;
-            }
-            else if (data.type === 'client_muted') {
+            } else if (data.type === "client_muted") {
               if (localStream) {
-                localStream.getAudioTracks().forEach(track => { track.enabled = !data.muted; });
+                localStream.getAudioTracks().forEach((track) => {
+                  track.enabled = !data.muted;
+                });
               }
-            }
-            else if (data.type === 'call_ended') {
+            } else if (data.type === "call_ended") {
               endCall(false);
             }
           } catch (parseError) { }
@@ -1223,9 +1374,9 @@
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true
+            autoGainControl: true,
           },
-          video: false
+          video: false,
         });
 
         document.getElementById("active-call-overlay").style.display = "flex";
@@ -1234,30 +1385,38 @@
           if (!isCallMinimized) toggleMinimizeCall();
         }, 1500);
 
-        peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        peerConnection = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
 
-        localStream.getTracks().forEach(track => { peerConnection.addTrack(track, localStream); });
+        localStream.getTracks().forEach((track) => {
+          peerConnection.addTrack(track, localStream);
+        });
 
         peerConnection.ontrack = (event) => {
           if (!remoteAudio.srcObject) {
             remoteAudio.srcObject = event.streams[0];
             // FIX 3: Explicit play command to force mobile browsers to wake the speaker
-            remoteAudio.play().catch(e => console.warn("Audio play blocked by browser:", e));
+            remoteAudio
+              .play()
+              .catch((e) =>
+                console.warn("Audio play blocked by browser:", e),
+              );
           }
         };
 
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
 
-        // FIX 4: ICE GATHERING TIMEOUT. 
+        // FIX 4: ICE GATHERING TIMEOUT.
         // Wait up to 2 seconds for the Google STUN server to find your phone's Public IP before sending it to the PC.
         await new Promise((resolve) => {
-          if (peerConnection.iceGatheringState === 'complete') {
+          if (peerConnection.iceGatheringState === "complete") {
             resolve();
           } else {
             const timeout = setTimeout(resolve, 2000);
             peerConnection.onicegatheringstatechange = () => {
-              if (peerConnection.iceGatheringState === 'complete') {
+              if (peerConnection.iceGatheringState === "complete") {
                 clearTimeout(timeout);
                 resolve();
               }
@@ -1266,21 +1425,38 @@
         });
 
         if (wsCall && wsCall.readyState === WebSocket.OPEN) {
-          wsCall.send(JSON.stringify({ type: 'offer', sdp: peerConnection.localDescription.sdp }));
+          wsCall.send(
+            JSON.stringify({
+              type: "offer",
+              sdp: peerConnection.localDescription.sdp,
+            }),
+          );
         }
-
       } catch (err) {
-        alert("Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.");
+        alert(
+          "Microphone Access Denied! Note: Voice calls require a secure HTTPS connection.",
+        );
         rejectCall();
       }
     }
 
-    function rejectCall() { endCall(true); }
+    function rejectCall() {
+      endCall(true);
+    }
 
     function endCall(sendPing = true) {
-      if (peerConnection) { peerConnection.close(); peerConnection = null; }
-      if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
-      if (remoteAudio.srcObject) { remoteAudio.pause(); remoteAudio.srcObject = null; }
+      if (peerConnection) {
+        peerConnection.close();
+        peerConnection = null;
+      }
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+        localStream = null;
+      }
+      if (remoteAudio.srcObject) {
+        remoteAudio.pause();
+        remoteAudio.srcObject = null;
+      }
 
       stopRinging();
       document.getElementById("incoming-call-modal").style.display = "none";
@@ -1289,24 +1465,28 @@
       if (isCallMinimized) toggleMinimizeCall();
 
       if (sendPing && wsCall && wsCall.readyState === WebSocket.OPEN) {
-        wsCall.send(JSON.stringify({ type: 'call_ended' }));
+        wsCall.send(JSON.stringify({ type: "call_ended" }));
       }
     }
 
     window.addEventListener("beforeunload", function (e) {
       if (peerConnection && peerConnection.connectionState === "connected") {
-        const confirmationMessage = "Leaving this page will end your active voice call. Continue?";
+        const confirmationMessage =
+          "Leaving this page will end your active voice call. Continue?";
         (e || window.event).returnValue = confirmationMessage;
         return confirmationMessage;
       }
     });
 
     document.addEventListener("DOMContentLoaded", () => {
-      document.querySelectorAll('.menu-card').forEach(card => {
-        card.addEventListener('click', function (e) {
-          if (peerConnection && peerConnection.connectionState === 'connected') {
+      document.querySelectorAll(".menu-card").forEach((card) => {
+        card.addEventListener("click", function (e) {
+          if (
+            peerConnection &&
+            peerConnection.connectionState === "connected"
+          ) {
             e.preventDefault();
-            window.open(this.href, '_blank');
+            window.open(this.href, "_blank");
             showToast("Call Active: Page safely opened in a new tab.");
           }
         });
