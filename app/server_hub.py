@@ -121,7 +121,7 @@ def _configure_windows_platform():
             except: pass
         try: windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
         except: pass
-        try: windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001)
+        try: windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001) # Prevent Sleep
         except: pass
     except: pass
 
@@ -139,7 +139,7 @@ _telemetry_lock = threading.Lock()
 
 # Globals for thread state management
 _global_shutdown_event = threading.Event()
-_flask_shutdown_event = threading.Event() # Specifically to terminate lingering Flask SSE sockets
+_flask_shutdown_event = threading.Event() 
 _db_shutdown_event = threading.Event()
 
 def _telemetry_worker():
@@ -239,7 +239,11 @@ logging.basicConfig(level=logging.INFO, handlers=[_file_handler])
 template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
+
+# --- FLASK OPTIMIZATIONS FOR 3-DAY RUN AND MAXIMUM SPEED ---
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  
+app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False  # Speeds up JSON API responses
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400  # Caches static files for 24h to reduce Wi-Fi bandwidth load
 
 gui_log_callback = None
 SERVER_TEST_MODE = False
@@ -1214,10 +1218,12 @@ def get_all_attendees():
         try: session.close()
         except Exception: pass
 
+# --- HTTP WAITRESS ENGINE (LAN REGISTRATIONS) ---
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        self.server = create_server(app, host=host, port=port, threads=100, connection_limit=2000, channel_timeout=30)
+        # INCREASED ROBUSTNESS: 128 threads, larger connection limit, proactive socket timeout cleaning[cite: 4]
+        self.server = create_server(app, host=host, port=port, threads=128, connection_limit=4096, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
         self.ctx = app.app_context()
         self.ctx.push()
     def run(self):
@@ -1225,14 +1231,17 @@ class WaitressHttpThread(threading.Thread):
         except Exception: pass
     def shutdown(self): self.server.close()
 
+# --- HTTPS CHEROOT ENGINE (WI-FI & CLOUDFLARE) ---
 class HttpsFlaskThread(threading.Thread):
-    def __init__(self, app, host, port, numthreads=100):
+    def __init__(self, app, host, port, numthreads=128):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context()
         self.ctx.push()
-        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=2048)
+        # INCREASED ROBUSTNESS: Thread and queue increase, forced timeout connection drop[cite: 4]
+        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=4096)
+        self.server.timeout = 60
         self.server.keep_alive_timeout = 30
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
