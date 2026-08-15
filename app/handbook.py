@@ -284,8 +284,10 @@ QScrollBar::handle:vertical:hover {
 }
 """
 
+
 class SlidingStackedWidget(QStackedWidget):
     """Provides a smooth hardware-accelerated horizontal slide transition."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.m_speed = 280
@@ -331,8 +333,10 @@ class SlidingStackedWidget(QStackedWidget):
         self.group.finished.connect(on_finished)
         self.group.start()
 
+
 class A4Page(QWidget):
     """Simulates an A4 centered container with smooth vertical scrolling."""
+
     def __init__(self):
         super().__init__()
         outer_layout = QHBoxLayout(self)
@@ -354,8 +358,8 @@ class A4Page(QWidget):
 
         self.scroll_content = QWidget()
         # [CRITICAL FIX] Ensure this inner widget gets the background color from our stylesheet
-        self.scroll_content.setObjectName("scrollContent") 
-        
+        self.scroll_content.setObjectName("scrollContent")
+
         self.content_layout = QVBoxLayout(self.scroll_content)
         self.content_layout.setContentsMargins(25, 20, 25, 20)
         self.content_layout.setSpacing(8)
@@ -368,10 +372,12 @@ class A4Page(QWidget):
     def layout(self):
         return self.content_layout
 
+
 class EventHubHandbookApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EventHub Portable (v2.6) — Quick Reference Handbook")
+        self.setWindowTitle(
+            "EventHub Portable (v2.6) — Quick Reference Handbook")
         self.resize(1240, 920)
 
         base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -451,14 +457,16 @@ class EventHubHandbookApp(QMainWindow):
         cur = self.stacked_widget.currentIndex()
         if cur < self.stacked_widget.count() - 1:
             self.stacked_widget.slide_in_idx(cur + 1)
-            self.lbl_page_info.setText(f"Page {cur + 2} of {self.stacked_widget.count()}")
+            self.lbl_page_info.setText(
+                f"Page {cur + 2} of {self.stacked_widget.count()}")
             self.update_nav_state(cur + 1)
 
     def prev_page(self):
         cur = self.stacked_widget.currentIndex()
         if cur > 0:
             self.stacked_widget.slide_in_idx(cur - 1)
-            self.lbl_page_info.setText(f"Page {cur} of {self.stacked_widget.count()}")
+            self.lbl_page_info.setText(
+                f"Page {cur} of {self.stacked_widget.count()}")
             self.update_nav_state(cur - 1)
 
     def update_nav_state(self, current_idx=0):
@@ -542,7 +550,8 @@ class EventHubHandbookApp(QMainWindow):
         h_title.setAlignment(Qt.AlignCenter)
         layout.addWidget(h_title)
 
-        h_sub = QLabel("Standard Operating Procedures for Dual-Engine Architecture & Gate Operations")
+        h_sub = QLabel(
+            "Standard Operating Procedures for Dual-Engine Architecture & Gate Operations")
         h_sub.setObjectName("headerSubtitle")
         h_sub.setAlignment(Qt.AlignCenter)
         layout.addWidget(h_sub)
@@ -574,10 +583,12 @@ class EventHubHandbookApp(QMainWindow):
         layout.addStretch()
 
     def build_page_2(self, layout):
-        self.add_section_header(layout, "[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)")
-        
+        self.add_section_header(
+            layout, "[2] DEVICE ROUTING & URL MATRIX (DUAL-ENGINE ARCHITECTURE)")
+
         table = QTableWidget(6, 4)
-        table.setHorizontalHeaderLabels(["DEVICE", "NETWORK", "TARGET URL (ENGINE)", "PURPOSE"])
+        table.setHorizontalHeaderLabels(
+            ["DEVICE", "NETWORK", "TARGET URL (ENGINE)", "PURPOSE"])
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
@@ -587,12 +598,18 @@ class EventHubHandbookApp(QMainWindow):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         matrix_data = [
-            ("Kiosk Laptops", "LAN", "http://<IP>:5000 (Waitress)", "Fast data entry (No SSL lag)"),
-            ("Mobile Scanners", "Wi-Fi", "https://<IP>:5001 (Cheroot)", "Unlocks iOS/Android cameras"),
-            ("Master Phone A", "USB Tether", "https://<IP>:5001 (Cheroot)", "Hardwired scanner; immune to lag"),
-            ("Gate Displays", "Wi-Fi/LAN", "https://<IP>:5001 (Cheroot)", "Instant GUI updates (Unbuffered)"),
-            ("Roving Staff", "4G/5G", "https://<tunnel>.trycloudflare", "Secure remote scanning"),
-            ("Background Sync", "USB/Wi-Fi", "(Runs Automatically)", "Cloudinary Photo API")
+            ("Kiosk Laptops", "LAN", "http://<IP>:5000 (Waitress)",
+             "Fast data entry (No SSL lag)"),
+            ("Mobile Scanners", "Wi-Fi", "https://<IP>:5001 (Cheroot)",
+             "Unlocks iOS/Android cameras"),
+            ("Master Phone A", "USB Tether", "https://<IP>:5001 (Cheroot)",
+             "Hardwired scanner; immune to lag"),
+            ("Gate Displays", "Wi-Fi/LAN", "https://<IP>:5001 (Cheroot)",
+             "Instant GUI updates (Unbuffered)"),
+            ("Roving Staff", "4G/5G", "https://<tunnel>.trycloudflare",
+             "Secure remote scanning"),
+            ("Background Sync", "USB/Wi-Fi",
+             "(Runs Automatically)", "Cloudinary Photo API")
         ]
         for row, row_data in enumerate(matrix_data):
             for col, text in enumerate(row_data):
@@ -601,7 +618,8 @@ class EventHubHandbookApp(QMainWindow):
         table.setFixedHeight(210)
         layout.addWidget(table)
 
-        self.add_section_header(layout, "[3] & [4] OFFLINE MODE & SYSTEM OPTIMIZATIONS")
+        self.add_section_header(
+            layout, "[3] & [4] OFFLINE MODE & SYSTEM OPTIMIZATIONS")
         self.add_sub_header(layout, "OFFLINE PROTOCOL (INTERNET GOES DOWN):")
         self.add_bullet_points(layout, [
             "DO NOT PANIC: Local Hotspot & LAN continue working normally.",
@@ -620,8 +638,9 @@ class EventHubHandbookApp(QMainWindow):
         layout.addStretch()
 
     def build_page_3(self, layout):
-        self.add_section_header(layout, "[5] TROUBLESHOOTING & EMERGENCY FIXES")
-        
+        self.add_section_header(
+            layout, "[5] TROUBLESHOOTING & EMERGENCY FIXES")
+
         self.add_sub_header(layout, "» FIX: DEVICES CAN'T LOAD THE HUB IP")
         self.add_bullet_points(layout, [
             "1. Check Laptop A's IP via 'ipconfig'.",
@@ -635,15 +654,20 @@ class EventHubHandbookApp(QMainWindow):
         ])
 
         self.add_sub_header(layout, "» FIX: NETWORK GLITCHY / DROPPING")
-        self.add_bullet_points(layout, ["Admin PowerShell Command (Run to force allow ports):"])
-        self.add_code_block(layout, 'New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001', min_lines=1)
+        self.add_bullet_points(
+            layout, ["Admin PowerShell Command (Run to force allow ports):"])
+        self.add_code_block(
+            layout, 'New-NetFirewallRule -DisplayName "EventHub Ports" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5000,5001', min_lines=1)
         self.add_bullet_points(layout, ["Admin CMD (Network Reset):"])
-        self.add_code_block(layout, "ipconfig /flushdns\nipconfig /release\nipconfig /renew\nnetsh winsock reset", min_lines=4)
+        self.add_code_block(
+            layout, "ipconfig /flushdns\nipconfig /release\nipconfig /renew\nnetsh winsock reset", min_lines=4)
 
         self.add_sub_header(layout, "» MANUAL LAN SETUP (FALLBACK)")
-        self.add_code_block(layout, "- Server IP: 192.168.10.1 (Subnet: 255.255.255.0)\n- Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)\n- Client URL: http://192.168.10.1:5000", min_lines=3)
+        self.add_code_block(
+            layout, "- Server IP: 192.168.10.1 (Subnet: 255.255.255.0)\n- Client IPs: 192.168.10.2+ (Subnet: 255.255.255.0)\n- Client URL: http://192.168.10.1:5000", min_lines=3)
 
-        self.add_section_header(layout, "[6] CERTIFICATE INSTALLATION (HTTPS WARNING FIX) - UPDATED ARCHITECTURE")
+        self.add_section_header(
+            layout, "[6] CERTIFICATE INSTALLATION (HTTPS WARNING FIX) - UPDATED ARCHITECTURE")
         self.add_sub_header(layout, "» WINDOWS PC INSTALLATION:")
         self.add_bullet_points(layout, [
             "Locate 'rootCA.pem' (found in config/certs) and rename to 'rootCA.crt'.",
@@ -665,20 +689,24 @@ class EventHubHandbookApp(QMainWindow):
         layout.addStretch()
 
     def build_page_4(self, layout):
-        self.add_section_header(layout, "[7] MYSQL DATABASE & NETWORK TUNING (LAN & PERFORMANCE)")
-        
+        self.add_section_header(
+            layout, "[7] MYSQL DATABASE & NETWORK TUNING (LAN & PERFORMANCE)")
+
         # 1. Network Binding
-        self.add_sub_header(layout, "» 1. ENABLE LAN / RJ45 / WI-FI ACCESS (my.ini REQUIRED)")
+        self.add_sub_header(
+            layout, "» 1. ENABLE LAN / RJ45 / WI-FI ACCESS (my.ini REQUIRED)")
         self.add_bullet_points(layout, [
             "CRITICAL: Network binding cannot be changed live. It MUST be done in the file.",
             "Open: C:\\ProgramData\\MySQL\\MySQL Server 8.4\\my.ini (Note: ProgramData is a hidden folder).",
             "Find the [mysqld] section and add/change this exact line (Use * to support IPv4 & IPv6 natively):"
         ])
         self.add_code_block(layout, "bind-address=*", min_lines=1)
-        self.add_bullet_points(layout, ["Save the file and restart the MySQL Service (Admin CMD: net stop MySQL84 && net start MySQL84)."])
+        self.add_bullet_points(layout, [
+                               "Save the file and restart the MySQL Service (Admin CMD: net stop MySQL84 && net start MySQL84)."])
 
         # 2. Remote User
-        self.add_sub_header(layout, "» 2. ADD REMOTE USER FOR LAN ACCESS (MySQL Shell)")
+        self.add_sub_header(
+            layout, "» 2. ADD REMOTE USER FOR LAN ACCESS (MySQL Shell)")
         self.add_bullet_points(layout, [
             "Open Command Prompt and log in: mysql -u root -p",
             "Run these exact commands to allow any laptop/PC on the network to connect:"
@@ -688,10 +716,12 @@ GRANT ALL PRIVILEGES ON *.* TO 'event_admin'@'%';
 FLUSH PRIVILEGES;
 EXIT;"""
         self.add_code_block(layout, remote_user_sql, min_lines=4)
-        self.add_bullet_points(layout, ["Other laptops can now connect using the Host Laptop's IP (e.g., 192.168.1.X) and these credentials."])
+        self.add_bullet_points(layout, [
+                               "Other laptops can now connect using the Host Laptop's IP (e.g., 192.168.1.X) and these credentials."])
 
         # 3. Method A
-        self.add_sub_header(layout, "» 3. PERFORMANCE TUNING: METHOD A - PERMANENT TEXT EDIT (my.ini)")
+        self.add_sub_header(
+            layout, "» 3. PERFORMANCE TUNING: METHOD A - PERMANENT TEXT EDIT (my.ini)")
         self.add_bullet_points(layout, [
             "Open my.ini and locate the [mysqld] section.",
             "Paste the complete Event Hub tuning block directly into the file:"
@@ -732,10 +762,12 @@ innodb_buffer_pool_size=1G
 innodb_buffer_pool_instances=1
 # ======================================"""
         self.add_code_block(layout, method_a_config, min_lines=28)
-        self.add_bullet_points(layout, ["Requires restarting the MySQL service (Admin CMD: net stop MySQL84 && net start MySQL84)."])
+        self.add_bullet_points(layout, [
+                               "Requires restarting the MySQL service (Admin CMD: net stop MySQL84 && net start MySQL84)."])
 
         # 4. Method B
-        self.add_sub_header(layout, "» 4. PERFORMANCE TUNING: METHOD B - LIVE SHELL (NO MY.INI EDITING)")
+        self.add_sub_header(
+            layout, "» 4. PERFORMANCE TUNING: METHOD B - LIVE SHELL (NO MY.INI EDITING)")
         self.add_bullet_points(layout, [
             "Use this to apply changes INSTANTLY without restarting the server.",
             "Using 'SET PERSIST' saves the changes for future reboots without touching my.ini.",
@@ -767,7 +799,8 @@ SET PERSIST long_query_time = 2;
 SET PERSIST character_set_server = 'utf8mb4';
 SET PERSIST collation_server = 'utf8mb4_unicode_ci';"""
         self.add_code_block(layout, persist_content, min_lines=24)
-        self.add_bullet_points(layout, ["Set Buffer Pool dynamically (values MUST be in exact bytes in the shell):"])
+        self.add_bullet_points(layout, [
+                               "Set Buffer Pool dynamically (values MUST be in exact bytes in the shell):"])
         ram_allocations = """[ 4 GB RAM PC  -> 1G  ] : SET PERSIST innodb_buffer_pool_size = 1073741824;
 [ 8 GB RAM PC  -> 4G  ] : SET PERSIST innodb_buffer_pool_size = 4294967296;
 [ 16 GB RAM PC -> 8G  ] : SET PERSIST innodb_buffer_pool_size = 8589934592;
@@ -777,14 +810,17 @@ SET PERSIST collation_server = 'utf8mb4_unicode_ci';"""
 
         # 5. Verification
         self.add_sub_header(layout, "» 5. VERIFY CHANGES (MySQL Shell)")
-        self.add_bullet_points(layout, ["To confirm LAN is open and RAM is allocated, open MySQL Shell and run:"])
-        self.add_code_block(layout, "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('bind_address', 'innodb_buffer_pool_size', 'max_connections');", min_lines=1)
+        self.add_bullet_points(
+            layout, ["To confirm LAN is open and RAM is allocated, open MySQL Shell and run:"])
+        self.add_code_block(
+            layout, "SHOW GLOBAL VARIABLES WHERE Variable_name IN ('bind_address', 'innodb_buffer_pool_size', 'max_connections');", min_lines=1)
         layout.addStretch()
 
     def build_page_5(self, layout):
         self.add_section_header(layout, "[8] EVENT DAY PRE-FLIGHT CHECKLIST")
 
-        self.status_label = QLabel("⚠️ SYSTEM STATUS: PENDING PRE-FLIGHT CHECKS")
+        self.status_label = QLabel(
+            "⚠️ SYSTEM STATUS: PENDING PRE-FLIGHT CHECKS")
         self.status_label.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self.status_label.setStyleSheet("color: #d29922; margin-bottom: 12px;")
         layout.addWidget(self.status_label)
@@ -811,17 +847,24 @@ SET PERSIST collation_server = 'utf8mb4_unicode_ci';"""
 
     def validate_checklist(self):
         if all(cb.isChecked() for cb in self.check_boxes):
-            self.status_label.setText("✅ ALL SYSTEMS READY: Operational status green for live event execution!")
-            self.status_label.setStyleSheet("color: #3fb950; margin-bottom: 12px;")
+            self.status_label.setText(
+                "✅ ALL SYSTEMS READY: Operational status green for live event execution!")
+            self.status_label.setStyleSheet(
+                "color: #3fb950; margin-bottom: 12px;")
         else:
-            self.status_label.setText("⚠️ SYSTEM STATUS: PENDING PRE-FLIGHT CHECKS")
-            self.status_label.setStyleSheet("color: #d29922; margin-bottom: 12px;")
+            self.status_label.setText(
+                "⚠️ SYSTEM STATUS: PENDING PRE-FLIGHT CHECKS")
+            self.status_label.setStyleSheet(
+                "color: #d29922; margin-bottom: 12px;")
+
 
 if __name__ == "__main__":
     if os.name == 'nt':
         try:
-            my_app_id = os.environ.get("EVENTHUB_TOOL_ID", "EventHub.Tool.handbook")
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
+            my_app_id = os.environ.get(
+                "EVENTHUB_TOOL_ID", "EventHub.Tool.handbook")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                my_app_id)
         except Exception:
             pass
 
