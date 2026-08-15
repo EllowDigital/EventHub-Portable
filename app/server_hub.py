@@ -1397,18 +1397,22 @@ class ServerHub(QMainWindow):
             QPushButton#btnStartEngine { background-color: #107C41; color: white; border: 1px solid #107C41; }
             QPushButton#btnStartEngine:hover { background-color: #0c5e31; }
             QPushButton#btnStartEngine:pressed { background-color: #084021; }
+            QPushButton#btnStartEngine:disabled { background-color: #0c5e31; color: #ffffff; border: 1px solid #0c5e31; font-weight: bold; }
             
             QPushButton#btnStopEngine { background-color: transparent; color: #F44747; border: 1px solid #F44747; }
             QPushButton#btnStopEngine:hover { background-color: rgba(244, 71, 71, 0.1); }
             QPushButton#btnStopEngine:pressed { background-color: rgba(244, 71, 71, 0.2); }
+            QPushButton#btnStopEngine:disabled { background-color: transparent; color: #555555; border: 1px solid #2A2A2C; }
             
             QPushButton#btnStartTunnel { background-color: #005A9E; color: white; border: 1px solid #005A9E; }
             QPushButton#btnStartTunnel:hover { background-color: #004578; }
             QPushButton#btnStartTunnel:pressed { background-color: #003358; }
+            QPushButton#btnStartTunnel:disabled { background-color: #004578; color: #ffffff; border: 1px solid #004578; font-weight: bold; }
             
             QPushButton#btnStopTunnel { background-color: transparent; color: #F44747; border: 1px solid #F44747; }
             QPushButton#btnStopTunnel:hover { background-color: rgba(244, 71, 71, 0.1); }
             QPushButton#btnStopTunnel:pressed { background-color: rgba(244, 71, 71, 0.2); }
+            QPushButton#btnStopTunnel:disabled { background-color: transparent; color: #555555; border: 1px solid #2A2A2C; }
             
             QPushButton#btnWhatsApp { background-color: #107C41; color: white; border: 1px solid #107C41; }
             QPushButton#btnWhatsApp:hover { background-color: #0c5e31; }
@@ -2435,6 +2439,7 @@ class ServerHub(QMainWindow):
 
     def start_flask(self):
         self.btn_start_flask.setEnabled(False)
+        self.btn_start_flask.setText("✅ ENGINE RUNNING")
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
         
         # ADDED: Clear shutdown flag so connections work correctly
@@ -2453,6 +2458,7 @@ class ServerHub(QMainWindow):
             self.https_thread = None
             stop_db_writers()
             self.btn_start_flask.setEnabled(True)
+            self.btn_start_flask.setText("▶ START ENGINE")
             QMessageBox.critical(self, "Failed", f"Engine failed:\n{e}")
             return
 
@@ -2468,7 +2474,9 @@ class ServerHub(QMainWindow):
         if self.btn_stop_cf.isEnabled(): self.stop_cf()
         self.btn_stop_flask.setEnabled(False)
         self.btn_start_flask.setEnabled(False)
+        self.btn_start_flask.setText("⏳ STOPPING...")
         self.btn_start_cf.setEnabled(False)
+        self.btn_start_cf.setText("▶ START TUNNEL")
         self.update_qr(self.lbl_flask_qr, "OFFLINE")
         self.lbl_flask_link.setText("Server Offline")
         self.lbl_flask_link.setStyleSheet("color:#858585; font-size:10px;")
@@ -2485,6 +2493,7 @@ class ServerHub(QMainWindow):
             if self.http_thread: self.http_thread.shutdown(); self.http_thread = None
             if self.https_thread: self.https_thread.shutdown(); self.https_thread = None
             self.gui_queue.put(lambda: self.btn_start_flask.setEnabled(True))
+            self.gui_queue.put(lambda: self.btn_start_flask.setText("▶ START ENGINE"))
             self.gui_queue.put(lambda: self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine completely stopped."))
             
         threading.Thread(target=_async_stop, daemon=True).start()
@@ -2504,6 +2513,7 @@ class ServerHub(QMainWindow):
         if not self.http_thread:
             return self._append_log('cf', "[ERROR] Start Local Engine FIRST!")
         self.btn_start_cf.setEnabled(False)
+        self.btn_start_cf.setText("⏳ TUNNEL CONNECTING...")
         self.btn_stop_cf.setEnabled(True)
         self._cf_connecting = True
         self._animate_cf_connecting()
@@ -2536,6 +2546,7 @@ class ServerHub(QMainWindow):
                                 with self.cf_lock: self.cloudflare_url = t_url
                                 self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
                                 self.gui_queue.put(lambda u=t_url: (self.lbl_cf_link.setText(u), self.lbl_cf_link.setStyleSheet("color:#569CD6; font-size:10px;")))
+                                self.gui_queue.put(lambda: self.btn_start_cf.setText("✅ TUNNEL ACTIVE"))
                                 self.gui_queue.put(self._mark_cf_live)
                                 self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
                             threading.Thread(target=finalize_tunnel, args=(tunnel_url,), daemon=True).start()
@@ -2557,6 +2568,7 @@ class ServerHub(QMainWindow):
         self.btn_stop_cf.setEnabled(False)
         self._cf_connecting = False  
         self.btn_start_cf.setEnabled(True if self.http_thread else False)
+        self.btn_start_cf.setText("▶ START TUNNEL")
         
         self.lbl_stat_cf.setText("● CF: OFF")
         self.lbl_stat_cf.setStyleSheet("color:#858585; font-weight:bold; font-size:11px; border:none;")
