@@ -357,7 +357,7 @@ class LauncherApp(QMainWindow):
         title_layout = QVBoxLayout()
         title_lbl = QLabel("EventHub Portable")
         title_lbl.setStyleSheet("font-size: 26px; font-weight: bold; color: #3498db;")
-        sub_lbl = QLabel("CENTRAL LAUNCHER • Engineered for Event Resilience • Powered by EllowDigital")
+        sub_lbl = QLabel("Central Launcher • Engineered for Event Resilience • Powered by EllowDigital")
         sub_lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #888;")
         title_layout.addWidget(title_lbl)
         title_layout.addWidget(sub_lbl)
