@@ -168,13 +168,14 @@ def inject_cloudflared_path():
 # TOOL REGISTRY
 # ==============================================================================
 TOOLS = [
-    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Central control server.", "bootstyle": "primary"},
-    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Live access monitor.", "bootstyle": "info"},
-    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "Walk-in registration desk.", "bootstyle": "success"},
-    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Database synchronization engine.", "bootstyle": "warning"},
-    {"key": "photos", "icon": "🖼️", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Offline photo cache.", "bootstyle": "secondary"},
-    {"key": "explorer", "icon": "🔍", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Profile search directory.", "bootstyle": "secondary"},
-    {"key": "handbook", "icon": "📖", "label": "Digital Handbook", "script": "handbook.py", "desc": "Troubleshooting reference guide.", "bootstyle": "primary"},
+    {"key": "hub", "icon": "🖥️", "label": "Command Center", "script": "server_hub.py", "desc": "Central event control and server management.", "bootstyle": "primary"},
+    {"key": "gate_display", "icon": "📺", "label": "Gate Display Terminal", "script": "check_in.py", "desc": "Live attendee check-in and access monitoring.", "bootstyle": "info"},
+    {"key": "kiosk", "icon": "📝", "label": "Registration Kiosk", "script": "register.py", "desc": "On-site attendee registration and check-in.", "bootstyle": "success"},
+    {"key": "sync", "icon": "🔄", "label": "Sync Manager", "script": "sync_manager.py", "desc": "Synchronizes attendee and event data across services.", "bootstyle": "warning"},
+    {"key": "photos", "icon": "📸", "label": "Photo Downloader", "script": "photo_down.py", "desc": "Downloads and manages attendee photos for offline use.", "bootstyle": "secondary"},
+    {"key": "explorer", "icon": "🔎", "label": "Attendee Explorer", "script": "explorer.py", "desc": "Search, view, and manage attendee profiles and records.", "bootstyle": "secondary"},
+    {"key": "handbook", "icon": "📖", "label": "Digital Handbook", "script": "handbook.py", "desc": "Event operations, setup, and troubleshooting guide.", "bootstyle": "primary"},
+    {"key": "stress_test", "icon": "⚡", "label": "Load & Stress Test", "script": "stress_test.py", "desc": "Tests system performance and stability under heavy load.", "bootstyle": "danger"},
 ]
 
 # ==============================================================================
