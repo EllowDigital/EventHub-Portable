@@ -207,7 +207,7 @@ class BannerLabel(QLabel):
 class LauncherApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EventHub Portable — Central Launcher (Administrator)")
+        self.setWindowTitle("EventHub Portable — Central Launcher")
         
         screen = QApplication.primaryScreen().geometry()
         sw, sh = screen.width(), screen.height()
@@ -357,7 +357,7 @@ class LauncherApp(QMainWindow):
         title_layout = QVBoxLayout()
         title_lbl = QLabel("EventHub Portable")
         title_lbl.setStyleSheet("font-size: 26px; font-weight: bold; color: #3498db;")
-        sub_lbl = QLabel("CENTRAL LAUNCHER • TDE UP 2026")
+        sub_lbl = QLabel("CENTRAL LAUNCHER • Engineered for Event Resilience • Powered by EllowDigital")
         sub_lbl.setStyleSheet("font-size: 10px; font-weight: bold; color: #888;")
         title_layout.addWidget(title_lbl)
         title_layout.addWidget(sub_lbl)

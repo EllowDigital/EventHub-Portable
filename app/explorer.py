@@ -186,7 +186,7 @@ class DatabaseConfigDialog(QDialog):
 class AttendeeExplorer(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 — Attendee Explorer")
+        self.setWindowTitle("EventHub Portable (v2.6) — Attendee Explorer (TDE UP 2026)")
         self.resize(1400, 900) # Increased default size for better 2K/4K scaling
         self.setMinimumSize(1150, 750)
         

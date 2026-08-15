@@ -312,7 +312,7 @@ class SpeedometerGauge(QWidget):
 class EnterpriseStressTestApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 - Enterprise Load Injector (PySide6)")
+        self.setWindowTitle("EventHub Portable (v2.6) — Stress / Load Tester")
         self.resize(1300, 850)
         self.setMinimumSize(1100, 700)
         

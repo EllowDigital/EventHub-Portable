@@ -248,7 +248,7 @@ class PhotoDownloadManager:
 class PhotoDownloaderGUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 — Offline Photo Engine")
+        self.setWindowTitle("EventHub Portable (v2.6) — Offline Photo Engine")
         self.resize(1000, 700)
         self.setMinimumSize(950, 650)
         
@@ -301,7 +301,7 @@ class PhotoDownloaderGUI(QMainWindow):
         t1 = QLabel("📸 Smart Photo Downloader & Syncer")
         t1.setFont(QFont("Segoe UI", 24, QFont.Bold))
         t1.setStyleSheet(f"color: {COLORS['PRIMARY']};")
-        t2 = QLabel("SAVES CLOUDINARY CREDITS BY AUTO-DETECTING LOCAL FILES")
+        t2 = QLabel("Engineered for Event Resilience • Powered by EllowDigital")
         t2.setFont(QFont("Segoe UI", 10, QFont.Bold))
         t2.setStyleSheet(f"color: {COLORS['SECONDARY']};")
         title_box.addWidget(t1)

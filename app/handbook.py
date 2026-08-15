@@ -371,7 +371,7 @@ class A4Page(QWidget):
 class EventHubHandbookApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Event Hub — Professional Quick Reference Handbook")
+        self.setWindowTitle("EventHub Portable (v2.6) — Quick Reference Handbook")
         self.resize(1240, 920)
 
         base_dir = os.path.dirname(os.path.abspath(__file__))

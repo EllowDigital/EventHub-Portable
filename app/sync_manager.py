@@ -1042,7 +1042,7 @@ class ConflictDetailDialog(QDialog):
 class SyncDashboard(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EventHub Portable — Ultra-Fast Sync Manager")
+        self.setWindowTitle("EventHub Portable (v2.6) — Sync Manager")
         self.resize(1400, 850)
         self.setMinimumSize(1200, 720)
         

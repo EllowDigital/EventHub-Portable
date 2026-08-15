@@ -257,7 +257,7 @@ class SettingsDialog(QDialog):
 class GateDisplay(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 — Gate Terminal")
+        self.setWindowTitle("EventHub Portable (v2.6) — Gate Terminal")
         self.resize(1500, 950) # Improved default scale for 2K/4K adaptation
         self.setMinimumSize(1280, 750)
         

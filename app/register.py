@@ -147,7 +147,7 @@ class OfflineKioskApp(QMainWindow):
         self.device_name = self.config["device_name"]
         self.device_id = self.config["device_id"]
         
-        self.setWindowTitle(f"TDE UP 2026 — {self.device_name}")
+        self.setWindowTitle(f"EventHub Portable (v2.6) — {self.device_name}")
         self.resize(950, 850)
         self.setMinimumSize(800, 700)
         

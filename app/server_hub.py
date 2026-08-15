@@ -1363,7 +1363,7 @@ class AnimatedMeter:
 class ServerHub(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("TDE UP 2026 — Event Hub V3.6 (Enterprise PySide6 Dashboard)")
+        self.setWindowTitle("EventHub Portable (v2.6) - Command Center")
         self.resize(1300, 780)
         self.setMinimumSize(960, 580)
         
@@ -2124,7 +2124,7 @@ class ServerHub(QMainWindow):
         
         h_left = QVBoxLayout()
         h_left.setSpacing(4)
-        lbl_h = QLabel("TDE UP 2026 — COMMAND CENTER")
+        lbl_h = QLabel("EventHub Portable — COMMAND CENTER")
         lbl_h.setStyleSheet("color: #4EC9B0; font-size: 18px; font-weight: bold;")
         h_left.addWidget(lbl_h)
         
