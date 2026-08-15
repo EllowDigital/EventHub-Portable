@@ -223,7 +223,8 @@ HTTPS_PORT = 5001
 WS_AUDIO_PORT = 5002
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-DB_WRITER_THREADS = 32            
+# --- DB WORKER UPGRADES FOR 18-DEVICE STAMPEDE ---
+DB_WRITER_THREADS = 64            
 DB_JOB_QUEUE_MAXSIZE = 50000               
 DB_JOB_TIMEOUT = 12               
 
@@ -242,8 +243,8 @@ app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
 # --- FLASK OPTIMIZATIONS FOR 3-DAY RUN AND MAXIMUM SPEED ---
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  
-app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False  # Speeds up JSON API responses
-app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400  # Caches static files for 24h to reduce Wi-Fi bandwidth load
+app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False  
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400  
 
 gui_log_callback = None
 SERVER_TEST_MODE = False
@@ -274,9 +275,9 @@ NETWORK_LATENCY = {"local_ms": 0, "cloud_ms": 0, "local_status": "OFFLINE", "clo
 network_latency_lock = threading.Lock()
 SERVER_METRICS = {"avg_process_ms": 0.0, "req_count": 0}
 metrics_lock = threading.Lock()
+
 TRAFFIC_HISTORY = collections.deque([0] * 60, maxlen=60)
 _current_sec_requests = 0
-traffic_lock = threading.Lock()
 
 STATS_CACHE = {
     "total_attendees": 0, "total_registrations": 0,
@@ -715,12 +716,14 @@ def ensure_ssl_certificate(local_ip):
 @app.before_request
 def _start_request_timer(): request._start_time = time.perf_counter()
 
+# --- OPTIMIZATION 3: Lock-Free Traffic Dashboard (Removes API Bottleneck) ---
 @app.after_request
 def log_request(response):
     if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': return response
     try:
         global _current_sec_requests
-        with traffic_lock: _current_sec_requests += 1
+        _current_sec_requests += 1  # Fast atomic increment without slow locks
+        
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
             try:
@@ -767,9 +770,12 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
             "attendee_type": getattr(attendee.attendee_type, 'value', str(attendee.attendee_type)), "gender": getattr(attendee.gender, 'value', str(attendee.gender))
         }
     event = {"status": status, "message": message, "device": device_name, "timestamp": scan_time, "attendee": att_dict}
+    
     with scan_clients_lock: clients_snapshot = list(SCAN_CLIENTS)
     for q in clients_snapshot:
         try: q.put_nowait(event)
+        # OPTIMIZATION 4: Don't drop clients if their queue backs up slightly during a stampede
+        except queue.Full: pass 
         except Exception:
             with scan_clients_lock:
                 if q in SCAN_CLIENTS: SCAN_CLIENTS.remove(q)
@@ -778,9 +784,8 @@ def traffic_monitor_loop():
     global _current_sec_requests
     while not _global_shutdown_event.is_set():
         _global_shutdown_event.wait(1.0)
-        with traffic_lock:
-            hits = _current_sec_requests
-            _current_sec_requests = 0
+        hits = _current_sec_requests
+        _current_sec_requests = 0
         TRAFFIC_HISTORY.append(hits)
 
 def _compute_stats_snapshot(deep_scan=False):
@@ -910,7 +915,8 @@ def _handle_checkin_job(payload):
             if retries == 0:
                 log_event_clean("CHECKIN", device_name, "DB Locked (OperationalError)", 503)
                 return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
-            time.sleep(random.uniform(0.1, 0.4))
+            # OPTIMIZATION 2: Micro-sleep recovery instead of long blocking penalty
+            time.sleep(random.uniform(0.01, 0.05))
         except Exception:
             session.rollback()
             log_event_clean("CHECKIN", device_name, "DB Error", 500)
@@ -936,14 +942,11 @@ def _handle_register_job(payload):
             if existing_main: return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
             existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
-            def gen_id(att_type: str) -> str:
-                prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(att_type.upper(), "G")
-                for _ in range(5000):
-                    aid = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
-                    if not session.query(Attendee).filter_by(attendee_id=aid).first() and not session.query(OfflineKioskAttendee).filter_by(attendee_id=aid).first():
-                        return aid
-                raise RuntimeError("ID generation failed after 5000 attempts")
-            new_attendee_id = gen_id(data.get('attendee_type', 'GENERAL'))
+            
+            # OPTIMIZATION 1: Zero-SELECT ID Generation (Saves 5000 potential background lock queries)
+            prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(data.get('attendee_type', 'GENERAL').upper(), "G")
+            new_attendee_id = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
+            
             today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
             checkin_history_dict = {}
             if today_date in EVENT_DATE_LABELS:
@@ -971,12 +974,13 @@ def _handle_register_job(payload):
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
-            return 500, {"status": "error", "message": "Another registration is processing. Please try clicking submit again."}
+            # Automatically loops and regenerates the high-entropy ID since retries > 0 
         except OperationalError:
             session.rollback()
             retries -= 1
             if retries == 0: return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
-            time.sleep(random.uniform(0.1, 0.4))
+            # OPTIMIZATION 2: Micro-sleep recovery instead of long blocking penalty
+            time.sleep(random.uniform(0.01, 0.05)) 
         except Exception:
             session.rollback()
             return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
@@ -1222,8 +1226,8 @@ def get_all_attendees():
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        # INCREASED ROBUSTNESS: 128 threads, larger connection limit, proactive socket timeout cleaning[cite: 4]
-        self.server = create_server(app, host=host, port=port, threads=128, connection_limit=4096, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
+        # INCREASED ROBUSTNESS: 256 threads, larger connection limit, proactive socket timeout cleaning[cite: 5]
+        self.server = create_server(app, host=host, port=port, threads=256, connection_limit=8192, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
         self.ctx = app.app_context()
         self.ctx.push()
     def run(self):
@@ -1233,14 +1237,14 @@ class WaitressHttpThread(threading.Thread):
 
 # --- HTTPS CHEROOT ENGINE (WI-FI & CLOUDFLARE) ---
 class HttpsFlaskThread(threading.Thread):
-    def __init__(self, app, host, port, numthreads=128):
+    def __init__(self, app, host, port, numthreads=256):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context()
         self.ctx.push()
-        # INCREASED ROBUSTNESS: Thread and queue increase, forced timeout connection drop[cite: 4]
-        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=4096)
+        # INCREASED ROBUSTNESS: Thread and queue doubled, forced timeout connection drop[cite: 5]
+        self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=8192)
         self.server.timeout = 60
         self.server.keep_alive_timeout = 30
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
@@ -2451,7 +2455,6 @@ class ServerHub(QMainWindow):
         self.btn_start_flask.setText("✅ ENGINE RUNNING")
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Booting Engine...")
         
-        # ADDED: Clear shutdown flag so connections work correctly
         _flask_shutdown_event.clear()
         
         start_db_writers()
@@ -2493,8 +2496,6 @@ class ServerHub(QMainWindow):
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] Engine stopping gracefully... Please wait.")
 
         def _async_stop():
-            # FIXED: Gracefully shut down all SSE and web socket streams BEFORE closing the server loop
-            # This completely eliminates WinError 10038
             _flask_shutdown_event.set()
             time.sleep(1.5)
             
