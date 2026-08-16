@@ -56,27 +56,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # --- Optional Imports ---
 try:
-    import sounddevice as sd
-    import soundfile as sf
-    import numpy as np
-    SOUNDDEVICE_AVAILABLE = True
-except ImportError:
-    SOUNDDEVICE_AVAILABLE = False
-
-try:
     from cheroot import wsgi as cheroot_wsgi
     from cheroot.ssl.builtin import BuiltinSSLAdapter
 except ImportError:
     cheroot_wsgi = None
     BuiltinSSLAdapter = None
-
-try:
-    import websockets
-    import av
-    from aiortc import RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCConfiguration, RTCIceServer
-    WEBRTC_SUPPORTED = True
-except ImportError:
-    WEBRTC_SUPPORTED = False
 
 try:
     from cryptography import x509
@@ -97,8 +81,6 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError, OperationalError
 
 app_window = None
-GLOBAL_GROUP_CALL_ACTIVE = False
-GROUP_CALL_WINDOW = None
 
 def global_exception_handler(exc_type, exc_value, exc_traceback):
     logging.error("Uncaught GUI Exception intercepted. App remains running.", exc_info=(exc_type, exc_value, exc_traceback))
@@ -127,13 +109,26 @@ def _configure_windows_platform():
 
 _configure_windows_platform()
 
+# --- MOVED UP: Needed for Telemetry initialization ---
+def get_local_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("10.255.255.255", 1))
+        ip, _ = s.getsockname()
+        s.close()
+        return ip
+    except Exception: 
+        try: return socket.gethostbyname(socket.gethostname())
+        except Exception: return "127.0.0.1"
+
 TELEMETRY_DATA = {
     "cpu": 0, "ram": 0, "net_type": "Disconnected",
     "dl_mbps": 0.0, "ul_mbps": 0.0, "total_mbps": 0.0,
     "iface_name": "N/A", "link_speed": 0,
     "total_dl_mb": 0.0, "total_ul_mb": 0.0,
     "cpu_ghz_used": 0.0, "cpu_ghz_total": 0.0,
-    "ram_gb_used": 0.0, "ram_gb_total": 0.0
+    "ram_gb_used": 0.0, "ram_gb_total": 0.0,
+    "local_ip": get_local_ip()  # Tracks live IP
 }
 _telemetry_lock = threading.Lock()
 
@@ -189,6 +184,9 @@ def _telemetry_worker():
             last_io, last_time = current_io, current_time
             if active_iface and active_iface in stats: link_speed = stats[active_iface].speed
             
+            # --- Dynamic IP Resolution in background ---
+            current_ip = get_local_ip()
+
             with _telemetry_lock:
                 TELEMETRY_DATA.update({
                     "cpu": cpu, "ram": ram, "net_type": iface_type,
@@ -196,7 +194,8 @@ def _telemetry_worker():
                     "iface_name": active_iface or "N/A", "link_speed": link_speed,
                     "total_dl_mb": dl_mb, "total_ul_mb": ul_mb,
                     "cpu_ghz_used": cpu_ghz_used, "cpu_ghz_total": cpu_ghz_total,
-                    "ram_gb_used": ram_gb_used, "ram_gb_total": ram_gb_total
+                    "ram_gb_used": ram_gb_used, "ram_gb_total": ram_gb_total,
+                    "local_ip": current_ip
                 })
         except Exception as e:
             logging.debug(f"Telemetry Worker Error: {e}")
@@ -220,10 +219,8 @@ os.makedirs(CONFIG_DIR, exist_ok=True)
 
 HTTP_PORT = 5000 
 HTTPS_PORT = 5001
-WS_AUDIO_PORT = 5002
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-# --- DB WORKER UPGRADES FOR 18-DEVICE STAMPEDE ---
 DB_WRITER_THREADS = 64            
 DB_JOB_QUEUE_MAXSIZE = 50000               
 DB_JOB_TIMEOUT = 12               
@@ -241,7 +238,6 @@ template_dir = os.path.join(BASE_DIR, 'templates')
 static_dir = os.path.join(BASE_DIR, 'static')
 app = Flask(__name__, template_folder=template_dir, static_folder=static_dir)
 
-# --- FLASK OPTIMIZATIONS FOR 3-DAY RUN AND MAXIMUM SPEED ---
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  
 app.config['JSONIFY_PRETTYPRINT_REGULAR'] = False  
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 86400  
@@ -286,315 +282,6 @@ STATS_CACHE = {
     "last_refreshed": 0.0, "last_error": None,
 }
 stats_lock = threading.Lock()
-
-CONNECTED_WS = {}
-ACTIVE_CALLS_DATA = {}
-_ws_loop = None
-
-GLOBAL_AUDIO_MIXER = {}
-MIXER_LOCK = threading.Lock()
-GLOBAL_MIC_SUBSCRIBERS = set()
-AUDIO_WATCHDOG_INTERVAL_SEC = 5
-
-class GlobalAudioEngine:
-    def __init__(self):
-        self.in_stream = None
-        self.out_stream = None
-        self.in_channels = 1
-        self.out_channels = 1
-        self.in_error = None
-        self.out_error = None
-        self.in_device_name = "default"
-        self.out_device_name = "default"
-
-        if not SOUNDDEVICE_AVAILABLE:
-            self.in_error = self.out_error = "'sounddevice' package not installed"
-            logging.error("[AUDIO] 'sounddevice' not installed - voice call audio will not work at all.")
-            return
-
-        try: logging.info(f"[AUDIO] sounddevice sees these devices:\n{sd.query_devices()}")
-        except Exception as e: logging.error(f"[AUDIO] Could not enumerate audio devices: {e}")
-
-        self._open_input()
-        self._open_output()
-        threading.Thread(target=self._watchdog_loop, daemon=True, name="AudioWatchdog").start()
-
-    def _open_input(self):
-        try:
-            in_info = sd.query_devices(sd.default.device[0], 'input')
-            self.in_channels = min(2, in_info['max_input_channels']) or 1
-            self.in_device_name = in_info.get('name', 'default')
-        except Exception as e: logging.warning(f"[AUDIO] Could not query default input device info: {e}")
-        try:
-            self.in_stream = sd.RawInputStream(samplerate=48000, channels=self.in_channels, dtype='int16', blocksize=960, callback=self.in_callback)
-            self.in_stream.start()
-            self.in_error = None
-            logging.info(f"[AUDIO] Mic input OPEN on '{self.in_device_name}' ({self.in_channels}ch).")
-        except Exception as e:
-            self.in_stream = None
-            self.in_error = str(e)
-            logging.error(f"[AUDIO] FAILED to open mic input ('{self.in_device_name}'): {e}.")
-
-    def _open_output(self):
-        try:
-            out_info = sd.query_devices(sd.default.device[1], 'output')
-            self.out_channels = min(2, out_info['max_output_channels']) or 1
-            self.out_device_name = out_info.get('name', 'default')
-        except Exception as e: logging.warning(f"[AUDIO] Could not query default output device info: {e}")
-        try:
-            self.out_stream = sd.RawOutputStream(samplerate=48000, channels=self.out_channels, dtype='int16', blocksize=960, callback=self.out_callback)
-            self.out_stream.start()
-            self.out_error = None
-            logging.info(f"[AUDIO] Speaker output OPEN on '{self.out_device_name}' ({self.out_channels}ch).")
-        except Exception as e:
-            self.out_stream = None
-            self.out_error = str(e)
-            logging.error(f"[AUDIO] FAILED to open speaker output ('{self.out_device_name}'): {e}.")
-
-    def _watchdog_loop(self):
-        while not _global_shutdown_event.is_set():
-            time.sleep(AUDIO_WATCHDOG_INTERVAL_SEC)
-            try:
-                if self.in_stream is None: self._open_input()
-                elif not self.in_stream.active:
-                    self.in_stream = None; self._open_input()
-            except Exception as e: logging.error(f"[AUDIO] Watchdog input check failed: {e}")
-            try:
-                if self.out_stream is None: self._open_output()
-                elif not self.out_stream.active:
-                    self.out_stream = None; self._open_output()
-            except Exception as e: logging.error(f"[AUDIO] Watchdog output check failed: {e}")
-
-    def status_text(self):
-        if not SOUNDDEVICE_AVAILABLE: return ("● MIC: NOT INSTALLED", "secondary")
-        if self.out_stream and self.in_stream: return ("● MIC: LIVE", "success")
-        if self.out_stream and not self.in_stream: return ("● MIC: OFFLINE", "warning")
-        if self.in_stream and not self.out_stream: return ("● SPK: OFFLINE", "danger")
-        return ("● VOICE: OFFLINE", "danger")
-
-    def in_callback(self, indata, frames, time_info, status):
-        try:
-            if self.in_channels == 2:
-                arr = np.frombuffer(indata, dtype=np.int16)[0::2]
-                data = arr.tobytes()
-            else: data = bytes(indata)
-            for sub in list(GLOBAL_MIC_SUBSCRIBERS): sub.add_data(data)
-        except Exception as e: logging.error(f"[AUDIO] in_callback error: {e}")
-
-    def out_callback(self, outdata, frames, time_info, status):
-        try:
-            needed_bytes = frames * 2
-            mixed = np.zeros(frames, dtype=np.int32)
-            has_audio = False
-            with MIXER_LOCK:
-                for dev_id, buf in list(GLOBAL_AUDIO_MIXER.items()):
-                    if len(buf) >= needed_bytes:
-                        chunk = bytes(buf[:needed_bytes])
-                        del buf[:needed_bytes]
-                        mixed += np.frombuffer(chunk, dtype=np.int16)
-                        has_audio = True
-            mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
-            if self.out_channels == 2:
-                stereo = np.empty((frames, 2), dtype=np.int16)
-                stereo[:, 0] = mixed
-                stereo[:, 1] = mixed
-                outdata[:] = stereo.tobytes()
-            else: outdata[:] = mixed.tobytes()
-        except Exception as e:
-            logging.error(f"[AUDIO] out_callback error: {e}")
-            outdata[:] = b'\x00' * (frames * 2 * self.out_channels)
-
-global_audio = GlobalAudioEngine()
-
-class WebRTCMicTrack(MediaStreamTrack):
-    kind = "audio"
-    def __init__(self):
-        super().__init__()
-        self.q = collections.deque()
-        self.loop = asyncio.get_event_loop()
-        self.event = asyncio.Event()
-        GLOBAL_MIC_SUBSCRIBERS.add(self)
-        self.pts = 0
-
-    def stop(self):
-        if self in GLOBAL_MIC_SUBSCRIBERS: GLOBAL_MIC_SUBSCRIBERS.remove(self)
-        super().stop()
-
-    def add_data(self, data):
-        if len(self.q) < 30:
-            self.q.append(data)
-            self.loop.call_soon_threadsafe(self.event.set)
-
-    async def recv(self):
-        if not global_audio.in_stream:
-            await asyncio.sleep(0.02)
-            data = b'\x00' * 1920
-        else:
-            try:
-                if not self.q:
-                    await asyncio.wait_for(self.event.wait(), timeout=0.02)
-                    self.event.clear()
-            except asyncio.TimeoutError: pass
-            if self.q: data = self.q.popleft()
-            else: data = b'\x00' * 1920
-
-        frame = av.AudioFrame(format='s16', layout='mono', samples=960)
-        frame.sample_rate = 48000
-        frame.planes[0].update(data)
-        frame.pts = self.pts
-        frame.time_base = fractions.Fraction(1, 48000)
-        self.pts += 960
-        return frame
-
-async def cleanup_call(device_id):
-    if device_id in ACTIVE_CALLS_DATA:
-        cdata = ACTIVE_CALLS_DATA.pop(device_id)
-        pc = cdata.get('pc')
-        mic_track = cdata.get('mic_track')
-        try:
-            if pc: await pc.close()
-            if mic_track: mic_track.stop()
-        except Exception as e: logging.error(f"[VOICE] Error tearing down call for {device_id}: {e}")
-            
-    with MIXER_LOCK:
-        if device_id in GLOBAL_AUDIO_MIXER: del GLOBAL_AUDIO_MIXER[device_id]
-            
-    global app_window, GLOBAL_GROUP_CALL_ACTIVE
-    if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
-        try: app_window.gui_queue.put_nowait(lambda: app_window.close_call_ui(device_id))
-        except queue.Full: pass
-
-async def signaling_handler(websocket, path=None):
-    global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW
-    device_id = "Unknown"
-    try:
-        if path is None:
-            try: path = websocket.request.path
-            except AttributeError: path = ""
-                
-        query = path.split("?device_id=")
-        if len(query) > 1: device_id = query[1]
-        else: device_id = "Unknown"
-            
-        CONNECTED_WS[device_id] = websocket
-        logging.info(f"[VOICE] Device connected to voice signaling: {device_id}")
-        
-        if GLOBAL_GROUP_CALL_ACTIVE:
-            try: await websocket.send(json.dumps({"type": "incoming_call"}))
-            except Exception as e: logging.error(f"[VOICE] Could not send incoming_call ping to {device_id}: {e}")
-        
-        async for message in websocket:
-            msg_type = None
-            try:
-                data = json.loads(message)
-                msg_type = data.get("type")
-                
-                if msg_type == "offer":
-                    if device_id not in ACTIVE_CALLS_DATA:
-                        config = RTCConfiguration(iceServers=[RTCIceServer(urls=["stun:stun.l.google.com:19302"])])
-                        pc = RTCPeerConnection(configuration=config)
-                        mic_track = None
-                        
-                        if SOUNDDEVICE_AVAILABLE:
-                            try:
-                                mic_track = WebRTCMicTrack()
-                                pc.addTrack(mic_track)
-                            except Exception as e: logging.error(f"[VOICE] Could not create/attach mic track for {device_id}: {e}")
-
-                        resampler = av.AudioResampler(format='s16', layout='mono', rate=48000)
-
-                        @pc.on("track")
-                        def on_track(track):
-                            if track.kind == "audio":
-                                async def process_incoming_audio():
-                                    global app_window, GLOBAL_GROUP_CALL_ACTIVE
-                                    with MIXER_LOCK:
-                                        if device_id not in GLOBAL_AUDIO_MIXER: GLOBAL_AUDIO_MIXER[device_id] = bytearray()
-                                    try:
-                                        while True:
-                                            try:
-                                                frame = await track.recv()
-                                                frames = resampler.resample(frame)
-                                                for f in frames:
-                                                    data_bytes = f.planes[0].to_bytes()
-                                                    with MIXER_LOCK:
-                                                        if device_id in GLOBAL_AUDIO_MIXER:
-                                                            GLOBAL_AUDIO_MIXER[device_id].extend(data_bytes)
-                                                            if len(GLOBAL_AUDIO_MIXER[device_id]) > 48000:
-                                                                del GLOBAL_AUDIO_MIXER[device_id][:-48000]
-                                                    samples = np.frombuffer(data_bytes, dtype=np.int16)
-                                                    try:
-                                                        rms = np.sqrt(np.mean(samples.astype(np.float32)**2))
-                                                        vol_percent = 0 if rms < 150 else min(100, int((rms / 4000.0) * 100))
-                                                        if app_window:
-                                                            try:
-                                                                if GLOBAL_GROUP_CALL_ACTIVE: app_window.gui_queue.put_nowait(lambda v=vol_percent: app_window.update_group_call_meter(v))
-                                                                else: app_window.gui_queue.put_nowait(lambda v=vol_percent, d=device_id: app_window.update_call_meter(d, v))
-                                                            except queue.Full: pass
-                                                    except Exception: pass
-                                            except av.AVError as e: logging.warning(f"[VOICE] Audio decode hiccup from {device_id}: {e}")
-                                            except asyncio.CancelledError: break
-                                            except Exception as e:
-                                                logging.error(f"[VOICE] Error reading incoming audio frame from {device_id}: {e}")
-                                                await asyncio.sleep(0.1)
-                                    except Exception as e: logging.error(f"[VOICE] process_incoming_audio fatal error for {device_id}: {e}")
-                                asyncio.create_task(process_incoming_audio())
-                            
-                        ACTIVE_CALLS_DATA[device_id] = {'pc': pc, 'mic_track': mic_track}
-                        
-                        global app_window
-                        if app_window and not GLOBAL_GROUP_CALL_ACTIVE:
-                            try: app_window.gui_queue.put_nowait(lambda: app_window.show_active_call_ui(device_id))
-                            except queue.Full: pass
-                        
-                        @pc.on("connectionstatechange")
-                        async def on_connectionstatechange():
-                            if pc.connectionState in ["failed", "closed"]: await cleanup_call(device_id)
-
-                    pc = ACTIVE_CALLS_DATA[device_id]['pc']
-                    offer = RTCSessionDescription(sdp=data["sdp"], type=data["type"])
-                    await pc.setRemoteDescription(offer)
-                    answer = await pc.createAnswer()
-                    await pc.setLocalDescription(answer)
-                    await websocket.send(json.dumps({"type": "answer", "sdp": pc.localDescription.sdp}))
-                    
-                    if GLOBAL_GROUP_CALL_ACTIVE and GROUP_CALL_WINDOW:
-                        await websocket.send(json.dumps({"type": "server_muted", "muted": GROUP_CALL_WINDOW['mic_muted']}))
-                        await websocket.send(json.dumps({"type": "client_muted", "muted": GROUP_CALL_WINDOW['spk_muted']}))
-                    
-                elif msg_type == "candidate": pass 
-                elif msg_type == "call_ended": await cleanup_call(device_id)
-                        
-            except Exception as e: logging.error(f"[VOICE] Error handling '{msg_type}' message from {device_id}: {e}")
-    except Exception as e: logging.error(f"[VOICE] signaling_handler connection error for {device_id}: {e}")
-    finally:
-        if device_id in CONNECTED_WS: del CONNECTED_WS[device_id]
-        await cleanup_call(device_id)
-
-async def _run_webrtc_server():
-    try:
-        cert_path = os.path.join(CERT_DIR, 'hub_cert.pem')
-        key_path = os.path.join(CERT_DIR, 'hub_key.pem')
-        ssl_context = None
-        if os.path.exists(cert_path) and os.path.exists(key_path):
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ssl_context.load_cert_chain(certfile=cert_path, keyfile=key_path)
-
-        logging.info(f"[VOICE] Voice signaling server listening on 0.0.0.0:{WS_AUDIO_PORT} (ssl={'on' if ssl_context else 'off'})")
-        async with websockets.serve(signaling_handler, "0.0.0.0", WS_AUDIO_PORT, ssl=ssl_context):
-            await asyncio.Future()
-    except Exception as e: logging.error(f"[VOICE] Voice signaling server FAILED to start: {e}.")
-
-def start_webrtc_server():
-    global _ws_loop
-    if not WEBRTC_SUPPORTED: return
-    try:
-        _ws_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(_ws_loop)
-        _ws_loop.run_until_complete(_run_webrtc_server())
-    except Exception as e: logging.error(f"[VOICE] Fatal error in voice server event loop: {e}")
-
-threading.Thread(target=start_webrtc_server, daemon=True).start()
 
 def get_cached_sessions():
     global DB_SESSIONS_CACHE, _db_cache_last_failure
@@ -716,13 +403,12 @@ def ensure_ssl_certificate(local_ip):
 @app.before_request
 def _start_request_timer(): request._start_time = time.perf_counter()
 
-# --- OPTIMIZATION 3: Lock-Free Traffic Dashboard (Removes API Bottleneck) ---
 @app.after_request
 def log_request(response):
     if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': return response
     try:
         global _current_sec_requests
-        _current_sec_requests += 1  # Fast atomic increment without slow locks
+        _current_sec_requests += 1  
         
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
@@ -774,7 +460,6 @@ def broadcast_scan(attendee, status, message, device_name, scan_time):
     with scan_clients_lock: clients_snapshot = list(SCAN_CLIENTS)
     for q in clients_snapshot:
         try: q.put_nowait(event)
-        # OPTIMIZATION 4: Don't drop clients if their queue backs up slightly during a stampede
         except queue.Full: pass 
         except Exception:
             with scan_clients_lock:
@@ -915,7 +600,6 @@ def _handle_checkin_job(payload):
             if retries == 0:
                 log_event_clean("CHECKIN", device_name, "DB Locked (OperationalError)", 503)
                 return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
-            # OPTIMIZATION 2: Micro-sleep recovery instead of long blocking penalty
             time.sleep(random.uniform(0.01, 0.05))
         except Exception:
             session.rollback()
@@ -943,7 +627,6 @@ def _handle_register_job(payload):
             existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
             
-            # OPTIMIZATION 1: Zero-SELECT ID Generation (Saves 5000 potential background lock queries)
             prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(data.get('attendee_type', 'GENERAL').upper(), "G")
             new_attendee_id = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
             
@@ -974,12 +657,10 @@ def _handle_register_job(payload):
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
-            # Automatically loops and regenerates the high-entropy ID since retries > 0 
         except OperationalError:
             session.rollback()
             retries -= 1
             if retries == 0: return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
-            # OPTIMIZATION 2: Micro-sleep recovery instead of long blocking penalty
             time.sleep(random.uniform(0.01, 0.05)) 
         except Exception:
             session.rollback()
@@ -1044,7 +725,6 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
-# Healthcheck must accept GET for system pinger to work properly
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     if request.method == 'GET':
@@ -1110,9 +790,6 @@ def get_network_data():
         global_stats = {"total_scans": STATS_CACHE["total_scans"], "total_registrations": STATS_CACHE["total_registrations"], "today_scans": STATS_CACHE["today_scans"]}
     return jsonify({"active_devices": active_devices, "global_stats": global_stats}), 200
 
-# ==============================================================================
-# FIXED: SSE Stream correctly respects Flask Shutdown Event to prevent WinError 10038
-# ==============================================================================
 @app.route('/api/stream-scans')
 def stream_scans():
     def event_stream():
@@ -1121,7 +798,6 @@ def stream_scans():
         try:
             while not _flask_shutdown_event.is_set():
                 try: 
-                    # Decreased timeout allows it to check the shutdown flag frequently
                     yield f"data: {json.dumps(q.get(timeout=1))}\n\n"
                 except queue.Empty: 
                     yield ": heartbeat\n\n"
@@ -1222,11 +898,9 @@ def get_all_attendees():
         try: session.close()
         except Exception: pass
 
-# --- HTTP WAITRESS ENGINE (LAN REGISTRATIONS) ---
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        # INCREASED ROBUSTNESS: 256 threads, larger connection limit, proactive socket timeout cleaning[cite: 5]
         self.server = create_server(app, host=host, port=port, threads=256, connection_limit=8192, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
         self.ctx = app.app_context()
         self.ctx.push()
@@ -1235,7 +909,6 @@ class WaitressHttpThread(threading.Thread):
         except Exception: pass
     def shutdown(self): self.server.close()
 
-# --- HTTPS CHEROOT ENGINE (WI-FI & CLOUDFLARE) ---
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=256):
         super().__init__(daemon=True)  
@@ -1243,7 +916,6 @@ class HttpsFlaskThread(threading.Thread):
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
         self.ctx = app.app_context()
         self.ctx.push()
-        # INCREASED ROBUSTNESS: Thread and queue doubled, forced timeout connection drop[cite: 5]
         self.server = cheroot_wsgi.Server(bind_addr=(host, port), wsgi_app=app, numthreads=numthreads, request_queue_size=8192)
         self.server.timeout = 60
         self.server.keep_alive_timeout = 30
@@ -1253,25 +925,7 @@ class HttpsFlaskThread(threading.Thread):
         except Exception: pass
     def shutdown(self): self.server.stop()
 
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("10.255.255.255", 1))
-        ip, _ = s.getsockname()
-        s.close()
-        return ip
-    except Exception: 
-        try: return socket.gethostbyname(socket.gethostname())
-        except Exception: return "127.0.0.1"
-
-
-# --- ADVANCED DYNAMIC SPEEDOMETER GAUGE WIDGET ---
 class SpeedometerGauge(QWidget):
-    """
-    High-DPI Speedometer. Features a dotted background track, 
-    a solid arc that changes color automatically based on load percentage,
-    and a dynamic subtext for explicitly showing GHz, GB, MB/s or ms.
-    """
     def __init__(self, subtext="CPU", unit="%", max_val=100, good_is_high=False, parent=None):
         super().__init__(parent)
         self.subtext = subtext
@@ -1507,7 +1161,6 @@ class ServerHub(QMainWindow):
         self.gui_queue = queue.Queue(maxsize=1000)
         self._meter_cache = {}
         self._context_device_id = None
-        self.active_call_windows = {}
 
         global gui_log_callback
         global app_window
@@ -1547,206 +1200,6 @@ class ServerHub(QMainWindow):
         threading.Thread(target=self.network_ping_daemon, daemon=True).start()
         threading.Thread(target=stats_refresher_loop, daemon=True).start()
         threading.Thread(target=traffic_monitor_loop, daemon=True).start()
-
-    def _prompt_group_call(self):
-        global GLOBAL_GROUP_CALL_ACTIVE, _ws_loop
-        if not WEBRTC_SUPPORTED:
-            QMessageBox.critical(self, "Error", "Missing audio libraries. Please pip install aiortc sounddevice")
-            return
-            
-        if GLOBAL_GROUP_CALL_ACTIVE:
-            QMessageBox.warning(self, "Warning", "A Group Call is already active.")
-            return
-            
-        GLOBAL_GROUP_CALL_ACTIVE = True
-        self.show_group_call_ui()
-        
-        if _ws_loop:
-            for d_id, ws in list(CONNECTED_WS.items()):
-                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "incoming_call"})), _ws_loop)
-        self._append_log('network', "[VOICE] Initiated Group Call to all connected devices.")
-
-    def show_group_call_ui(self):
-        global GROUP_CALL_WINDOW
-        if GROUP_CALL_WINDOW is not None: return
-
-        win = QDialog(self)
-        win.setWindowTitle("Active Group Call")
-        win.setFixedSize(380, 300)
-        win.setWindowFlags(win.windowFlags() | Qt.WindowStaysOnTopHint)
-        
-        layout = QVBoxLayout(win)
-        lbl_ring = QLabel("📢 Group Call Active")
-        lbl_ring.setStyleSheet("color: #4EC9B0; font-size: 15px; font-weight:bold;")
-        layout.addWidget(lbl_ring, alignment=Qt.AlignCenter)
-        
-        lbl_sub = QLabel("All connected devices are ringing/joined.")
-        layout.addWidget(lbl_sub, alignment=Qt.AlignCenter)
-        
-        if not SOUNDDEVICE_AVAILABLE:
-            lbl_err = QLabel("⚠️ 'sounddevice' missing. PC Speakers Disabled.")
-            lbl_err.setStyleSheet("color: #D7BA7D;")
-            layout.addWidget(lbl_err, alignment=Qt.AlignCenter)
-            
-        layout.addWidget(QLabel("Highest Incoming Audio Level:"))
-        meter = QProgressBar()
-        meter.setMaximum(100)
-        meter.setValue(0)
-        layout.addWidget(meter)
-        
-        btn_frame = QHBoxLayout()
-        btn_mic = QPushButton("Mute My Mic (All)")
-        btn_spk = QPushButton("Mute Speakers (All)")
-        btn_frame.addWidget(btn_mic)
-        btn_frame.addWidget(btn_spk)
-        layout.addLayout(btn_frame)
-        
-        btn_end = QPushButton("❌ End Group Call")
-        btn_end.setStyleSheet("background-color: #F44747; color: white;")
-        btn_end.clicked.connect(self.end_group_call_ui)
-        layout.addWidget(btn_end)
-        
-        GROUP_CALL_WINDOW = {'win': win, 'meter': meter, 'mic_muted': False, 'spk_muted': False}
-        btn_mic.clicked.connect(lambda: self.toggle_group_mic(btn_mic))
-        btn_spk.clicked.connect(lambda: self.toggle_group_speaker(btn_spk))
-        
-        win.finished.connect(self.end_group_call_ui)
-        win.show()
-
-    def update_group_call_meter(self, volume):
-        global GROUP_CALL_WINDOW
-        if GROUP_CALL_WINDOW and GROUP_CALL_WINDOW['win'].isVisible():
-            meter = GROUP_CALL_WINDOW['meter']
-            curr = meter.value()
-            val = volume if volume > curr else curr - ((curr - volume) * 0.15)
-            meter.setValue(int(val))
-            c = "#F44747" if val > 75 else ("#D7BA7D" if val > 45 else "#4EC9B0")
-            meter.setStyleSheet(f"QProgressBar::chunk {{ background-color: {c}; }}")
-
-    def toggle_group_mic(self, btn):
-        global GROUP_CALL_WINDOW, _ws_loop
-        if GROUP_CALL_WINDOW:
-            GROUP_CALL_WINDOW['mic_muted'] = not GROUP_CALL_WINDOW['mic_muted']
-            muted = GROUP_CALL_WINDOW['mic_muted']
-            btn.setText("Unmute My Mic (All)" if muted else "Mute My Mic (All)")
-            if _ws_loop:
-                for ws in list(CONNECTED_WS.values()): asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": muted})), _ws_loop)
-
-    def toggle_group_speaker(self, btn):
-        global GROUP_CALL_WINDOW, _ws_loop
-        if GROUP_CALL_WINDOW:
-            GROUP_CALL_WINDOW['spk_muted'] = not GROUP_CALL_WINDOW['spk_muted']
-            muted = GROUP_CALL_WINDOW['spk_muted']
-            btn.setText("Unmute Speakers (All)" if muted else "Mute Speakers (All)")
-            if _ws_loop:
-                for ws in list(CONNECTED_WS.values()): asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": muted})), _ws_loop)
-
-    def end_group_call_ui(self):
-        global GLOBAL_GROUP_CALL_ACTIVE, GROUP_CALL_WINDOW, _ws_loop
-        GLOBAL_GROUP_CALL_ACTIVE = False
-        
-        if _ws_loop:
-            for d_id, ws in list(CONNECTED_WS.items()):
-                asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "call_ended"})), _ws_loop)
-                asyncio.run_coroutine_threadsafe(cleanup_call(d_id), _ws_loop)
-        
-        if GROUP_CALL_WINDOW:
-            try: GROUP_CALL_WINDOW['win'].close()
-            except: pass
-            GROUP_CALL_WINDOW = None
-        self._append_log('network', "[VOICE] Group Call ended.")
-
-    def show_active_call_ui(self, device_id):
-        if device_id in self.active_call_windows: return
-        
-        d_name = "Unknown Device"
-        with device_lock:
-            if device_id in ACTIVE_DEVICES: d_name = ACTIVE_DEVICES[device_id]['name']
-
-        win = QDialog(self)
-        win.setWindowTitle("Active Voice Call")
-        win.setFixedSize(360, 280)
-        win.setWindowFlags(win.windowFlags() | Qt.WindowStaysOnTopHint)
-        
-        layout = QVBoxLayout(win)
-        lbl_ring = QLabel("🎙️ Call Accepted & Active")
-        lbl_ring.setStyleSheet("color: #4EC9B0; font-size: 15px; font-weight:bold;")
-        layout.addWidget(lbl_ring, alignment=Qt.AlignCenter)
-        
-        layout.addWidget(QLabel(f"Connected to: {d_name}"), alignment=Qt.AlignCenter)
-        if not SOUNDDEVICE_AVAILABLE:
-            lbl_err = QLabel("⚠️ 'sounddevice' missing. PC Speakers Disabled.")
-            lbl_err.setStyleSheet("color: #D7BA7D;")
-            layout.addWidget(lbl_err, alignment=Qt.AlignCenter)
-            
-        layout.addWidget(QLabel("Incoming Audio Level:"))
-        meter = QProgressBar()
-        meter.setMaximum(100)
-        meter.setValue(0)
-        layout.addWidget(meter)
-        
-        btn_frame = QHBoxLayout()
-        btn_mic = QPushButton("Mute My Mic")
-        btn_spk = QPushButton("Mute Speaker")
-        btn_frame.addWidget(btn_mic)
-        btn_frame.addWidget(btn_spk)
-        layout.addLayout(btn_frame)
-        
-        btn_end = QPushButton("❌ End Call")
-        btn_end.setStyleSheet("background-color: #F44747; color: white;")
-        btn_end.clicked.connect(lambda: self.end_call_ui(device_id))
-        layout.addWidget(btn_end)
-        
-        self.active_call_windows[device_id] = {'win': win, 'meter': meter, 'mic_muted': False, 'spk_muted': False}
-        
-        btn_mic.clicked.connect(lambda: self.toggle_mic(device_id, btn_mic))
-        btn_spk.clicked.connect(lambda: self.toggle_speaker(device_id, btn_spk))
-        win.finished.connect(lambda: self.end_call_ui(device_id))
-        win.show()
-        self._append_log('network', f"[VOICE] Call established with {d_name}.")
-
-    def update_call_meter(self, device_id, volume):
-        if device_id in self.active_call_windows:
-            state = self.active_call_windows[device_id]
-            if state['win'].isVisible():
-                meter = state['meter']
-                curr = meter.value()
-                val = volume if volume > curr else curr - ((curr - volume) * 0.15)
-                meter.setValue(int(val))
-                c = "#F44747" if val > 75 else ("#D7BA7D" if val > 45 else "#4EC9B0")
-                meter.setStyleSheet(f"QProgressBar::chunk {{ background-color: {c}; }}")
-
-    def toggle_mic(self, device_id, btn):
-        state = self.active_call_windows.get(device_id)
-        if state:
-            state['mic_muted'] = not state['mic_muted']
-            btn.setText("Unmute My Mic" if state['mic_muted'] else "Mute My Mic")
-            ws = CONNECTED_WS.get(device_id)
-            if ws and _ws_loop: asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "server_muted", "muted": state['mic_muted']})), _ws_loop)
-
-    def toggle_speaker(self, device_id, btn):
-        state = self.active_call_windows.get(device_id)
-        if state:
-            state['spk_muted'] = not state['spk_muted']
-            btn.setText("Unmute Speaker" if state['spk_muted'] else "Mute Speaker")
-            ws = CONNECTED_WS.get(device_id)
-            if ws and _ws_loop: asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "client_muted", "muted": state['spk_muted']})), _ws_loop)
-
-    def end_call_ui(self, device_id):
-        ws = CONNECTED_WS.get(device_id)
-        if ws and _ws_loop:
-            asyncio.run_coroutine_threadsafe(ws.send(json.dumps({"type": "call_ended"})), _ws_loop)
-            asyncio.run_coroutine_threadsafe(cleanup_call(device_id), _ws_loop)
-        else:
-            self.close_call_ui(device_id)
-
-    def close_call_ui(self, device_id):
-        state = self.active_call_windows.get(device_id)
-        if state:
-            try: state['win'].close()
-            except: pass
-            del self.active_call_windows[device_id]
-            self._append_log('network', f"[VOICE] Call disconnected.")
 
     def connect_db(self):
         try:
@@ -1929,13 +1382,11 @@ class ServerHub(QMainWindow):
             
             menu = QMenu(self)
             menu.setStyleSheet("QMenu { background-color: #252528; border: 1px solid #3E3E42; } QMenu::item:selected { background-color: #094771; }")
-            m_call = menu.addAction("📞 Call Device")
             m_ren = menu.addAction("✏️ Rename Device")
             m_msg = menu.addAction("📨 Send Text Message")
             
             action = menu.exec(self.tree_devices.viewport().mapToGlobal(pos))
-            if action == m_call: self._prompt_start_call()
-            elif action == m_ren: self._prompt_rename_device()
+            if action == m_ren: self._prompt_rename_device()
             elif action == m_msg: self._prompt_send_message()
 
     def _prompt_rename_device(self):
@@ -1965,23 +1416,6 @@ class ServerHub(QMainWindow):
             with device_lock: DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Message queued for {d_name}: {msg.strip()}")
 
-    def _prompt_start_call(self):
-        global _ws_loop
-        if not WEBRTC_SUPPORTED:
-            QMessageBox.critical(self, "Error", "Missing audio libraries. Please pip install aiortc sounddevice.")
-            return
-        d_id = getattr(self, '_context_device_id', None)
-        if not d_id or d_id == "empty_msg": return
-        ws = CONNECTED_WS.get(d_id)
-        if ws and _ws_loop:
-            async def safe_ring():
-                try: await ws.send(json.dumps({"type": "incoming_call"}))
-                except Exception as e: logging.error(f"Failed to ring {d_id}: {e}")
-            asyncio.run_coroutine_threadsafe(safe_ring(), _ws_loop)
-            self._append_log('network', f"[VOICE] Ringing device {d_id}...")
-        else:
-            QMessageBox.warning(self, "Unavailable", "Device is not connected to the voice server.")
-
     def _prompt_broadcast_message(self):
         with device_lock: active_count = len(ACTIVE_DEVICES)
         if active_count == 0:
@@ -2003,7 +1437,7 @@ class ServerHub(QMainWindow):
         # --- LEFT SIDEBAR ---
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
-        sidebar_scroll.setFixedWidth(275) # Extra wide so URLs never cut off
+        sidebar_scroll.setFixedWidth(275) 
         sidebar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         
         sidebar = QWidget()
@@ -2038,7 +1472,7 @@ class ServerHub(QMainWindow):
         l_eng.addWidget(self.lbl_flask_qr); self.update_qr(self.lbl_flask_qr, "OFFLINE")
         
         self.lbl_flask_link = QLabel("HTTPS Offline")
-        self.lbl_flask_link.setWordWrap(True) # Fixes truncation
+        self.lbl_flask_link.setWordWrap(True) 
         self.lbl_flask_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_flask_link.setAlignment(Qt.AlignCenter)
         l_eng.addWidget(self.lbl_flask_link)
         
@@ -2073,7 +1507,7 @@ class ServerHub(QMainWindow):
         l_cf.addWidget(self.lbl_cf_qr); self.update_qr(self.lbl_cf_qr, "OFFLINE")
         
         self.lbl_cf_link = QLabel("Tunnel Offline")
-        self.lbl_cf_link.setWordWrap(True) # Fixes truncation
+        self.lbl_cf_link.setWordWrap(True) 
         self.lbl_cf_link.setStyleSheet("color: #858585; font-size: 10px;"); self.lbl_cf_link.setAlignment(Qt.AlignCenter)
         l_cf.addWidget(self.lbl_cf_link)
         
@@ -2088,7 +1522,7 @@ class ServerHub(QMainWindow):
         l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(8, 12, 8, 8); l_test.setSpacing(6)
         
         self.chk_test = QCheckBox("Testing Mode OFF")
-        self.chk_test.toggled.connect(self.toggle_test_mode) # FIXED logical toggle
+        self.chk_test.toggled.connect(self.toggle_test_mode) 
         l_test.addWidget(self.chk_test)
         
         self.cb_test_date = QComboBox()
@@ -2133,7 +1567,6 @@ class ServerHub(QMainWindow):
         self.lbl_stat_cf = self._build_status_badge(b_row, "● CF: OFF", "#858585")
         self.lbl_stat_sqlite = self._build_status_badge(b_row, "● LITE: WAIT", "#569CD6")
         self.lbl_stat_mysql = self._build_status_badge(b_row, "● SQL: WAIT", "#569CD6")
-        self.lbl_stat_audio = self._build_status_badge(b_row, "● MIC: WAIT", "#569CD6")
         b_row.addStretch()
         h_left.addLayout(b_row)
         hdr_row.addLayout(h_left, stretch=1)
@@ -2223,8 +1656,7 @@ class ServerHub(QMainWindow):
         dev_hdr.addStretch()
         
         btn_bc = QPushButton("📢 Broadcast"); btn_bc.clicked.connect(self._prompt_broadcast_message)
-        btn_gc = QPushButton("📞 Group Call"); btn_gc.clicked.connect(self._prompt_group_call)
-        dev_hdr.addWidget(btn_bc); dev_hdr.addWidget(btn_gc)
+        dev_hdr.addWidget(btn_bc)
         dev_layout.addLayout(dev_hdr)
         
         self.tree_devices = QTableWidget(0, 7)
@@ -2344,6 +1776,22 @@ class ServerHub(QMainWindow):
             self.animated_meters["api"].set_target(min(proc_ms, 500))
             self.animated_meters["api"].set_subtext(f"API: {proc_ms} ms")
 
+            # --- DYNAMIC IP CHANGE DETECTION ---
+            new_ip = snap_telemetry.get("local_ip", self.local_ip)
+            if new_ip != self.local_ip:
+                old_ip = self.local_ip
+                self.local_ip = new_ip
+                self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
+                self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
+                
+                # Check if the engine is actively running
+                if not self.btn_start_flask.isEnabled(): 
+                    self.update_qr(self.lbl_flask_qr, self.https_url)
+                    self.lbl_flask_link.setText(self.https_url)
+                    self._append_log('flask', f"[WARNING] Network Switch Detected: {old_ip} ➔ {self.local_ip}")
+                    self._append_log('flask', f"[INFO] UI Updated. Devices should scan the new QR code.")
+                    self._append_log('flask', f"[INFO] (Note: Restart the engine if devices complain about SSL mismatched IPs)")
+
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms = snap_net["local_ms"]
             c_ms = snap_net["cloud_ms"]
@@ -2430,12 +1878,6 @@ class ServerHub(QMainWindow):
                 else:
                     self.lbl_stat_sqlite.setText("● LITE: ERR")
                     self.lbl_stat_sqlite.setStyleSheet("color:#F44747; font-weight:bold; font-size:11px; border:none;")
-
-            audio_text, audio_style = global_audio.status_text()
-            short_audio = audio_text.replace("VOICE AUDIO", "MIC").replace("OFFLINE", "OFF")
-            c = "#858585" if audio_style == "secondary" else ("#4EC9B0" if audio_style=="success" else ("#D7BA7D" if audio_style=="warning" else "#F44747"))
-            self.lbl_stat_audio.setText(short_audio)
-            self.lbl_stat_audio.setStyleSheet(f"color:{c}; font-weight:bold; font-size:11px; border:none;")
 
             with stats_lock: snap = dict(STATS_CACHE)
             for k, v in zip(["total_att", "kiosk_reg", "sqlite_total", "chk_30", "chk_31", "chk_01", "chk_today", "chk_total"], 
@@ -2530,12 +1972,14 @@ class ServerHub(QMainWindow):
         with self.cf_lock: self.cloudflare_url = "Pending"
             
         self._append_log('cf', f"[{datetime.now().strftime('%H:%M:%S')}] Requesting secure tunnel...")
-        self._append_log('cf', "[WARNING] Voice Calling requires local LAN or port 5002 mapping.")
 
         def _run_cf():
             try:
+                # --- TUNNEL RESILIENCE FIX ---
+                # We specifically point to 127.0.0.1 here instead of self.local_ip. 
+                # This guarantees that the tunnel ignores all physical adapter changes completely.
                 proc = subprocess.Popen(
-                    ["cloudflared", "tunnel", "--url", f"http://{self.local_ip}:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], 
+                    ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], 
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, 
                     creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 )
