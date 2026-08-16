@@ -15,10 +15,8 @@
   <meta name="apple-mobile-web-app-title" content="EventHub" />
   <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
 
-  <!-- Multi-Engine Free Vision Libraries for Maximum Cache Compatibility -->
+  <!-- Single, highly optimized library for native hardware scanning -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-  <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 
   <style>
     :root {
@@ -382,21 +380,6 @@
       display: none !important;
     }
 
-    .ai-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 0.68rem;
-      font-weight: 800;
-      color: #000;
-      background: var(--primary);
-      padding: 3px 8px;
-      border-radius: 20px;
-      box-shadow: 0 2px 8px var(--primary-glow);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
     .permission-overlay {
       position: absolute;
       inset: 0;
@@ -441,50 +424,6 @@
 
     .btn-permission:active {
       transform: scale(0.95);
-    }
-
-    .scan-overlay {
-      position: absolute;
-      inset: 0;
-      z-index: 10;
-      pointer-events: none;
-      display: none;
-      box-shadow: inset 0 0 50px rgba(0, 0, 0, 0.7);
-      border-radius: var(--radius-lg);
-    }
-
-    .scan-laser {
-      width: 100%;
-      height: 3px;
-      background-color: var(--primary);
-      box-shadow:
-        0 0 10px var(--primary),
-        0 0 20px var(--primary);
-      position: absolute;
-      top: 0;
-      will-change: transform, opacity;
-      animation: scanSweep 2s infinite ease-in-out;
-      border-radius: 50%;
-    }
-
-    @keyframes scanSweep {
-      0% {
-        transform: translateY(20px);
-        opacity: 0;
-      }
-
-      15% {
-        opacity: 1;
-      }
-
-      85% {
-        opacity: 1;
-      }
-
-      100% {
-        transform: translateY(220px);
-        opacity: 0;
-      }
     }
 
     .zoom-toolbar {
@@ -914,10 +853,6 @@
             Grant Access
           </button>
         </div>
-
-        <div class="scan-overlay" id="scan-overlay">
-          <div class="scan-laser"></div>
-        </div>
       </div>
 
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
@@ -1175,7 +1110,6 @@
     function onCameraStarted(btn) {
       isCameraActive = true;
       btn.innerHTML = "⏸ Pause Scanner";
-      document.getElementById("scan-overlay").style.display = "block";
 
       setTimeout(() => {
         initAdvancedCameraControls();
@@ -1412,7 +1346,6 @@
           const btn = document.getElementById("camera-toggle-btn");
           btn.innerHTML = "▶ Resume Scanner";
           btn.classList.add("paused");
-          document.getElementById("scan-overlay").style.display = "none";
           document.getElementById("zoom-controls").style.display = "none";
           document.getElementById("reader").innerHTML = ""; // Clean DOM
         } catch (e) {
@@ -1732,20 +1665,37 @@
       }, 3000);
     }
 
+    // =========================================================================
+    // DUAL-FORMAT QR DECODER (Handles New Plain-Text AND Old JSON Passes)
+    // =========================================================================
     function onScanSuccess(decoded) {
       if (isProcessing) return;
-      let id = String(decoded || "").trim();
-      try {
-        const p = JSON.parse(id);
-        if (typeof p === "object" && p !== null)
-          id = p.attendeeId || p.id || id;
-      } catch (e) { }
+
+      let rawText = String(decoded || "").trim();
+      if (!rawText) return;
+
+      let finalId = rawText;
+
+      // Backward Compatibility: Safely try to extract ID from older JSON passes
+      if (rawText.startsWith("{")) {
+        try {
+          const payload = JSON.parse(rawText);
+          if (payload && (payload.attendeeId || payload.id)) {
+            finalId = payload.attendeeId || payload.id;
+          }
+        } catch (e) {
+          // If JSON parse fails, gracefully fall back to using the raw text
+        }
+      }
 
       const now = Date.now();
-      if (id === lastScannedId && now - lastScanTime < DEBOUNCE_MS) return;
-      lastScannedId = id;
+      if (finalId === lastScannedId && now - lastScanTime < DEBOUNCE_MS)
+        return;
+
+      lastScannedId = finalId;
       lastScanTime = now;
-      processCheckin(id, "id");
+
+      processCheckin(finalId, "id");
     }
 
     document.addEventListener("click", initAudio, { once: true });
