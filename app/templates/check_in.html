@@ -15,8 +15,10 @@
   <meta name="apple-mobile-web-app-title" content="EventHub" />
   <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
 
-  <!-- Single, highly optimized library for native hardware scanning -->
+  <!-- Multi-Engine Free Vision Libraries for Maximum Cache Compatibility -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
 
   <style>
     :root {
@@ -898,7 +900,6 @@
         </select>
       </div>
 
-      <!-- TARGET SCROLL EVENTS HERE -->
       <div class="scanner-box" id="scanner-box">
         <div id="reader"></div>
 
@@ -1325,25 +1326,28 @@
         } catch (e) { }
       } else {
         const videoEl = document.querySelector("#reader video");
-        if (videoEl)
-          videoEl.style.transform = `scale(${zoomTarget}) translateZ(0)`;
+        if (videoEl) videoEl.style.transform = `scale(${zoomTarget})`;
       }
     }
 
     // =========================================================================
     // IMPROVED SCROLL & PINCH TO ZOOM HANDLERS
-    // Attached directly to the scanner box to prevent bubbling issues.
+    // Attached directly to the broader qr-view to prevent bubbling issues.
     // =========================================================================
-    const scannerBox = document.getElementById("scanner-box");
+    const qrViewWrapper = document.getElementById("qr-view");
 
-    scannerBox.addEventListener(
+    qrViewWrapper.addEventListener(
       "wheel",
       (e) => {
-        if (!isCameraActive) return;
+        if (!isCameraActive || isProcessing) return;
         e.preventDefault();
-        const scrollSpeed = 0.15; // Smooth manual scroll steps
-        if (e.deltaY < 0) adjustZoom(scrollSpeed);
-        else adjustZoom(-scrollSpeed);
+
+        // Use Math.sign() to ensure consistent smooth zooming across different mice & trackpads
+        const direction = Math.sign(e.deltaY);
+        const scrollSpeed = 0.15;
+
+        if (direction < 0) adjustZoom(scrollSpeed);
+        else if (direction > 0) adjustZoom(-scrollSpeed);
       },
       { passive: false },
     );
@@ -1351,7 +1355,7 @@
     let initialPinchDistance = null;
     let initialPinchZoom = 1.0;
 
-    scannerBox.addEventListener(
+    qrViewWrapper.addEventListener(
       "touchstart",
       (e) => {
         if (e.touches.length === 2 && isCameraActive) {
@@ -1366,7 +1370,7 @@
       { passive: false },
     );
 
-    scannerBox.addEventListener(
+    qrViewWrapper.addEventListener(
       "touchmove",
       (e) => {
         if (
@@ -1388,7 +1392,7 @@
       { passive: false },
     );
 
-    scannerBox.addEventListener(
+    qrViewWrapper.addEventListener(
       "touchend",
       (e) => {
         if (e.touches.length < 2) initialPinchDistance = null;

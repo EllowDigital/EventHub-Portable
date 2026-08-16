@@ -15,8 +15,31 @@ const PRECACHE_ASSETS = [
   '/static/favicon/favicon.svg?v=2.6',
   '/static/favicon/favicon.ico?v=2.6',
   '/static/favicon/apple-touch-icon.png?v=2.6',
-  'https://unpkg.com/html5-qrcode'
+  'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js',
+  'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js',
+  'https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js'
 ];
+
+// Helper Function: Fetch with Timeout to prevent hanging on terrible Wi-Fi connections
+const fetchWithTimeout = (request, timeout = 3000) => {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => {
+      controller.abort();
+      reject(new Error("Network connection timed out"));
+    }, timeout);
+
+    fetch(request, { signal: controller.signal })
+      .then((response) => {
+        clearTimeout(id);
+        resolve(response);
+      })
+      .catch((error) => {
+        clearTimeout(id);
+        reject(error);
+      });
+  });
+};
 
 // 1. INSTALLATION STAGE
 self.addEventListener('install', event => {
@@ -78,16 +101,18 @@ self.addEventListener('fetch', event => {
     (async () => {
       const cache = await caches.open(CACHE_NAME);
 
-      // STRATEGY A: Network-First for Navigation (HTML Page Loading)
-      // Ensures users always see the latest UI updates when connected, falling back to cache offline.
+      // STRATEGY A: Network-First with Timeout for Navigation (HTML Page Loading)
+      // Ensures users get the latest UI updates, but if the network takes longer than 3 seconds (bad Wi-Fi),
+      // it instantly falls back to the cache so staff don't get stuck on a loading screen.
       if (req.mode === 'navigate') {
         try {
-          const networkResponse = await fetch(req);
+          const networkResponse = await fetchWithTimeout(req, 3000); 
           if (networkResponse && networkResponse.ok) {
             cache.put(req, networkResponse.clone());
           }
           return networkResponse;
         } catch (networkError) {
+          console.warn(`[EventHub SW v2.6] Network slow or offline, falling back to cache for: ${url.pathname}`);
           const cachedResponse = await cache.match(req);
           if (cachedResponse) return cachedResponse;
 
@@ -99,8 +124,8 @@ self.addEventListener('fetch', event => {
         }
       }
 
-      // STRATEGY B: Stale-While-Revalidate for Static Assets (CSS, JS, Fonts, Images)
-      // Serves cached copies immediately for speed while silently revalidating via network.
+      // STRATEGY B: Stale-While-Revalidate for Static Assets (CSS, JS, Fonts, Images, External Libraries)
+      // Serves cached copies immediately for instant loading, while silently revalidating via network in the background.
       const cachedAsset = await cache.match(req);
 
       const fetchPromise = fetch(req).then(networkResponse => {
