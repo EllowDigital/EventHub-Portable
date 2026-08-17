@@ -122,7 +122,8 @@ TELEMETRY_DATA = {
     "total_dl_mb": 0.0, "total_ul_mb": 0.0,
     "cpu_ghz_used": 0.0, "cpu_ghz_total": 0.0,
     "ram_gb_used": 0.0, "ram_gb_total": 0.0,
-    "local_ip": get_local_ip()  
+    "local_ip": get_local_ip(),
+    "all_ipv4": []
 }
 _telemetry_lock = threading.Lock()
 
@@ -178,6 +179,15 @@ def _telemetry_worker():
             if active_iface and active_iface in stats: link_speed = stats[active_iface].speed
             
             current_ip = get_local_ip()
+            
+            all_ipv4 = set()
+            try:
+                for interface, snics in psutil.net_if_addrs().items():
+                    for snic in snics:
+                        if snic.family == socket.AF_INET and snic.address != "127.0.0.1":
+                            all_ipv4.add(snic.address)
+            except Exception: pass
+            all_ipv4.add(current_ip)
 
             with _telemetry_lock:
                 TELEMETRY_DATA.update({
@@ -187,7 +197,8 @@ def _telemetry_worker():
                     "total_dl_mb": dl_mb, "total_ul_mb": ul_mb,
                     "cpu_ghz_used": cpu_ghz_used, "cpu_ghz_total": cpu_ghz_total,
                     "ram_gb_used": ram_gb_used, "ram_gb_total": ram_gb_total,
-                    "local_ip": current_ip
+                    "local_ip": current_ip,
+                    "all_ipv4": sorted(list(all_ipv4))
                 })
         except Exception as e:
             logging.debug(f"Telemetry Worker Error: {e}")
@@ -1181,6 +1192,7 @@ class ServerHub(QMainWindow):
         """)
 
         self.local_ip = get_local_ip()
+        self.all_ipv4 = [] # Added to rigorously track ALL IPs across all adapters
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
         self.cf_lock = threading.Lock()
@@ -1471,6 +1483,12 @@ class ServerHub(QMainWindow):
                 for d_id in ACTIVE_DEVICES.keys(): DEVICE_MESSAGES[d_id] = msg.strip()
             self._append_log('network', f"[INFO] Broadcast queued for {active_count} devices: {msg.strip()}")
 
+    def manual_refresh_all(self):
+        """Forces an immediate refresh of both statistics and hardware telemetry."""
+        self.refresh_stats()
+        self.refresh_hw_meters()
+        self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] [INFO] Operator triggered manual system refresh.")
+
     def build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -1642,7 +1660,7 @@ class ServerHub(QMainWindow):
         hdr_row.addWidget(sys_h)
         
         acts = QVBoxLayout(); acts.setSpacing(3)
-        b_ref = QPushButton("⟳ Refresh"); b_ref.clicked.connect(self.refresh_stats)
+        b_ref = QPushButton("⟳ Refresh"); b_ref.clicked.connect(self.manual_refresh_all)
         b_full = QPushButton("⛶ Fullscreen"); b_full.clicked.connect(self.toggle_fullscreen)
         acts.addWidget(b_ref); acts.addWidget(b_full)
         hdr_row.addLayout(acts)
@@ -1814,18 +1832,35 @@ class ServerHub(QMainWindow):
             self.animated_meters["api"].set_subtext(f"API: {proc_ms} ms")
 
             new_ip = snap_telemetry.get("local_ip", self.local_ip)
+            new_ipv4 = snap_telemetry.get("all_ipv4", self.all_ipv4)
+            
+            needs_restart = False
+            
+            # Check if the primary routing IP changed
             if new_ip != self.local_ip:
                 old_ip = self.local_ip
                 self.local_ip = new_ip
                 self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
                 self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
+                needs_restart = True
                 
+            # Check if ANY brand new secondary IP (like a Mobile Hotspot) appeared
+            added_ips = [ip for ip in new_ipv4 if ip not in self.all_ipv4]
+            if added_ips:
+                needs_restart = True
+                
+            # Always update our tracked list so we don't trigger repeatedly
+            self.all_ipv4 = new_ipv4
+            
+            if needs_restart:
                 if not self.btn_start_flask.isEnabled(): 
                     self.update_qr(self.lbl_flask_qr, self.https_url)
                     self.lbl_flask_link.setText(self.https_url)
-                    self._append_log('flask', f"[WARNING] Network Switch Detected: {old_ip} ➔ {self.local_ip}")
-                    self._append_log('flask', f"[INFO] UI Updated. Devices should scan the new QR code.")
-                    self._append_log('flask', f"[INFO] (Note: Restart the engine if devices complain about SSL mismatched IPs)")
+                    self._append_log('flask', f"[WARNING] Network Topology Changed (New IPs detected).")
+                    self._append_log('flask', "[INFO] Auto-restarting engine to securely bind ALL current IPs to the SSL certificate...")
+                    
+                    self.stop_flask()
+                    QTimer.singleShot(2500, self.start_flask)
 
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms = snap_net["local_ms"]
