@@ -753,10 +753,25 @@ class LauncherApp(QMainWindow):
                     port=mysql_port, 
                     connect_timeout=2
                 )
+                
+                # Fetch MySQL Version
+                mysql_version = ""
+                try:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT VERSION()")
+                        row = cursor.fetchone()
+                        if row:
+                            # Split by '-' to avoid long strings like '8.0.32-0ubuntu0.20.04.2' breaking UI
+                            mysql_version = str(row[0]).split('-')[0]
+                except Exception:
+                    pass
+
                 conn.ping(reconnect=False)
                 conn.close()
                 ms = int((time.perf_counter() - start_t) * 1000)
-                self._set_health("mysql_db", f"Online ✓ ({ms}ms)", "success" if ms < 100 else "warning")
+                
+                status_text = f"v{mysql_version} ✓ ({ms}ms)" if mysql_version else f"Online ✓ ({ms}ms)"
+                self._set_health("mysql_db", status_text, "success" if ms < 100 else "warning")
             except Exception as e:
                 self._set_health("mysql_db", "Offline ⚠", "danger")
         else:
@@ -768,10 +783,25 @@ class LauncherApp(QMainWindow):
                 try:
                     start_t = time.perf_counter()
                     conn = sqlite3.connect(sqlite_file)
+                    
+                    # Fetch SQLite Version
+                    sqlite_version = ""
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT sqlite_version();")
+                        row = cursor.fetchone()
+                        if row:
+                            sqlite_version = str(row[0])
+                    except Exception:
+                        pass
+                        
                     conn.execute("SELECT name FROM sqlite_master;")
                     conn.close()
                     ms = int((time.perf_counter() - start_t) * 1000)
-                    self._set_health("sqlite_db", "Ready ✓ (<1ms)" if ms == 0 else f"Ready ✓ ({ms}ms)", "success")
+                    time_str = "<1ms" if ms == 0 else f"{ms}ms"
+                    
+                    status_text = f"v{sqlite_version} ✓ ({time_str})" if sqlite_version else f"Ready ✓ ({time_str})"
+                    self._set_health("sqlite_db", status_text, "success")
                 except Exception:
                     self._set_health("sqlite_db", "Corrupted ⚠", "danger")
             else:
