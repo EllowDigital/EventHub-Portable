@@ -17,35 +17,31 @@ from dataclasses import dataclass, field
 import ipaddress
 import requests
 import urllib3
-import asyncio
-import ssl
-import array
-import fractions
 import ctypes
 import html
 import sys
+import functools
+import hmac
+import math
 from datetime import datetime, timezone, timedelta
 
-# --- High-DPI Environment Flags ---
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
-# --- PySide6 Core & Widgets ---
-from PySide6.QtCore import Qt, QTimer, QSize, QRectF, QPointF
+from PySide6.QtCore import Qt, QTimer, QRectF, QPointF
 from PySide6.QtGui import (
-    QIcon, QPixmap, QImage, QColor, QFont, QCursor, 
-    QPainter, QPen, QBrush, QPainterPath
+    QIcon, QPixmap, QImage, QColor, QFont,
+    QPainter, QPen
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QLabel, QPushButton, QProgressBar, QTableWidget,
+    QGridLayout, QLabel, QPushButton, QTableWidget,
     QTableWidgetItem, QTabWidget, QPlainTextEdit, QGroupBox, QCheckBox,
     QComboBox, QHeaderView, QMenu, QInputDialog, QMessageBox, QFrame,
-    QDialog, QSplitter, QScrollArea, QSizePolicy
+    QSplitter, QScrollArea, QSizePolicy
 )
 
 import qrcode
-from PIL import Image
 import webbrowser
 import psutil
 
@@ -54,7 +50,6 @@ from waitress import create_server
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- Optional Imports ---
 try:
     from cheroot import wsgi as cheroot_wsgi
     from cheroot.ssl.builtin import BuiltinSSLAdapter
@@ -94,22 +89,21 @@ def _configure_windows_platform():
         dpi_awareness_set = False
         try:
             if windll.user32.SetProcessDpiAwarenessContext(c_void_p(-4)): dpi_awareness_set = True
-        except: pass
+        except Exception: pass
         if not dpi_awareness_set:
             try: windll.shcore.SetProcessDpiAwareness(2); dpi_awareness_set = True
-            except: pass
+            except Exception: pass
         if not dpi_awareness_set:
             try: windll.user32.SetProcessDPIAware()
-            except: pass
+            except Exception: pass
         try: windll.shell32.SetCurrentProcessExplicitAppUserModelID("TDEUP2026.EventHub.ServerHub")
-        except: pass
-        try: windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001) # Prevent Sleep
-        except: pass
-    except: pass
+        except Exception: pass
+        try: windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001) 
+        except Exception: pass
+    except Exception: pass
 
 _configure_windows_platform()
 
-# --- MOVED UP: Needed for Telemetry initialization ---
 def get_local_ip():
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -128,11 +122,10 @@ TELEMETRY_DATA = {
     "total_dl_mb": 0.0, "total_ul_mb": 0.0,
     "cpu_ghz_used": 0.0, "cpu_ghz_total": 0.0,
     "ram_gb_used": 0.0, "ram_gb_total": 0.0,
-    "local_ip": get_local_ip()  # Tracks live IP
+    "local_ip": get_local_ip()  
 }
 _telemetry_lock = threading.Lock()
 
-# Globals for thread state management
 _global_shutdown_event = threading.Event()
 _flask_shutdown_event = threading.Event() 
 _db_shutdown_event = threading.Event()
@@ -140,7 +133,7 @@ _db_shutdown_event = threading.Event()
 def _telemetry_worker():
     last_time = time.time()
     try: last_io = psutil.net_io_counters()
-    except: last_io = None
+    except Exception: last_io = None
     while not _global_shutdown_event.is_set():
         try:
             cpu = int(psutil.cpu_percent(interval=None))
@@ -154,7 +147,7 @@ def _telemetry_worker():
                 cpu_ghz_used = freq.current / 1000.0 if freq else 0.0
                 cpu_ghz_total = freq.max / 1000.0 if freq else 0.0
                 if cpu_ghz_total == 0.0: cpu_ghz_total = cpu_ghz_used
-            except:
+            except Exception:
                 cpu_ghz_used = cpu_ghz_total = 0.0
 
             stats = psutil.net_if_stats()
@@ -184,7 +177,6 @@ def _telemetry_worker():
             last_io, last_time = current_io, current_time
             if active_iface and active_iface in stats: link_speed = stats[active_iface].speed
             
-            # --- Dynamic IP Resolution in background ---
             current_ip = get_local_ip()
 
             with _telemetry_lock:
@@ -217,6 +209,7 @@ CONFIG_DIR = os.path.join(BASE_DIR, 'config')
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(CONFIG_DIR, exist_ok=True)
 
+APP_VERSION = "2.6"
 HTTP_PORT = 5000 
 HTTPS_PORT = 5001
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
@@ -225,8 +218,15 @@ DB_WRITER_THREADS = 64
 DB_JOB_QUEUE_MAXSIZE = 50000               
 DB_JOB_TIMEOUT = 12               
 
+HTTP_WORKER_THREADS = 128
+
 STATS_REFRESH_INTERVAL_SEC = 300  
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
+
+EVENT_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
+
+def _current_event_date_str():
+    return SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(EVENT_TIMEZONE).strftime('%Y-%m-%d')
 MAX_LOG_LINES = 5000 
 
 LOG_FILE = os.path.join(LOG_DIR, 'server_hub.log')
@@ -255,6 +255,18 @@ try:
 except Exception as e:
     logging.error(f"Failed to load custom device names: {e}")
 
+_device_names_file_lock = threading.Lock()
+
+def _save_device_names():
+    with _device_names_file_lock:
+        try:
+            with device_lock: snapshot = dict(CUSTOM_DEVICE_NAMES)
+            tmp_path = DEVICE_NAMES_FILE + '.tmp'
+            with open(tmp_path, 'w') as f: json.dump(snapshot, f, indent=4)
+            os.replace(tmp_path, DEVICE_NAMES_FILE)
+        except Exception as e:
+            logging.error(f"Failed to save custom device names: {e}")
+
 ACTIVE_DEVICES = {}
 DEVICE_MESSAGES = {}
 SCAN_CLIENTS = []
@@ -274,6 +286,7 @@ metrics_lock = threading.Lock()
 
 TRAFFIC_HISTORY = collections.deque([0] * 60, maxlen=60)
 _current_sec_requests = 0
+_traffic_lock = threading.Lock()
 
 STATS_CACHE = {
     "total_attendees": 0, "total_registrations": 0,
@@ -390,7 +403,9 @@ def ensure_ssl_certificate(local_ip):
     if os.path.exists(cert_path) and os.path.exists(key_path):
         try:
             with open(cert_path, "rb") as f: c = x509.load_pem_x509_certificate(f.read())
-            is_valid_time = c.not_valid_after_utc > datetime.now(timezone.utc) + timedelta(days=30)
+            try: cert_expiry = c.not_valid_after_utc
+            except AttributeError: cert_expiry = c.not_valid_after.replace(tzinfo=timezone.utc)
+            is_valid_time = cert_expiry > datetime.now(timezone.utc) + timedelta(days=30)
             san_ext = c.extensions.get_extension_for_class(x509.SubjectAlternativeName)
             cert_ips = {str(ip) for ip in san_ext.value.get_values_for_type(x509.IPAddress)}
             all_ips_present = all(ip in cert_ips for ip in current_system_ips)
@@ -408,7 +423,7 @@ def log_request(response):
     if request.path.startswith('/static') or request.path.startswith('/favicon.ico') or request.path == '/api/stream-scans': return response
     try:
         global _current_sec_requests
-        _current_sec_requests += 1  
+        with _traffic_lock: _current_sec_requests += 1
         
         duration_ms = (time.perf_counter() - getattr(request, '_start_time', time.perf_counter())) * 1000
         if metrics_lock.acquire(blocking=False):
@@ -469,8 +484,9 @@ def traffic_monitor_loop():
     global _current_sec_requests
     while not _global_shutdown_event.is_set():
         _global_shutdown_event.wait(1.0)
-        hits = _current_sec_requests
-        _current_sec_requests = 0
+        with _traffic_lock:
+            hits = _current_sec_requests
+            _current_sec_requests = 0
         TRAFFIC_HISTORY.append(hits)
 
 def _compute_stats_snapshot(deep_scan=False):
@@ -492,12 +508,13 @@ def _compute_stats_snapshot(deep_scan=False):
 
 def stats_refresher_loop():
     loop_counter = 0
+    deep_scan_every_n_loops = max(1, int(STATS_REFRESH_INTERVAL_SEC / 3))  
     while not _global_shutdown_event.is_set():
         try:
-            needs_deep_scan = (loop_counter % 60 == 0)
+            needs_deep_scan = (loop_counter % deep_scan_every_n_loops == 0)
             snapshot = _compute_stats_snapshot(deep_scan=needs_deep_scan)
             if snapshot is not None:
-                today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+                today_date = _current_event_date_str()
                 with stats_lock:
                     STATS_CACHE["total_attendees"] = snapshot["total_attendees"]
                     STATS_CACHE["total_registrations"] = snapshot["total_registrations"]
@@ -559,7 +576,7 @@ def _handle_checkin_job(payload):
                 try: history = json.loads(history)
                 except Exception: history = {}
             if not isinstance(history, dict): history = {}
-            current_date_str = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            current_date_str = _current_event_date_str()
             date_map = EVENT_DATE_LABELS
             if current_date_str not in date_map: return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
             today_key = date_map[current_date_str]
@@ -630,7 +647,7 @@ def _handle_register_job(payload):
             prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(data.get('attendee_type', 'GENERAL').upper(), "G")
             new_attendee_id = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
             
-            today_date = SERVER_TEST_DATE if SERVER_TEST_MODE else datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            today_date = _current_event_date_str()
             checkin_history_dict = {}
             if today_date in EVENT_DATE_LABELS:
                 key = EVENT_DATE_LABELS[today_date]
@@ -706,7 +723,6 @@ def stop_db_writers():
     for t in _db_writer_threads: t.join(timeout=0.2) 
     _db_writer_threads.clear()
 
-# --- FLASK ROUTES ---
 @app.route('/manifest.json')
 def serve_manifest(): return app.send_static_file('manifest.json')
 
@@ -728,7 +744,7 @@ def stats(): return render_template('network_stats.html')
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     if request.method == 'GET':
-        return jsonify({"status": "online", "version": "3.6"}), 200
+        return jsonify({"status": "online", "version": APP_VERSION}), 200
         
     ip = request.remote_addr
     data = request.json or {}
@@ -773,9 +789,7 @@ def rename_device():
     with device_lock:
         CUSTOM_DEVICE_NAMES[device_id] = new_name
         if device_id in ACTIVE_DEVICES: ACTIVE_DEVICES[device_id]['name'] = new_name
-    try:
-        with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
-    except Exception: pass
+    _save_device_names()
     return jsonify({"status": "success", "message": "Device renamed."}), 200
 
 @app.route('/api/network-data', methods=['GET'])
@@ -876,10 +890,15 @@ def get_all_attendees():
     if not mysql_factory: return jsonify({"status": "error", "message": "System database disconnected."}), 503
     session = mysql_factory()
     try:
-        main_att = session.query(Attendee).order_by(Attendee.created_at.asc(), Attendee.id.asc()).offset(offset).limit(limit).all()
+        main_total = session.query(Attendee).count()
+        if offset < main_total:
+            main_att = session.query(Attendee).order_by(Attendee.created_at.asc(), Attendee.id.asc()).offset(offset).limit(limit).all()
+            kiosk_offset, kiosk_limit = 0, limit - len(main_att)
+        else:
+            main_att = []
+            kiosk_offset, kiosk_limit = offset - main_total, limit
         kiosk_att = []
-        rem_limit = limit - len(main_att)
-        if rem_limit > 0: kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(offset).limit(rem_limit).all()
+        if kiosk_limit > 0: kiosk_att = session.query(OfflineKioskAttendee).order_by(OfflineKioskAttendee.created_at.asc(), OfflineKioskAttendee.id.asc()).offset(kiosk_offset).limit(kiosk_limit).all()
         results = []
         for att in (main_att + kiosk_att):
             att_dict = {
@@ -901,7 +920,7 @@ def get_all_attendees():
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
         super().__init__(daemon=True)  
-        self.server = create_server(app, host=host, port=port, threads=256, connection_limit=8192, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
+        self.server = create_server(app, host=host, port=port, threads=HTTP_WORKER_THREADS, connection_limit=8192, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
         self.ctx = app.app_context()
         self.ctx.push()
     def run(self):
@@ -910,7 +929,7 @@ class WaitressHttpThread(threading.Thread):
     def shutdown(self): self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
-    def __init__(self, app, host, port, numthreads=256):
+    def __init__(self, app, host, port, numthreads=HTTP_WORKER_THREADS):
         super().__init__(daemon=True)  
         if cheroot_wsgi is None: raise RuntimeError("Cheroot required.")
         cert_path, key_path = ensure_ssl_certificate(get_local_ip())
@@ -926,7 +945,9 @@ class HttpsFlaskThread(threading.Thread):
     def shutdown(self): self.server.stop()
 
 class SpeedometerGauge(QWidget):
-    def __init__(self, subtext="CPU", unit="%", max_val=100, good_is_high=False, parent=None):
+    REFERENCE_FRAME_MS = 16.0  
+
+    def __init__(self, subtext="CPU", unit="%", max_val=100, good_is_high=False, parent=None, response_speed=0.30):
         super().__init__(parent)
         self.subtext = subtext
         self.unit = unit
@@ -934,6 +955,7 @@ class SpeedometerGauge(QWidget):
         self.current_val = 0.0
         self.target_val = 0.0
         self.good_is_high = good_is_high
+        self.response_speed = response_speed
         self.setMinimumSize(70, 60)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -945,14 +967,24 @@ class SpeedometerGauge(QWidget):
             self.subtext = new_subtext
             self.update()
 
-    def tick(self):
+    def tick(self, elapsed_ms=16.0):
         diff = self.target_val - self.current_val
-        if abs(diff) > 0.05:
-            self.current_val += diff * 0.30 
+        if abs(diff) > 0.02:
+            alpha = 1.0 - (1.0 - self.response_speed) ** (max(elapsed_ms, 1.0) / self.REFERENCE_FRAME_MS)
+            self.current_val += diff * alpha
             self.update()
         elif self.current_val != self.target_val:
             self.current_val = self.target_val
             self.update()
+
+    def _zone_color(self, ratio):
+        stops = [(0.0, (133, 133, 133)), (0.35, (215, 186, 125)), (1.0, (78, 201, 176))] if self.good_is_high \
+            else [(0.0, (78, 201, 176)), (0.72, (215, 186, 125)), (1.0, (244, 71, 71))]
+        for (r0, c0), (r1, c1) in zip(stops, stops[1:]):
+            if ratio <= r1:
+                t = 0.0 if r1 == r0 else (ratio - r0) / (r1 - r0)
+                return QColor(*(int(c0[i] + (c1[i] - c0[i]) * t) for i in range(3)))
+        return QColor(*stops[-1][1])
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -968,28 +1000,37 @@ class SpeedometerGauge(QWidget):
         arc_width = max(3.5, diameter * 0.08)
 
         ratio = min(max(self.current_val / self.max_val if self.max_val > 0 else 0.0, 0.0), 1.0)
-        
-        if self.good_is_high:
-            if ratio < 0.1: dynamic_color = QColor("#858585") 
-            elif ratio < 0.6: dynamic_color = QColor("#D7BA7D") 
-            else: dynamic_color = QColor("#4EC9B0") 
-        else:
-            if ratio < 0.6: dynamic_color = QColor("#4EC9B0") 
-            elif ratio < 0.85: dynamic_color = QColor("#D7BA7D") 
-            else: dynamic_color = QColor("#F44747") 
+        dynamic_color = self._zone_color(ratio)
+
+        cx, cy = arc_rect.center().x(), arc_rect.center().y()
+        r_outer = diameter / 2.0 - 1
+        painter.setPen(QPen(QColor("#3A3A3E"), 1.2))
+        for i in range(11):
+            frac = i / 10.0
+            angle_rad = math.radians(200 - 220 * frac)
+            r_inner = r_outer - (arc_width + 3 if i % 5 == 0 else arc_width + 1)
+            x1, y1 = cx + r_outer * math.cos(angle_rad), cy - r_outer * math.sin(angle_rad)
+            x2, y2 = cx + r_inner * math.cos(angle_rad), cy - r_inner * math.sin(angle_rad)
+            painter.drawLine(QPointF(x1, y1), QPointF(x2, y2))
 
         pen_bg = QPen(QColor("#333333"), arc_width, Qt.DotLine, Qt.RoundCap)
         painter.setPen(pen_bg)
         painter.drawArc(arc_rect, 200 * 16, -220 * 16)
 
         active_span = -int(220 * ratio * 16)
-        pen_fg = QPen(dynamic_color, arc_width, Qt.SolidLine, Qt.RoundCap)
-        painter.setPen(pen_fg)
-        if active_span != 0: painter.drawArc(arc_rect, 200 * 16, active_span)
+        if active_span != 0:
+            glow_color = QColor(dynamic_color)
+            glow_color.setAlpha(60)
+            painter.setPen(QPen(glow_color, arc_width * 2.2, Qt.SolidLine, Qt.RoundCap))
+            painter.drawArc(arc_rect, 200 * 16, active_span)
+
+            pen_fg = QPen(dynamic_color, arc_width, Qt.SolidLine, Qt.RoundCap)
+            painter.setPen(pen_fg)
+            painter.drawArc(arc_rect, 200 * 16, active_span)
 
         painter.setPen(dynamic_color)
         font_size = max(9, int(diameter * 0.23))
-        painter.setFont(QFont("Segoe UI", font_size, QFont.Bold))
+        painter.setFont(QFont("Consolas", font_size, QFont.Bold))
         
         if "MB" in self.unit or self.max_val <= 10.0:
             val_text = f"{self.current_val:.1f}"
@@ -1011,13 +1052,13 @@ class AnimatedMeter:
         self.meter = meter_widget
     def set_target(self, val): self.meter.set_target(val)
     def set_subtext(self, text): self.meter.set_subtext(text)
-    def tick(self): self.meter.tick()
+    def tick(self, elapsed_ms=16.0): self.meter.tick(elapsed_ms)
 
 
 class ServerHub(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EventHub Portable (v2.6) - Command Center")
+        self.setWindowTitle(f"EventHub Portable (v{APP_VERSION}) - Command Center")
         self.resize(1300, 780)
         self.setMinimumSize(960, 580)
         
@@ -1175,6 +1216,7 @@ class ServerHub(QMainWindow):
             "net": AnimatedMeter(self.mini_meter_net),
             "api": AnimatedMeter(self.mini_meter_api)
         }
+        self._last_anim_time = None
         
         self.timer_gui_queue = QTimer(self)
         self.timer_gui_queue.timeout.connect(self.process_gui_queue)
@@ -1303,7 +1345,11 @@ class ServerHub(QMainWindow):
 
     def animation_loop(self):
         try:
-            for anim_meter in self.animated_meters.values(): anim_meter.tick()
+            now = time.perf_counter()
+            elapsed_ms = (now - self._last_anim_time) * 1000.0 if self._last_anim_time else 16.0
+            self._last_anim_time = now
+            elapsed_ms = min(elapsed_ms, 100.0)  
+            for anim_meter in self.animated_meters.values(): anim_meter.tick(elapsed_ms)
         except Exception: pass
 
     def clear_system_logs(self):
@@ -1400,9 +1446,7 @@ class ServerHub(QMainWindow):
             with device_lock:
                 CUSTOM_DEVICE_NAMES[d_id] = new_name.strip()
                 if d_id in ACTIVE_DEVICES: ACTIVE_DEVICES[d_id]['name'] = new_name.strip()
-            try:
-                with open(DEVICE_NAMES_FILE, 'w') as f: json.dump(CUSTOM_DEVICE_NAMES, f, indent=4)
-            except Exception: pass
+            _save_device_names()
             self._append_log('network', f"[INFO] Device '{old_name}' renamed to '{new_name.strip()}'.")
 
     def _prompt_send_message(self):
@@ -1434,7 +1478,6 @@ class ServerHub(QMainWindow):
         main_layout.setContentsMargins(6, 6, 6, 6)
         main_layout.setSpacing(8)
         
-        # --- LEFT SIDEBAR ---
         sidebar_scroll = QScrollArea()
         sidebar_scroll.setWidgetResizable(True)
         sidebar_scroll.setFixedWidth(275) 
@@ -1449,7 +1492,6 @@ class ServerHub(QMainWindow):
         lbl_net.setStyleSheet("color: #569CD6; font-size: 13px; font-weight: bold;")
         side_layout.addWidget(lbl_net)
         
-        # 1. Engine Group
         grp_eng = QGroupBox("🌐 High-Speed Engine")
         l_eng = QVBoxLayout(grp_eng)
         l_eng.setContentsMargins(8, 12, 8, 8)
@@ -1487,7 +1529,6 @@ class ServerHub(QMainWindow):
         r2.addWidget(b_opn_s); r2.addWidget(b_opn_h); l_eng.addLayout(r2)
         side_layout.addWidget(grp_eng)
         
-        # 2. CF Tunnel Group
         grp_cf = QGroupBox("☁️ Cloudflare Tunnel")
         l_cf = QVBoxLayout(grp_cf)
         l_cf.setContentsMargins(8, 12, 8, 8)
@@ -1517,7 +1558,6 @@ class ServerHub(QMainWindow):
         r3.addWidget(b_cpy_cf); r3.addWidget(b_opn_cf); l_cf.addLayout(r3)
         side_layout.addWidget(grp_cf)
         
-        # 3. Simulator Group
         grp_test = QGroupBox("🧪 Simulator Engine")
         l_test = QVBoxLayout(grp_test); l_test.setContentsMargins(8, 12, 8, 8); l_test.setSpacing(6)
         
@@ -1532,7 +1572,6 @@ class ServerHub(QMainWindow):
         l_test.addWidget(self.cb_test_date)
         side_layout.addWidget(grp_test)
         
-        # 4. Support Group
         grp_sup = QGroupBox("📞 Support")
         l_sup = QVBoxLayout(grp_sup); l_sup.setContentsMargins(8, 12, 8, 8); l_sup.setSpacing(6)
         l_sup.addWidget(QLabel("Contact: +91 8960446756"))
@@ -1546,13 +1585,11 @@ class ServerHub(QMainWindow):
         sidebar_scroll.setWidget(sidebar)
         main_layout.addWidget(sidebar_scroll)
         
-        # --- RIGHT DASHBOARD ---
         content = QWidget()
         c_lay = QVBoxLayout(content)
         c_lay.setContentsMargins(4, 0, 0, 0)
         c_lay.setSpacing(8)
         
-        # 1. Header & Meters Row
         hdr_row = QHBoxLayout()
         hdr_row.setSpacing(10)
         
@@ -1611,7 +1648,12 @@ class ServerHub(QMainWindow):
         hdr_row.addLayout(acts)
         c_lay.addLayout(hdr_row)
         
-        # 2. 2x4 Metric Cards Grid
+        self.lbl_test_banner = QLabel("⚠ TESTING MODE ACTIVE — scans are NOT counted against the live event date ⚠")
+        self.lbl_test_banner.setAlignment(Qt.AlignCenter)
+        self.lbl_test_banner.setStyleSheet("background:#D7BA7D; color:#1C1C1E; font-weight:bold; font-size:12px; border-radius:4px; padding:4px;")
+        self.lbl_test_banner.setVisible(False)
+        c_lay.addWidget(self.lbl_test_banner)
+        
         self.stat_vars = {}
         grid = QGridLayout()
         grid.setSpacing(6)
@@ -1626,23 +1668,20 @@ class ServerHub(QMainWindow):
             l.addWidget(val, alignment=Qt.AlignCenter)
             return f, val
         
-        # Top Row
         f1, self.stat_vars["total_att"] = _mk("TOTAL ATTENDEES", "#569CD6"); grid.addWidget(f1, 0, 0)
         f2, self.stat_vars["kiosk_reg"] = _mk("KIOSK REGISTRATIONS", "#9CDCFE"); grid.addWidget(f2, 0, 1)
         f3, self.stat_vars["sqlite_total"] = _mk("SQLITE MIRROR SIZE", "#4EC9B0"); grid.addWidget(f3, 0, 2)
-        f4, self.stat_vars["online_scanners"] = _mk("ACTIVE SCANNERS", "#D7BA7D"); grid.addWidget(f4, 0, 3)
-        # Bottom Row
-        f5, self.stat_vars["chk_today"] = _mk("TODAY CHECK-IN", "#4EC9B0"); grid.addWidget(f5, 1, 0)
-        f6, self.stat_vars["chk_30"] = _mk("30 Aug Check-in", "#CCCCCC"); grid.addWidget(f6, 1, 1)
-        f7, self.stat_vars["chk_31"] = _mk("31 Aug Check-in", "#CCCCCC"); grid.addWidget(f7, 1, 2)
-        f8, self.stat_vars["chk_01"] = _mk("01 Sept Check-in", "#CCCCCC"); grid.addWidget(f8, 1, 3)
+        f4, self.stat_vars["online_scanners"] = _mk("ACTIVE SCANNERS", "#D7BA7D"); grid.addWidget(f4, 1, 0)
+        f5, self.stat_vars["chk_today"] = _mk("TODAY CHECK-IN", "#4EC9B0"); grid.addWidget(f5, 1, 1)
+        f9, self.stat_vars["chk_total"] = _mk("TOTAL CHECK-IN (ALL DAYS)", "#D7BA7D"); grid.addWidget(f9, 1, 2)
+        f6, self.stat_vars["chk_30"] = _mk("30 Aug Check-in", "#CCCCCC"); grid.addWidget(f6, 2, 0)
+        f7, self.stat_vars["chk_31"] = _mk("31 Aug Check-in", "#CCCCCC"); grid.addWidget(f7, 2, 1)
+        f8, self.stat_vars["chk_01"] = _mk("01 Sept Check-in", "#CCCCCC"); grid.addWidget(f8, 2, 2)
         c_lay.addLayout(grid)
         
-        # 3. Main Splitter (Devices Table / Logs)
         main_splitter = QSplitter(Qt.Vertical)
         main_splitter.setChildrenCollapsible(False)
         
-        # Container A: Devices
         dev_container = QWidget()
         dev_layout = QVBoxLayout(dev_container); dev_layout.setContentsMargins(0, 4, 0, 0); dev_layout.setSpacing(4)
         
@@ -1669,7 +1708,6 @@ class ServerHub(QMainWindow):
         dev_layout.addWidget(self.tree_devices)
         main_splitter.addWidget(dev_container)
         
-        # Container B: Logs
         log_container = QWidget()
         log_layout = QVBoxLayout(log_container); log_layout.setContentsMargins(0, 4, 0, 0); log_layout.setSpacing(4)
         
@@ -1689,7 +1727,6 @@ class ServerHub(QMainWindow):
         log_layout.addLayout(log_h)
         main_splitter.addWidget(log_container)
         
-        # Give the log console max possible weight (70% logs / 30% table)
         main_splitter.setSizes([200, 700])
         c_lay.addWidget(main_splitter, stretch=1)
         
@@ -1717,6 +1754,7 @@ class ServerHub(QMainWindow):
     def toggle_test_mode(self, is_checked):
         global SERVER_TEST_MODE
         SERVER_TEST_MODE = is_checked
+        self.lbl_test_banner.setVisible(SERVER_TEST_MODE)
         if SERVER_TEST_MODE:
             self.chk_test.setText("Testing Mode ON")
             self.cb_test_date.setEnabled(True)
@@ -1739,7 +1777,6 @@ class ServerHub(QMainWindow):
             c = snap_telemetry.get("cpu", 0)
             r = snap_telemetry.get("ram", 0)
             
-            # --- Dynamic Metric Subtext Generation ---
             cpu_curr = snap_telemetry.get("cpu_ghz_used", 0.0)
             cpu_max = snap_telemetry.get("cpu_ghz_total", 0.0)
             ram_used = snap_telemetry.get("ram_gb_used", 0.0)
@@ -1776,7 +1813,6 @@ class ServerHub(QMainWindow):
             self.animated_meters["api"].set_target(min(proc_ms, 500))
             self.animated_meters["api"].set_subtext(f"API: {proc_ms} ms")
 
-            # --- DYNAMIC IP CHANGE DETECTION ---
             new_ip = snap_telemetry.get("local_ip", self.local_ip)
             if new_ip != self.local_ip:
                 old_ip = self.local_ip
@@ -1784,7 +1820,6 @@ class ServerHub(QMainWindow):
                 self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
                 self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
                 
-                # Check if the engine is actively running
                 if not self.btn_start_flask.isEnabled(): 
                     self.update_qr(self.lbl_flask_qr, self.https_url)
                     self.lbl_flask_link.setText(self.https_url)
@@ -1975,9 +2010,6 @@ class ServerHub(QMainWindow):
 
         def _run_cf():
             try:
-                # --- TUNNEL RESILIENCE FIX ---
-                # We specifically point to 127.0.0.1 here instead of self.local_ip. 
-                # This guarantees that the tunnel ignores all physical adapter changes completely.
                 proc = subprocess.Popen(
                     ["cloudflared", "tunnel", "--url", f"http://127.0.0.1:{HTTP_PORT}", "--http-host-header", "localhost", "--no-tls-verify"], 
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, 
@@ -1996,7 +2028,7 @@ class ServerHub(QMainWindow):
                             self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
                             def finalize_tunnel(t_url):
                                 time.sleep(30)
-                                if self.cf_process is None: return # Handled by stop early
+                                if self.cf_process is None: return 
                                 with self.cf_lock: self.cloudflare_url = t_url
                                 self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
                                 self.gui_queue.put(lambda u=t_url: (self.lbl_cf_link.setText(u), self.lbl_cf_link.setStyleSheet("color:#569CD6; font-size:10px;")))
@@ -2066,7 +2098,6 @@ if __name__ == "__main__":
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(my_app_id)
         except Exception: pass
     
-    # Initialize Qt with High-DPI support
     app_qt = QApplication(sys.argv)
     if hasattr(Qt, 'HighDpiScaleFactorRoundingPolicy'):
         app_qt.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
