@@ -36,7 +36,11 @@
     }
 
     body {
-      font-family: "Inter", system-ui, -apple-system, sans-serif;
+      font-family:
+        "Inter",
+        system-ui,
+        -apple-system,
+        sans-serif;
       background-color: var(--bg-dark);
       color: var(--text-main);
       margin: 0;
@@ -60,13 +64,27 @@
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     @keyframes popIn {
-      0% { transform: scale(0.95); opacity: 0; }
-      100% { transform: scale(1); opacity: 1; }
+      0% {
+        transform: scale(0.95);
+        opacity: 0;
+      }
+
+      100% {
+        transform: scale(1);
+        opacity: 1;
+      }
     }
 
     /* Premium Hardware Accelerated Scanner Flash */
@@ -362,6 +380,21 @@
       display: none !important;
     }
 
+    .ai-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.68rem;
+      font-weight: 800;
+      color: #000;
+      background: var(--primary);
+      padding: 3px 8px;
+      border-radius: 20px;
+      box-shadow: 0 2px 8px var(--primary-glow);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
     .permission-overlay {
       position: absolute;
       inset: 0;
@@ -429,10 +462,26 @@
       align-items: center;
       width: 100%;
       font-size: 0.75rem;
-      color: var(--primary);
+      color: var(--text-main);
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 1px;
+    }
+
+    .auto-zoom-badge {
+      background: rgba(0, 210, 255, 0.15);
+      color: var(--primary);
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 0.65rem;
+      opacity: 0;
+      transition: opacity 0.3s ease-in-out;
+      border: 1px solid var(--primary-glow);
+    }
+
+    .zoom-val-display {
+      color: var(--primary);
+      font-weight: 900;
     }
 
     .zoom-controls-row {
@@ -821,6 +870,7 @@
         </select>
       </div>
 
+      <!-- SCANNER BOX -->
       <div class="scanner-box" id="scanner-box">
         <div id="reader"></div>
 
@@ -837,15 +887,18 @@
         </div>
       </div>
 
+      <!-- ZOOM CONTROLS (Updated with inline oninput for instant slider response) -->
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
-          <span>Manual Lens Zoom</span>
-          <span id="zoom-val-display">1.0x</span>
+          <span>Lens Zoom Controls</span>
+          <span id="auto-zoom-badge" class="auto-zoom-badge">⚡ Auto-Focusing</span>
+          <span id="zoom-val-display" class="zoom-val-display">1.0x</span>
         </div>
         <div class="zoom-controls-row">
           <button class="zoom-btn" onclick="adjustZoom(-0.1)">−</button>
           <div class="zoom-slider-wrapper">
-            <input type="range" id="zoom-slider" class="zoom-slider" min="1" max="3" step="0.1" value="1" />
+            <input type="range" id="zoom-slider" class="zoom-slider" min="1" max="3" step="0.1" value="1"
+              oninput="setZoomAbsolute(this.value)" />
           </div>
           <button class="zoom-btn" onclick="adjustZoom(0.1)">+</button>
         </div>
@@ -1122,14 +1175,26 @@
               const vidWidth = videoEl.videoWidth;
 
               if (qrWidth < vidWidth * 0.2 && zoomTarget < maxZoom) {
-                adjustZoom(0.2); // Too far away -> Smooth Zoom In
+                triggerAIZoom(0.2); // Too far away -> Smooth Zoom In
               } else if (qrWidth > vidWidth * 0.6 && zoomTarget > minZoom) {
-                adjustZoom(-0.2); // Too close -> Smooth Zoom Out
+                triggerAIZoom(-0.2); // Too close -> Smooth Zoom Out
               }
             }
           } catch (e) { }
         }
       }, 1000); // Check only once per second to preserve battery!
+    }
+
+    function triggerAIZoom(delta) {
+      adjustZoom(delta);
+      // Show AI Badge to let the staff know the camera is auto-adjusting
+      const badge = document.getElementById("auto-zoom-badge");
+      if (badge) {
+        badge.style.opacity = 1;
+        setTimeout(() => {
+          badge.style.opacity = 0;
+        }, 1200);
+      }
     }
 
     async function startHardware() {
@@ -1211,26 +1276,26 @@
           }
         }
 
-        zoomTarget = minZoom;
+        // Initialize Slider
+        setZoomAbsolute(minZoom);
         const slider = document.getElementById("zoom-slider");
-        slider.min = minZoom;
-        slider.max = maxZoom;
-        slider.step = (maxZoom - minZoom) / 20;
-        slider.value = minZoom;
-
-        // Clean event listener duplicate
-        slider.replaceWith(slider.cloneNode(true));
-        const newSlider = document.getElementById("zoom-slider");
-        newSlider.addEventListener("input", (e) => {
-          adjustZoom(parseFloat(e.target.value) - zoomTarget);
-        });
+        if (slider) {
+          slider.min = minZoom;
+          slider.max = maxZoom;
+          slider.step = (maxZoom - minZoom) / 20;
+        }
       } catch (e) { }
     }
 
-    function adjustZoom(delta) {
-      zoomTarget = Math.max(minZoom, Math.min(maxZoom, zoomTarget + delta));
+    // Direct absolute setter (used by the slider instant oninput)
+    function setZoomAbsolute(val) {
+      zoomTarget = Math.max(minZoom, Math.min(maxZoom, parseFloat(val)));
+
       const slider = document.getElementById("zoom-slider");
-      if (slider) slider.value = zoomTarget;
+      if (slider && slider.value !== String(zoomTarget)) {
+        slider.value = zoomTarget;
+      }
+
       const display = document.getElementById("zoom-val-display");
       if (display) display.innerText = zoomTarget.toFixed(1) + "x";
 
@@ -1244,6 +1309,11 @@
         const videoEl = document.querySelector("#reader video");
         if (videoEl) videoEl.style.transform = `scale(${zoomTarget})`;
       }
+    }
+
+    // Relative delta setter (used by buttons, pinch, and scroll wheel)
+    function adjustZoom(delta) {
+      setZoomAbsolute(zoomTarget + delta);
     }
 
     // =========================================================================
