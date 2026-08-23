@@ -232,9 +232,12 @@ SECRETS_CONFIG = os.path.join(CONFIG_DIR, "secrets.json")
 BANNER_IMAGES = [
     "eventhub-banner.png",
     "eventhub-banner0.png",
-    "tdeup2025-team.png"
+    "tdeup2025-team.png",
+    "eventhub-banner1.jpg",
+    "eventhub-banner3.jpg",
+    "eventhub-banner4.jpg",
+    "eventhub-banner5.jpg",
 ]
-
 MIN_PYTHON = (3, 9)
 MAX_LOG_LINES = 2000
 
