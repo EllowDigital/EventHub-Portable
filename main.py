@@ -639,6 +639,44 @@ class LauncherApp(QMainWindow):
     # --------------------------------------------------------------------------
     # ASYNC INIT & HEALTH CHECKS
     # --------------------------------------------------------------------------
+    def _run_pip_install_async(self):
+        """Asynchronously runs pip install to enforce strict library versions smoothly."""
+        threading.Thread(target=self._pip_install_task, daemon=True).start()
+
+    def _pip_install_task(self):
+        if not os.path.isfile(REQUIREMENTS_FILE):
+            self._set_health("deps", "Missing TXT ⚠", "danger")
+            return
+            
+        self.log("Synchronizing python dependencies from requirements.txt...", "INFO")
+        try:
+            flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            
+            # Using Popen to stream the output into the activity log without freezing the GUI
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE, "--disable-pip-version-check"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags
+            )
+            
+            for line in iter(proc.stdout.readline, ''):
+                if line and (clean_line := line.strip()):
+                    # Avoid spamming the log with generic pip progress bars, just key messages
+                    if not clean_line.startswith("Requirement already satisfied"):
+                        self.log(f"[PIP] {clean_line}", "TOOL")
+                        
+            proc.wait()
+            
+            if proc.returncode == 0:
+                self.log("Dependencies synchronized and verified successfully.", "SUCCESS")
+                self._set_health("deps", "Ready ✓", "success")
+            else:
+                self.log(f"Dependency sync encountered a warning (Code {proc.returncode}). Check internet.", "WARNING")
+                self._set_health("deps", "Ready ✓", "warning")
+                
+        except Exception as e:
+            self.log(f"Dependency sync crashed natively: {e}", "ERROR")
+            self._set_health("deps", "Error ⚠", "danger")
+
     def _run_schema_script_async(self):
         threading.Thread(target=self._schema_task, daemon=True).start()
 
@@ -684,15 +722,18 @@ class LauncherApp(QMainWindow):
         # 2. Instantly reset all UI cards to show they are actively refreshing
         self._set_health("python", "Checking...", "warning")
         self._set_health("config", "Checking...", "warning")
-        self._set_health("deps", "Checking...", "warning")
+        self._set_health("deps", "Installing...", "warning") # Explicitly set to Installing
         self._set_health("cloudflared", "Verifying...", "warning")
         self._set_health("mysql_db", "Pinging...", "warning")
         self._set_health("sqlite_db", "Pinging...", "warning")
 
-        # 3. As requested: Re-run schema initialization on every refresh
+        # 3. Perform pip install async (satisfies startup and refresh requirements)
+        self._run_pip_install_async()
+
+        # 4. As requested: Re-run schema initialization on every refresh
         self._run_schema_script_async()
 
-        # 4. Perform Synchronous Checks (Python, Configs, Dependencies)
+        # 5. Perform Synchronous Checks (Python, Configs)
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         self._set_health("python", f"v{py_ver} ✓", "success")
         
@@ -701,9 +742,7 @@ class LauncherApp(QMainWindow):
         else:
             self._set_health("config", "Missing ⚠", "warning")
             
-        self._set_health("deps", "Ready ✓", "success") # Handled by Tkinter safely earlier
-        
-        # 5. Perform Asynchronous Checks (Network, Services, Databases)
+        # 6. Perform Asynchronous Checks (Network, Services, Databases)
         threading.Thread(target=self._verify_cloudflared_thread, daemon=True).start()
         threading.Thread(target=self._verify_databases_thread, daemon=True).start()
 
@@ -913,46 +952,44 @@ class LauncherApp(QMainWindow):
     def stop_tool(self, tool):
         key = tool["key"]
         proc = self.processes.get(key)
-        if proc and proc.poll() is None:
-            try:
-                if os.name == "nt": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else: proc.terminate()
-            except Exception: pass
-            self.log(f"Tool stopped: {tool['label']}", "WARNING", speak_text=f"{tool['label']} terminated.")
+        if proc:
+            if proc.poll() is None:
+                try:
+                    if os.name == "nt": 
+                        subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else: 
+                        proc.terminate()
+                except Exception: pass
+            
+            self.log(f"Tool stopped by user: {tool['label']}", "WARNING", speak_text=f"{tool['label']} terminated.")
             self._set_tool_status(key, running=False)
+            
+            # Safely remove it from tracked processes to prevent the poller from logging it as a crash
+            if key in self.processes:
+                del self.processes[key]
 
     def stop_all_tools(self):
+        # Create a static list of keys to safely remove them during iteration
         for key in list(self.processes.keys()):
-            if self.processes[key].poll() is None:
-                self.stop_tool(next(t for t in TOOLS if t["key"] == key))
-
-    def _set_tool_status(self, key, running):
-        widgets = self.tool_widgets.get(key)
-        tool = next((t for t in TOOLS if t["key"] == key), None)
-        if not widgets or not tool: return
-
-        if running:
-            widgets["status"].setText("🟢 RUNNING")
-            widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: #2ecc71;")
-            widgets["button"].setText("Stop"); widgets["button"].setStyleSheet(self._get_button_style("danger"))
-            try: widgets["button"].clicked.disconnect()
-            except Exception: pass
-            widgets["button"].clicked.connect(lambda checked=False, t=tool: self.stop_tool(t))
-        else:
-            widgets["status"].setText("⚫ IDLE")
-            widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
-            widgets["button"].setText("Launch Tool"); widgets["button"].setStyleSheet(self._get_button_style(tool["bootstyle"]))
-            try: widgets["button"].clicked.disconnect()
-            except Exception: pass
-            widgets["button"].clicked.connect(lambda checked=False, t=tool: self.launch_tool(t))
+            tool = next((t for t in TOOLS if t["key"] == key), None)
+            if tool:
+                self.stop_tool(tool)
 
     def _poll_processes(self):
         for key in list(self.processes.keys()):
             proc = self.processes[key]
+            
             if proc.poll() is not None:
                 tool = next((t for t in TOOLS if t["key"] == key), None)
-                self.log(f"Tool exited unexpectedly: {tool['label']} (Code {proc.returncode})", "ERROR", speak_text=f"Warning. {tool['label']} crashed.")
-                del self.processes[key]
+                if tool:
+                    # Check for Clean Exit (Code 0) vs Actual Crash
+                    if proc.returncode == 0:
+                        self.log(f"Tool closed manually (Clean Exit): {tool['label']}", "INFO")
+                    else:
+                        self.log(f"Tool exited unexpectedly: {tool['label']} (Code {proc.returncode})", "ERROR", speak_text=f"Warning. {tool['label']} crashed.")
+                
+                if key in self.processes:
+                    del self.processes[key]
                 self._set_tool_status(key, running=False)
 
     # --------------------------------------------------------------------------
