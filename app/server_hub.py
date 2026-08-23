@@ -16,6 +16,8 @@ import concurrent.futures
 from dataclasses import dataclass, field
 import ipaddress
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import urllib3
 import ctypes
 import html
@@ -23,6 +25,8 @@ import sys
 import functools
 import hmac
 import math
+import gzip
+from io import BytesIO
 from datetime import datetime, timezone, timedelta
 
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
@@ -46,6 +50,7 @@ import webbrowser
 import psutil
 
 from flask import Flask, render_template, request, jsonify, Response
+from werkzeug.exceptions import HTTPException
 from waitress import create_server 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -230,6 +235,10 @@ DB_JOB_QUEUE_MAXSIZE = 50000
 DB_JOB_TIMEOUT = 12               
 
 HTTP_WORKER_THREADS = 128
+
+MAX_SSE_CLIENTS = 40             
+COMPRESS_MIN_BYTES = 500          
+CF_MAX_RECONNECT_ATTEMPTS = 5    
 
 STATS_REFRESH_INTERVAL_SEC = 300  
 EVENT_DATE_LABELS = {"2026-08-30": "30 August", "2026-08-31": "31 August", "2026-09-01": "1 September"}
@@ -446,8 +455,44 @@ def log_request(response):
     except Exception: pass
     return response
 
+@app.after_request
+def compress_response(response):
+    try:
+        accept_encoding = request.headers.get('Accept-Encoding', '')
+        if (
+            'gzip' in accept_encoding.lower()
+            and response.status_code < 300
+            and not response.direct_passthrough
+            and not response.is_streamed
+            and 'Content-Encoding' not in response.headers
+            and response.content_length is not None
+            and response.content_length >= COMPRESS_MIN_BYTES
+            and response.mimetype in ('application/json', 'text/html', 'text/css', 'application/javascript', 'text/javascript', 'text/plain')
+        ):
+            buf = BytesIO()
+            with gzip.GzipFile(mode='wb', fileobj=buf, compresslevel=6) as gz:
+                gz.write(response.get_data())
+            response.set_data(buf.getvalue())
+            response.headers['Content-Encoding'] = 'gzip'
+            response.headers['Content-Length'] = str(response.content_length)
+        response.headers.setdefault('Vary', 'Accept-Encoding')
+    except Exception:
+        logging.debug("Response compression skipped", exc_info=True)
+    return response
+
+@app.errorhandler(HTTPException)
+def handle_http_exception(e):
+    # Preserve the real status (400 bad JSON, 404, 413 too-large upload, etc.) instead of
+    # masking everything as a 500 - lets clients/devices distinguish "your request was bad"
+    # from "the server broke", and retry appropriately.
+    return jsonify({"status": "error", "message": e.description or e.name}), e.code
+
 @app.errorhandler(Exception)
-def handle_global_exception(e): return jsonify({"status": "error", "message": "An unexpected server fault occurred. Contact admin."}), 500
+def handle_global_exception(e):
+    # Anything reaching here is truly unexpected - log the full traceback so it's diagnosable
+    # after the fact, instead of silently vanishing. The client still just gets a clean message.
+    logging.exception(f"Unhandled exception on {request.method} {request.path}")
+    return jsonify({"status": "error", "message": "An unexpected server fault occurred. Please retry."}), 500
 
 def _status_log_tag(status_code):
     if status_code >= 500: return "log_error"
@@ -631,6 +676,7 @@ def _handle_checkin_job(payload):
             time.sleep(random.uniform(0.01, 0.05))
         except Exception:
             session.rollback()
+            logging.exception(f"Checkin job failed unexpectedly for device={device_name}, identifier={identifier}")
             log_event_clean("CHECKIN", device_name, "DB Error", 500)
             return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
         finally:
@@ -692,6 +738,7 @@ def _handle_register_job(payload):
             time.sleep(random.uniform(0.01, 0.05)) 
         except Exception:
             session.rollback()
+            logging.exception(f"Registration job failed unexpectedly for device={device_label}")
             return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
         finally:
             try: session.close()
@@ -710,6 +757,7 @@ def db_writer_loop(worker_id):
                 else: result = (500, {"status": "error", "message": "Unknown job payload type."})
                 if not job.future.done(): job.future.set_result(result)
             except Exception as e:
+                logging.exception(f"DB writer job '{job.kind}' raised unexpectedly (worker {worker_id})")
                 if not job.future.done(): job.future.set_exception(e)
             finally:
                 DB_WRITE_QUEUE.task_done()
@@ -752,13 +800,19 @@ def register(): return render_template('registration.html')
 @app.route('/stats')
 def stats(): return render_template('network_stats.html')
 
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    # Pure liveness probe - touches no locks, DB, or shared state, so it's safe to poll
+    # aggressively from uptime monitors without adding load to the real API paths.
+    return jsonify({"status": "ok", "version": APP_VERSION}), 200
+
 @app.route('/api/status', methods=['GET', 'POST'])
 def get_server_status():
     if request.method == 'GET':
         return jsonify({"status": "online", "version": APP_VERSION}), 200
         
     ip = request.remote_addr
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     reported_name = data.get('device_name', 'Unknown Device')
     device_id = data.get('device_id')
     battery = data.get('battery', 'N/A')
@@ -784,7 +838,7 @@ def get_server_status():
 
 @app.route('/api/device/message', methods=['POST'])
 def send_device_message():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     device_id = data.get('id')
     message = data.get('message', '').strip()
     if not device_id or not message: return jsonify({"status": "error", "message": "Missing device ID or message."}), 400
@@ -793,7 +847,7 @@ def send_device_message():
 
 @app.route('/api/device/rename', methods=['POST'])
 def rename_device():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     device_id = data.get('id') or data.get('ip')
     new_name = data.get('new_name', '').strip()
     if not device_id or not new_name: return jsonify({"status": "error", "message": "Missing device ID or new name."}), 400
@@ -817,6 +871,13 @@ def get_network_data():
 
 @app.route('/api/stream-scans')
 def stream_scans():
+    # Each open SSE connection permanently occupies one HTTP worker thread for its whole
+    # lifetime. Without a cap, enough open dashboard tabs can starve the pool that checkin/
+    # register requests need, so new viewers are turned away cleanly instead.
+    with scan_clients_lock: current_clients = len(SCAN_CLIENTS)
+    if current_clients >= MAX_SSE_CLIENTS:
+        return jsonify({"status": "error", "message": "Too many live dashboards connected right now. Please close one and retry."}), 503, {"Retry-After": "5"}
+
     def event_stream():
         q = queue.Queue(maxsize=100)
         with scan_clients_lock: SCAN_CLIENTS.append(q)
@@ -834,7 +895,7 @@ def stream_scans():
 
 @app.route('/api/checkin', methods=['POST'])
 def process_checkin():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     payload = {
         "identifier": str(data.get('attendee_id', data.get('qr_data', data.get('id', '')))).strip(),
         "search_type": data.get('search_type', 'id'),
@@ -846,7 +907,7 @@ def process_checkin():
 
 @app.route('/api/register', methods=['POST'])
 def process_registration():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     mobile_number = str(data.get('mobile', '')).strip()
     full_name = str(data.get('full_name', '')).strip()
     if not full_name: return jsonify({"status": "error", "message": "Full name is required."}), 400
@@ -874,7 +935,9 @@ def check_mobile():
         ek = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
         if ek: return jsonify({"status": "already_registered", "attendee_id": ek.attendee_id}), 200
         return jsonify({"status": "not_found"}), 200
-    except Exception: return jsonify({"status": "error", "message": "Could not check mobile number right now. Try again."}), 500
+    except Exception:
+        logging.exception(f"check_mobile failed for mobile={mobile_number}")
+        return jsonify({"status": "error", "message": "Could not check mobile number right now. Try again."}), 500
     finally:
         try: session.close()
         except Exception: pass
@@ -889,7 +952,9 @@ def lookup_pincode(code):
         if not matches: return jsonify({"status": "not_found"}), 200
         first = matches[0]
         return jsonify({"status": "success", "district": first.get("District", ""), "state": first.get("State", "")}), 200
-    except Exception: return jsonify({"status": "error", "message": "Lookup failed."}), 500
+    except Exception:
+        logging.exception(f"lookup_pincode failed for code={code}")
+        return jsonify({"status": "error", "message": "Lookup failed."}), 500
 
 @app.route('/api/attendees', methods=['GET'])
 def get_all_attendees():
@@ -923,7 +988,9 @@ def get_all_attendees():
             }
             results.append(att_dict)
         return jsonify(results), 200
-    except Exception: return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
+    except Exception:
+        logging.exception("get_all_attendees failed")
+        return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
     finally:
         try: session.close()
         except Exception: pass
@@ -1199,6 +1266,9 @@ class ServerHub(QMainWindow):
         self.cloudflare_url = "Offline"
         self.cf_process = None
         self._cf_connecting = False  
+        self._cf_manual_stop = False
+        self._cf_reconnect_attempts = 0
+        self._cf_generation = 0
         self.SessionMySQL = None
         self.SessionSQLite = None
         self._db_checked = False
@@ -1214,6 +1284,8 @@ class ServerHub(QMainWindow):
         self.gui_queue = queue.Queue(maxsize=1000)
         self._meter_cache = {}
         self._context_device_id = None
+        self._last_device_order = []
+        self._device_table_empty_state = False
 
         global gui_log_callback
         global app_window
@@ -1291,6 +1363,13 @@ class ServerHub(QMainWindow):
         global NETWORK_LATENCY
         session = requests.Session()
         session.headers.update({"User-Agent": "EventHub-PingDaemon/2.0"})
+        # Small bounded retry + a real connection pool so a single slow/flaky hop doesn't
+        # immediately read as "OFFLINE", and repeated pings reuse sockets instead of
+        # renegotiating a new connection (and, for HTTPS, a new TLS handshake) every 3s.
+        retry_strategy = Retry(total=2, backoff_factor=0.3, status_forcelist=[502, 503, 504])
+        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
         while not _global_shutdown_event.is_set():
             try:
                 future_local = self.ping_executor.submit(self._ping_local, session)
@@ -1903,32 +1982,9 @@ class ServerHub(QMainWindow):
 
             self._set_stat("online_scanners", len(active_ids))
             self.lbl_devices_header.setText(f"📡 ACTIVE CONNECTED DEVICES ({len(active_ids)}) — Right-Click to Manage")
-            
-            self.tree_devices.setRowCount(0)
-            if active_ids:
-                for row, d_id in enumerate(sorted(active_ids, key=lambda i: device_info[i]['name'].lower())):
-                    info = device_info[d_id]
-                    sec_ago = max(0, int(current_time - info['last_seen']))
-                    sig_text, color = ("🟢 Live", "#4EC9B0") if sec_ago < 8 else (("🟡 Slow", "#D7BA7D") if sec_ago < 15 else ("🟠 Fading", "#F44747"))
-                    
-                    page_label = {"/": "Home Portal", "/scanner": "Scanner", "/register": "Registration", "/stats": "Network Stats"}.get(info.get('page', '/'), info.get('page', '/'))
 
-                    self.tree_devices.insertRow(row)
-                    items = [
-                        QTableWidgetItem(info['name']), QTableWidgetItem(info['ip']),
-                        QTableWidgetItem(page_label), QTableWidgetItem(f"🔋 {info.get('battery', 'N/A')}"),
-                        QTableWidgetItem("just now" if sec_ago < 2 else f"{sec_ago}s ago"),
-                        QTableWidgetItem(sig_text), QTableWidgetItem(d_id)
-                    ]
-                    for col, it in enumerate(items):
-                        it.setForeground(QColor(color))
-                        self.tree_devices.setItem(row, col, it)
-            else:
-                self.tree_devices.insertRow(0)
-                it = QTableWidgetItem("No devices connected yet — awaiting heartbeat...")
-                it.setForeground(QColor("#858585"))
-                self.tree_devices.setItem(0, 0, it)
-                self.tree_devices.setItem(0, 6, QTableWidgetItem("empty_msg"))
+            current_order = sorted(active_ids, key=lambda i: device_info[i]['name'].lower())
+            self._sync_device_table(current_order, device_info, current_time)
 
             if not self._db_checked:
                 self.lbl_stat_mysql.setText("● SQL: WAIT")
@@ -1961,6 +2017,69 @@ class ServerHub(QMainWindow):
                 self.lbl_stats_health.setText("")
         except Exception as e:
             logging.error(f"refresh_stats error: {e}")
+
+    def _sync_device_table(self, current_order, device_info, current_time):
+        """Update the device table in place instead of tearing it down every 3s.
+
+        The old code called setRowCount(0) then rebuilt every row/cell from scratch on every
+        tick, regardless of whether anything changed. With a large number of connected
+        devices that meant constant widget churn (reallocating every QTableWidgetItem,
+        losing scroll position and any row selection) purely to refresh a timestamp string.
+        Now: if the same devices are online in the same sorted order as last tick (the
+        overwhelmingly common case), we just update the existing cells' text/color in place.
+        A full rebuild only happens when a device actually joins/leaves or the sort order
+        shifts - correctness is identical, it just isn't paid for on every single tick.
+        """
+        table = self.tree_devices
+        page_labels = {"/": "Home Portal", "/scanner": "Scanner", "/register": "Registration", "/stats": "Network Stats"}
+
+        if not current_order:
+            if not self._device_table_empty_state:
+                table.setRowCount(0)
+                table.insertRow(0)
+                it = QTableWidgetItem("No devices connected yet — awaiting heartbeat...")
+                it.setForeground(QColor("#858585"))
+                table.setItem(0, 0, it)
+                table.setItem(0, 6, QTableWidgetItem("empty_msg"))
+                self._device_table_empty_state = True
+            self._last_device_order = []
+            return
+
+        fast_path = (
+            current_order == self._last_device_order
+            and not self._device_table_empty_state
+            and table.rowCount() == len(current_order)
+        )
+
+        if not fast_path:
+            table.setRowCount(0)
+
+        for row, d_id in enumerate(current_order):
+            info = device_info[d_id]
+            sec_ago = max(0, int(current_time - info['last_seen']))
+            sig_text, color = ("🟢 Live", "#4EC9B0") if sec_ago < 8 else (("🟡 Slow", "#D7BA7D") if sec_ago < 15 else ("🟠 Fading", "#F44747"))
+            page_label = page_labels.get(info.get('page', '/'), info.get('page', '/'))
+            values = [info['name'], info['ip'], page_label, f"🔋 {info.get('battery', 'N/A')}",
+                      "just now" if sec_ago < 2 else f"{sec_ago}s ago", sig_text]
+            qcolor = QColor(color)
+
+            if fast_path:
+                for col, val in enumerate(values):
+                    item = table.item(row, col)
+                    if item is None:
+                        item = QTableWidgetItem()
+                        table.setItem(row, col, item)
+                    item.setText(val)
+                    item.setForeground(qcolor)
+            else:
+                table.insertRow(row)
+                items = [QTableWidgetItem(v) for v in values] + [QTableWidgetItem(d_id)]
+                for col, it in enumerate(items):
+                    it.setForeground(qcolor)
+                    table.setItem(row, col, it)
+
+        self._last_device_order = current_order
+        self._device_table_empty_state = False
 
     def start_flask(self):
         self.btn_start_flask.setEnabled(False)
@@ -2028,12 +2147,19 @@ class ServerHub(QMainWindow):
 
     def _mark_cf_live(self): 
         self._cf_connecting = False
+        self._cf_reconnect_attempts = 0
         self.lbl_stat_cf.setText("● CF: LIVE")
         self.lbl_stat_cf.setStyleSheet("color:#4EC9B0; font-weight:bold; font-size:11px; border:none;")
 
     def start_cf(self):
         if not self.http_thread:
             return self._append_log('cf', "[ERROR] Start Local Engine FIRST!")
+        self._cf_manual_stop = False
+        self._cf_reconnect_attempts = 0
+        self._cf_generation += 1
+        self._launch_cf_tunnel()
+
+    def _launch_cf_tunnel(self):
         self.btn_start_cf.setEnabled(False)
         self.btn_start_cf.setText("⏳ TUNNEL CONNECTING...")
         self.btn_stop_cf.setEnabled(True)
@@ -2079,11 +2205,39 @@ class ServerHub(QMainWindow):
                 self._append_log('cf', f"[ERROR] Tunnel failed: {e}")
             finally:
                 with self.cf_lock: is_active = (self.cf_process is not None)
-                if is_active: self.gui_queue.put(self.stop_cf)
+                if is_active:
+                    # The subprocess ended on its own (no exception above) - most often a
+                    # dropped connection or the cloudflare edge cycling the tunnel, not a
+                    # permanent failure. Retry with backoff instead of just giving up,
+                    # unless the user asked to stop, the app is closing, or we've already
+                    # retried enough times that something is genuinely wrong.
+                    if self._cf_manual_stop or _global_shutdown_event.is_set() or self._cf_reconnect_attempts >= CF_MAX_RECONNECT_ATTEMPTS:
+                        self.gui_queue.put(self.stop_cf)
+                    else:
+                        self._cf_reconnect_attempts += 1
+                        attempt_no = self._cf_reconnect_attempts
+                        delay = min(5 * attempt_no, 30)
+                        my_generation = self._cf_generation
+                        with self.cf_lock:
+                            self.cf_process = None
+                            self.cloudflare_url = "Pending"
+                        self.gui_queue.put(lambda: self._append_log('cf', f"[WARNING] Tunnel dropped unexpectedly. Reconnecting in {delay}s (attempt {attempt_no}/{CF_MAX_RECONNECT_ATTEMPTS})..."))
+                        self.gui_queue.put(lambda: (self.lbl_stat_cf.setText("● CF: RECONNECTING"), self.lbl_stat_cf.setStyleSheet("color:#D7BA7D; font-weight:bold; font-size:11px; border:none;")))
+
+                        def _delayed_retry():
+                            _global_shutdown_event.wait(delay)
+                            # If a manual stop/start happened while we were waiting, this
+                            # retry is stale - let whatever the user did stand.
+                            if self._cf_generation != my_generation: return
+                            if not _global_shutdown_event.is_set() and not self._cf_manual_stop and self.http_thread:
+                                self.gui_queue.put(self._launch_cf_tunnel)
+                        threading.Thread(target=_delayed_retry, daemon=True, name="CFReconnect").start()
                 
         threading.Thread(target=_run_cf, daemon=True).start()
         
     def stop_cf(self):
+        self._cf_manual_stop = True
+        self._cf_generation += 1
         if not self.btn_stop_cf.isEnabled() and self.cloudflare_url == "Offline": return
         
         self.btn_stop_cf.setEnabled(False)
