@@ -230,11 +230,20 @@ HTTP_PORT = 5000
 HTTPS_PORT = 5001
 CERT_DIR = os.path.join(CONFIG_DIR, 'certs')
 
-DB_WRITER_THREADS = 64            
-DB_JOB_QUEUE_MAXSIZE = 50000               
-DB_JOB_TIMEOUT = 12               
+# ==========================================
+# OPTIMIZED CONCURRENCY & CONNECTION POOLING
+# ==========================================
+HTTP_WORKER_THREADS = 64          # Reduced from 128 -> 64 to avoid GIL & thread switching contention
+DB_WRITER_THREADS = 12            # Controlled concurrency to eliminate MySQL row/table lock contention
+DB_JOB_QUEUE_MAXSIZE = 50000      # Retained high capacity queue
+DB_JOB_TIMEOUT = 12               # Max wait time for DB jobs
 
-HTTP_WORKER_THREADS = 128
+# Target Database Pool Defaults (Configured in DB Engine Factory)
+MYSQL_POOL_SIZE = 16
+MYSQL_MAX_OVERFLOW = 4
+MYSQL_POOL_TIMEOUT = 10
+MYSQL_POOL_RECYCLE = 1800
+MYSQL_POOL_PRE_PING = True
 
 MAX_SSE_CLIENTS = 40             
 COMPRESS_MIN_BYTES = 500          
@@ -324,7 +333,7 @@ def get_cached_sessions():
                 if (time.time() - _db_cache_last_failure) < DB_SESSIONS_RETRY_COOLDOWN: return None
                 try: DB_SESSIONS_CACHE = get_database_sessions()
                 except Exception as e:
-                    logging.exception(f"DB failed: {e}")
+                    logging.exception(f"Database session retrieval failed: {e}")
                     _db_cache_last_failure = time.time()
                     return None
     return DB_SESSIONS_CACHE
@@ -482,15 +491,10 @@ def compress_response(response):
 
 @app.errorhandler(HTTPException)
 def handle_http_exception(e):
-    # Preserve the real status (400 bad JSON, 404, 413 too-large upload, etc.) instead of
-    # masking everything as a 500 - lets clients/devices distinguish "your request was bad"
-    # from "the server broke", and retry appropriately.
     return jsonify({"status": "error", "message": e.description or e.name}), e.code
 
 @app.errorhandler(Exception)
 def handle_global_exception(e):
-    # Anything reaching here is truly unexpected - log the full traceback so it's diagnosable
-    # after the fact, instead of silently vanishing. The client still just gets a clean message.
     logging.exception(f"Unhandled exception on {request.method} {request.path}")
     return jsonify({"status": "error", "message": "An unexpected server fault occurred. Please retry."}), 500
 
@@ -584,6 +588,7 @@ def stats_refresher_loop():
                     STATS_CACHE["last_error"] = None
         except Exception as e:
             with stats_lock: STATS_CACHE["last_error"] = str(e)
+            logging.debug(f"Stats refresh encountered error: {e}")
         loop_counter += 1
         _global_shutdown_event.wait(3.0) 
 
@@ -602,7 +607,9 @@ def _submit_db_job(kind, payload):
     except queue.Full: return 503, {"status": "error", "message": "System is very busy. Please wait a moment and try again."}
     try: return job.future.result(timeout=DB_JOB_TIMEOUT)
     except concurrent.futures.TimeoutError: return 504, {"status": "error", "message": "The request took too long. Please try again."}
-    except Exception: return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
+    except Exception as e: 
+        logging.exception(f"DB job failed execution for kind={kind}")
+        return 500, {"status": "error", "message": "An unexpected system glitch occurred. Please retry."}
 
 def _handle_checkin_job(payload):
     identifier = payload["identifier"]
@@ -618,37 +625,51 @@ def _handle_checkin_job(payload):
     while retries > 0:
         session = mysql_factory()
         try:
+            # SHORT TRANSACTION: Fetch & Lock
             attendee = None
             if search_type == 'phone':
                 attendee = session.query(Attendee).filter_by(mobile=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(mobile=identifier).with_for_update().first()
             else:
                 attendee = session.query(Attendee).filter_by(attendee_id=identifier).with_for_update().first() or session.query(OfflineKioskAttendee).filter_by(attendee_id=identifier).with_for_update().first()
+            
             if not attendee:
+                session.rollback()
                 log_event_clean("CHECKIN", device_name, f"Not found: {identifier}", 404)
                 broadcast_scan(None, "ERROR", f"Not found: {identifier}", device_name, iso_timestamp)
                 return 404, {"status": "error", "message": f"Record not found. Please direct attendee to the Help Desk."}
+            
             history = attendee.checkin_history
             if isinstance(history, str):
                 try: history = json.loads(history)
                 except Exception: history = {}
             if not isinstance(history, dict): history = {}
+            
             current_date_str = _current_event_date_str()
             date_map = EVENT_DATE_LABELS
-            if current_date_str not in date_map: return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
+            if current_date_str not in date_map: 
+                session.rollback()
+                return 400, {"status": "error", "message": "System date error. Check-in is not active for today."}
+            
             today_key = date_map[current_date_str]
             att_days = attendee.attendance_days or []
             if isinstance(att_days, str):
                 try: att_days = json.loads(att_days)
                 except Exception: att_days = []
+            
             if today_key not in att_days:
+                session.rollback()
                 log_event_clean("CHECKIN", device_name, f"Denied (No pass {today_key})", 403)
                 broadcast_scan(attendee, "ERROR", f"Denied (No pass {today_key})", device_name, iso_timestamp)
                 return 403, {"status": "error", "message": f"Access Denied: Attendee does not have a valid pass for today ({today_key})."}
+            
             if today_key in history:
+                session.rollback()
                 friendly_msg = f"Already Scanned! {attendee.full_name} checked in earlier today."
                 log_event_clean("CHECKIN", device_name, friendly_msg, 400)
                 broadcast_scan(attendee, "DUPLICATE", friendly_msg, device_name, iso_timestamp)
                 return 400, {"status": "error", "message": friendly_msg}
+            
+            # UPDATE & COMMIT IMMEDIATELY (Minimizes lock holding time)
             history[today_key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_name, "date_code": current_date_str, "display_date": today_key}
             attendee.checkin_history = history
             flag_modified(attendee, "checkin_history")
@@ -657,20 +678,23 @@ def _handle_checkin_job(payload):
             attendee.needs_local_sync = False
             attendee.local_modified = True
             session.commit()
+            
             with stats_lock:
                 if current_date_str == "2026-08-30": STATS_CACHE["chk_30"] += 1
                 elif current_date_str == "2026-08-31": STATS_CACHE["chk_31"] += 1
                 elif current_date_str == "2026-09-01": STATS_CACHE["chk_01"] += 1
                 STATS_CACHE["total_scans"] += 1
                 STATS_CACHE["today_scans"] += 1
+            
             success_msg = f"{attendee.full_name} ({attendee.attendee_id})"
             log_event_clean("CHECKIN", device_name, success_msg, 200)
             broadcast_scan(attendee, "SUCCESS", success_msg, device_name, iso_timestamp)
             return 200, {"status": "success", "message": success_msg, "time": iso_timestamp}
-        except OperationalError:
+        except OperationalError as oe:
             session.rollback()
             retries -= 1
             if retries == 0:
+                logging.warning(f"Database lock contention encountered during checkin: {oe}")
                 log_event_clean("CHECKIN", device_name, "DB Locked (OperationalError)", 503)
                 return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
             time.sleep(random.uniform(0.01, 0.05))
@@ -681,7 +705,7 @@ def _handle_checkin_job(payload):
             return 500, {"status": "error", "message": "A system error occurred. Please try scanning again."}
         finally:
             try: session.close()
-            except Exception: pass
+            except Exception as e: logging.debug(f"Error closing DB session: {e}")
 
 def _handle_register_job(payload):
     data = payload["data"]
@@ -697,9 +721,13 @@ def _handle_register_job(payload):
         session = mysql_factory()
         try:
             existing_main = session.query(Attendee).filter_by(mobile=mobile_number).first()
-            if existing_main: return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
+            if existing_main: 
+                session.rollback()
+                return 200, {"status": "already_registered", "attendee_id": existing_main.attendee_id}
             existing_kiosk = session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
-            if existing_kiosk: return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
+            if existing_kiosk: 
+                session.rollback()
+                return 200, {"status": "already_registered", "attendee_id": existing_kiosk.attendee_id}
             
             prefix = {"GENERAL":"G", "BUSINESS":"B", "MEDIA":"M", "EXHIBITOR":"E"}.get(data.get('attendee_type', 'GENERAL').upper(), "G")
             new_attendee_id = f"TDE26-{prefix}-" + "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=6))
@@ -709,6 +737,7 @@ def _handle_register_job(payload):
             if today_date in EVENT_DATE_LABELS:
                 key = EVENT_DATE_LABELS[today_date]
                 checkin_history_dict[key] = {"timestamp": iso_timestamp, "source": "offline_hub", "device": device_label, "date_code": today_date, "display_date": key}
+            
             new_kiosk_reg = OfflineKioskAttendee(
                 id=str(uuid.uuid4()), attendee_id=new_attendee_id, full_name=data.get('full_name'), mobile=mobile_number,
                 email=data.get('email', ''), gender=data.get('gender'), attendee_type=data.get('attendee_type'),
@@ -720,21 +749,25 @@ def _handle_register_job(payload):
             )
             session.add(new_kiosk_reg)
             session.commit()
+            
             with stats_lock:
                 STATS_CACHE["total_registrations"] += 1
                 if today_date == "2026-08-30": STATS_CACHE["chk_30"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
                 elif today_date == "2026-08-31": STATS_CACHE["chk_31"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
                 elif today_date == "2026-09-01": STATS_CACHE["chk_01"] += 1; STATS_CACHE["total_scans"] += 1; STATS_CACHE["today_scans"] += 1
+            
             log_event_clean("REGISTER", device_label, f"{data.get('full_name')} ({new_attendee_id})", 200)
             return 200, {"status": "success", "message": "Saved successfully.", "attendee_id": new_attendee_id}
         except IntegrityError:
             session.rollback()
             existing = session.query(Attendee).filter_by(mobile=mobile_number).first() or session.query(OfflineKioskAttendee).filter_by(mobile=mobile_number).first()
             if existing: return 200, {"status": "already_registered", "attendee_id": existing.attendee_id}
-        except OperationalError:
+        except OperationalError as oe:
             session.rollback()
             retries -= 1
-            if retries == 0: return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
+            if retries == 0:
+                logging.warning(f"Database lock contention encountered during registration: {oe}")
+                return 503, {"status": "error", "message": "Database is temporarily locked. Please try again."}
             time.sleep(random.uniform(0.01, 0.05)) 
         except Exception:
             session.rollback()
@@ -742,7 +775,7 @@ def _handle_register_job(payload):
             return 500, {"status": "error", "message": "Something went wrong saving this registration. Please try again."}
         finally:
             try: session.close()
-            except Exception: pass
+            except Exception as e: logging.debug(f"Error closing DB session: {e}")
 
 def db_writer_loop(worker_id):
     while not _global_shutdown_event.is_set() and not _db_shutdown_event.is_set():
@@ -762,7 +795,7 @@ def db_writer_loop(worker_id):
             finally:
                 DB_WRITE_QUEUE.task_done()
         except queue.Empty: continue
-        except Exception: pass
+        except Exception as e: logging.debug(f"DB writer loop error: {e}")
 
 def start_db_writers():
     _db_shutdown_event.clear()
@@ -802,8 +835,6 @@ def stats(): return render_template('network_stats.html')
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    # Pure liveness probe - touches no locks, DB, or shared state, so it's safe to poll
-    # aggressively from uptime monitors without adding load to the real API paths.
     return jsonify({"status": "ok", "version": APP_VERSION}), 200
 
 @app.route('/api/status', methods=['GET', 'POST'])
@@ -871,9 +902,6 @@ def get_network_data():
 
 @app.route('/api/stream-scans')
 def stream_scans():
-    # Each open SSE connection permanently occupies one HTTP worker thread for its whole
-    # lifetime. Without a cap, enough open dashboard tabs can starve the pool that checkin/
-    # register requests need, so new viewers are turned away cleanly instead.
     with scan_clients_lock: current_clients = len(SCAN_CLIENTS)
     if current_clients >= MAX_SSE_CLIENTS:
         return jsonify({"status": "error", "message": "Too many live dashboards connected right now. Please close one and retry."}), 503, {"Retry-After": "5"}
@@ -940,7 +968,7 @@ def check_mobile():
         return jsonify({"status": "error", "message": "Could not check mobile number right now. Try again."}), 500
     finally:
         try: session.close()
-        except Exception: pass
+        except Exception as e: logging.debug(f"Error closing session: {e}")
 
 @app.route('/api/pincode/<code>', methods=['GET'])
 def lookup_pincode(code):
@@ -993,7 +1021,7 @@ def get_all_attendees():
         return jsonify({"status": "error", "message": "Failed to load attendees list. Please refresh."}), 500
     finally:
         try: session.close()
-        except Exception: pass
+        except Exception as e: logging.debug(f"Error closing session: {e}")
 
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
@@ -1003,7 +1031,7 @@ class WaitressHttpThread(threading.Thread):
         self.ctx.push()
     def run(self):
         try: self.server.run()
-        except Exception: pass
+        except Exception as e: logging.debug(f"Waitress server stopped: {e}")
     def shutdown(self): self.server.close()
 
 class HttpsFlaskThread(threading.Thread):
@@ -1019,7 +1047,7 @@ class HttpsFlaskThread(threading.Thread):
         self.server.ssl_adapter = BuiltinSSLAdapter(certificate=cert_path, private_key=key_path)
     def run(self):
         try: self.server.start()
-        except Exception: pass
+        except Exception as e: logging.debug(f"Cheroot server stopped: {e}")
     def shutdown(self): self.server.stop()
 
 class SpeedometerGauge(QWidget):
@@ -1259,7 +1287,7 @@ class ServerHub(QMainWindow):
         """)
 
         self.local_ip = get_local_ip()
-        self.all_ipv4 = [] # Added to rigorously track ALL IPs across all adapters
+        self.all_ipv4 = [] 
         self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
         self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
         self.cf_lock = threading.Lock()
@@ -1332,7 +1360,8 @@ class ServerHub(QMainWindow):
             sessions = get_cached_sessions() or {}
             self.SessionMySQL = sessions.get('mysql')
             self.SessionSQLite = sessions.get('sqlite')
-        except Exception: pass
+        except Exception as e:
+            logging.debug(f"DB connection initial check: {e}")
         finally:
             self._db_checked = True
 
@@ -1363,9 +1392,6 @@ class ServerHub(QMainWindow):
         global NETWORK_LATENCY
         session = requests.Session()
         session.headers.update({"User-Agent": "EventHub-PingDaemon/2.0"})
-        # Small bounded retry + a real connection pool so a single slow/flaky hop doesn't
-        # immediately read as "OFFLINE", and repeated pings reuse sockets instead of
-        # renegotiating a new connection (and, for HTTPS, a new TLS handshake) every 3s.
         retry_strategy = Retry(total=2, backoff_factor=0.3, status_forcelist=[502, 503, 504])
         adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
         session.mount("http://", adapter)
@@ -1377,7 +1403,8 @@ class ServerHub(QMainWindow):
                 l_ms, l_stat = future_local.result(timeout=4)
                 c_ms, c_stat = future_cloud.result(timeout=9)
                 with network_latency_lock: NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
-            except Exception: pass
+            except Exception as e:
+                logging.debug(f"Ping daemon iteration error: {e}")
             _global_shutdown_event.wait(3.0)
 
     def _append_log(self, widget_id, message, tag=None):
@@ -1403,7 +1430,8 @@ class ServerHub(QMainWindow):
             if flask_logs: self._write_logs_to_widget(self.log_flask, flask_logs)
             if net_logs: self._write_logs_to_widget(self.log_network, net_logs)
             if cf_logs: self._write_logs_to_widget(self.log_cf, cf_logs)
-        except Exception: pass
+        except Exception as e:
+            logging.debug(f"Log buffer flush error: {e}")
 
     def _write_logs_to_widget(self, text_widget, log_batches):
         tag_colors = {
@@ -1432,7 +1460,8 @@ class ServerHub(QMainWindow):
                 try: task()
                 except Exception as e: logging.error(f"GUI task execution failed: {e}")
                 processed_count += 1
-        except Exception: pass
+        except Exception as e:
+            logging.debug(f"Process GUI queue error: {e}")
 
     def animation_loop(self):
         try:
@@ -1441,7 +1470,8 @@ class ServerHub(QMainWindow):
             self._last_anim_time = now
             elapsed_ms = min(elapsed_ms, 100.0)  
             for anim_meter in self.animated_meters.values(): anim_meter.tick(elapsed_ms)
-        except Exception: pass
+        except Exception as e:
+            logging.debug(f"Animation loop error: {e}")
 
     def clear_system_logs(self):
         with self.log_lock: self.log_buffer_flask.clear()
@@ -1563,7 +1593,6 @@ class ServerHub(QMainWindow):
             self._append_log('network', f"[INFO] Broadcast queued for {active_count} devices: {msg.strip()}")
 
     def manual_refresh_all(self):
-        """Forces an immediate refresh of both statistics and hardware telemetry."""
         self.refresh_stats()
         self.refresh_hw_meters()
         self._append_log('flask', f"[{datetime.now().strftime('%H:%M:%S')}] [INFO] Operator triggered manual system refresh.")
@@ -1915,20 +1944,16 @@ class ServerHub(QMainWindow):
             
             needs_restart = False
             
-            # Check if the primary routing IP changed
             if new_ip != self.local_ip:
-                old_ip = self.local_ip
                 self.local_ip = new_ip
                 self.http_url = f"http://{self.local_ip}:{HTTP_PORT}"
                 self.https_url = f"https://{self.local_ip}:{HTTPS_PORT}"
                 needs_restart = True
                 
-            # Check if ANY brand new secondary IP (like a Mobile Hotspot) appeared
             added_ips = [ip for ip in new_ipv4 if ip not in self.all_ipv4]
             if added_ips:
                 needs_restart = True
                 
-            # Always update our tracked list so we don't trigger repeatedly
             self.all_ipv4 = new_ipv4
             
             if needs_restart:
@@ -1967,8 +1992,8 @@ class ServerHub(QMainWindow):
             q_color = "#C586C0" if q_size < 100 else ("#D7BA7D" if q_size < 1000 else "#F44747")
             self.lbl_hdr_db_queue.setText(f"DB Q: {q_size}")
             self.lbl_hdr_db_queue.setStyleSheet(f"color:{q_color}; font-weight:bold; font-size:11px; border:none;")
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"Refresh HW meters error: {e}")
 
     def refresh_stats(self):
         try:
@@ -2019,17 +2044,6 @@ class ServerHub(QMainWindow):
             logging.error(f"refresh_stats error: {e}")
 
     def _sync_device_table(self, current_order, device_info, current_time):
-        """Update the device table in place instead of tearing it down every 3s.
-
-        The old code called setRowCount(0) then rebuilt every row/cell from scratch on every
-        tick, regardless of whether anything changed. With a large number of connected
-        devices that meant constant widget churn (reallocating every QTableWidgetItem,
-        losing scroll position and any row selection) purely to refresh a timestamp string.
-        Now: if the same devices are online in the same sorted order as last tick (the
-        overwhelmingly common case), we just update the existing cells' text/color in place.
-        A full rebuild only happens when a device actually joins/leaves or the sort order
-        shifts - correctness is identical, it just isn't paid for on every single tick.
-        """
         table = self.tree_devices
         page_labels = {"/": "Home Portal", "/scanner": "Scanner", "/register": "Registration", "/stats": "Network Stats"}
 
@@ -2089,7 +2103,7 @@ class ServerHub(QMainWindow):
         _flask_shutdown_event.clear()
         
         start_db_writers()
-        self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} Multi-threaded highly-available DB writers ready.")
+        self._append_log('flask', f"[SYSTEM] {DB_WRITER_THREADS} Multi-threaded DB writers ready.")
         try:
             self.http_thread = WaitressHttpThread(app, '0.0.0.0', HTTP_PORT)
             self.https_thread = HttpsFlaskThread(app, '0.0.0.0', HTTPS_PORT)
@@ -2110,8 +2124,8 @@ class ServerHub(QMainWindow):
         self.update_qr(self.lbl_flask_qr, self.https_url)
         self.lbl_flask_link.setText(self.https_url)
         self.lbl_flask_link.setStyleSheet("color:#569CD6; font-size:10px;")
-        self._append_log('flask', f"[SYSTEM] Waitress HTTP listening: {self.http_url}")
-        self._append_log('flask', f"[SYSTEM] Cheroot HTTPS listening: {self.https_url}")
+        self._append_log('flask', f"[SYSTEM] Waitress HTTP listening: {self.http_url} (Threads: {HTTP_WORKER_THREADS})")
+        self._append_log('flask', f"[SYSTEM] Cheroot HTTPS listening: {self.https_url} (Threads: {HTTP_WORKER_THREADS})")
         
     def stop_flask(self):
         if self.btn_stop_cf.isEnabled(): self.stop_cf()
@@ -2177,26 +2191,43 @@ class ServerHub(QMainWindow):
                     creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0
                 )
                 with self.cf_lock: self.cf_process = proc
+                
+                # NON-BLOCKING PIPE READER THREAD
+                line_queue = queue.Queue()
+                def _pipe_reader(out_pipe, q):
+                    for raw_line in iter(out_pipe.readline, ''):
+                        if _global_shutdown_event.is_set(): break
+                        q.put(raw_line)
+                    try: out_pipe.close()
+                    except Exception: pass
+
+                t_reader = threading.Thread(target=_pipe_reader, args=(proc.stdout, line_queue), daemon=True)
+                t_reader.start()
+
                 url_found = False
-                for line in proc.stdout:
-                    cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
-                    self._append_log('cf', cl)
-                    if not url_found:
-                        m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
-                        if m:
-                            tunnel_url = m.group(0)
-                            url_found = True
-                            self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
-                            def finalize_tunnel(t_url):
-                                time.sleep(30)
-                                if self.cf_process is None: return 
-                                with self.cf_lock: self.cloudflare_url = t_url
-                                self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
-                                self.gui_queue.put(lambda u=t_url: (self.lbl_cf_link.setText(u), self.lbl_cf_link.setStyleSheet("color:#569CD6; font-size:10px;")))
-                                self.gui_queue.put(lambda: self.btn_start_cf.setText("✅ TUNNEL ACTIVE"))
-                                self.gui_queue.put(self._mark_cf_live)
-                                self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
-                            threading.Thread(target=finalize_tunnel, args=(tunnel_url,), daemon=True).start()
+                while proc.poll() is None and not _global_shutdown_event.is_set() and not self._cf_manual_stop:
+                    try:
+                        line = line_queue.get(timeout=0.5)
+                        cl = re.sub(r'\x1b\[[0-9;]*m', '', line).strip()
+                        self._append_log('cf', cl)
+                        if not url_found:
+                            m = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", cl)
+                            if m:
+                                tunnel_url = m.group(0)
+                                url_found = True
+                                self._append_log('cf', "[INFO] Waiting 30s for DNS propagation...")
+                                def finalize_tunnel(t_url):
+                                    time.sleep(30)
+                                    if self.cf_process is None: return 
+                                    with self.cf_lock: self.cloudflare_url = t_url
+                                    self.gui_queue.put(lambda u=t_url: self.update_qr(self.lbl_cf_qr, u))
+                                    self.gui_queue.put(lambda u=t_url: (self.lbl_cf_link.setText(u), self.lbl_cf_link.setStyleSheet("color:#569CD6; font-size:10px;")))
+                                    self.gui_queue.put(lambda: self.btn_start_cf.setText("✅ TUNNEL ACTIVE"))
+                                    self.gui_queue.put(self._mark_cf_live)
+                                    self._append_log('cf', f"[SUCCESS] Tunnel active: {t_url}")
+                                threading.Thread(target=finalize_tunnel, args=(tunnel_url,), daemon=True).start()
+                    except queue.Empty:
+                        continue
             except FileNotFoundError:
                 self.gui_queue.put(self.stop_cf)
                 self._append_log('cf', "[ERROR] 'cloudflared' not found in PATH.")
@@ -2206,11 +2237,6 @@ class ServerHub(QMainWindow):
             finally:
                 with self.cf_lock: is_active = (self.cf_process is not None)
                 if is_active:
-                    # The subprocess ended on its own (no exception above) - most often a
-                    # dropped connection or the cloudflare edge cycling the tunnel, not a
-                    # permanent failure. Retry with backoff instead of just giving up,
-                    # unless the user asked to stop, the app is closing, or we've already
-                    # retried enough times that something is genuinely wrong.
                     if self._cf_manual_stop or _global_shutdown_event.is_set() or self._cf_reconnect_attempts >= CF_MAX_RECONNECT_ATTEMPTS:
                         self.gui_queue.put(self.stop_cf)
                     else:
@@ -2226,8 +2252,6 @@ class ServerHub(QMainWindow):
 
                         def _delayed_retry():
                             _global_shutdown_event.wait(delay)
-                            # If a manual stop/start happened while we were waiting, this
-                            # retry is stale - let whatever the user did stand.
                             if self._cf_generation != my_generation: return
                             if not _global_shutdown_event.is_set() and not self._cf_manual_stop and self.http_thread:
                                 self.gui_queue.put(self._launch_cf_tunnel)
@@ -2262,7 +2286,7 @@ class ServerHub(QMainWindow):
                 try:
                     if platform.system() == "Windows": subprocess.run(['taskkill', '/F', '/T', '/PID', str(proc.pid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=0x08000000)
                     else: proc.terminate()
-                except Exception: pass
+                except Exception as e: logging.debug(f"Process termination cleanup: {e}")
                 
         self.update_qr(self.lbl_cf_qr, "OFFLINE")
         self.lbl_cf_link.setText("Tunnel Offline")
@@ -2275,7 +2299,7 @@ class ServerHub(QMainWindow):
             if self.http_thread or self.https_thread: self.stop_flask()
             with self.cf_lock: cf_proc = self.cf_process
             if cf_proc: self.stop_cf()
-        except Exception: pass
+        except Exception as e: logging.debug(f"Close event error: {e}")
         finally:
             self.ping_executor.shutdown(wait=False)
             event.accept()
