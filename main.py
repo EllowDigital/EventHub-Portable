@@ -975,6 +975,28 @@ class LauncherApp(QMainWindow):
             if tool:
                 self.stop_tool(tool)
 
+    def _set_tool_status(self, key, running):
+        widgets = self.tool_widgets.get(key)
+        tool = next((t for t in TOOLS if t["key"] == key), None)
+        if not widgets or not tool: return
+
+        if running:
+            widgets["status"].setText("🟢 RUNNING")
+            widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: #2ecc71;")
+            widgets["button"].setText("Stop")
+            widgets["button"].setStyleSheet(self._get_button_style("danger"))
+            try: widgets["button"].clicked.disconnect()
+            except Exception: pass
+            widgets["button"].clicked.connect(lambda checked=False, t=tool: self.stop_tool(t))
+        else:
+            widgets["status"].setText("⚫ IDLE")
+            widgets["status"].setStyleSheet("font-size: 11px; font-weight: bold; color: #888;")
+            widgets["button"].setText("Launch Tool")
+            widgets["button"].setStyleSheet(self._get_button_style(tool["bootstyle"]))
+            try: widgets["button"].clicked.disconnect()
+            except Exception: pass
+            widgets["button"].clicked.connect(lambda checked=False, t=tool: self.launch_tool(t))
+
     def _poll_processes(self):
         for key in list(self.processes.keys()):
             proc = self.processes[key]
