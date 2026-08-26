@@ -54,6 +54,32 @@ from werkzeug.exceptions import HTTPException
 from waitress import create_server 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Silence urllib3 connection pool logging to prevent console spam when the engine is off
+
+# Silence urllib3 connection pool logging to prevent console spam
+logging.getLogger("urllib3").setLevel(logging.ERROR)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
+class SuppressWaitressSocketErrorFilter(logging.Filter):
+    """Filters out internal Waitress WinError 10038 spam during server shutdown."""
+    def filter(self, record):
+        # Catch and block logs that contain the specific Windows Socket OSError
+        if record.exc_info:
+            _, exc_value, _ = record.exc_info
+            if isinstance(exc_value, OSError) and getattr(exc_value, 'winerror', None) == 10038:
+                return False
+        
+        # Fallback text matching just in case
+        msg = record.getMessage()
+        if "WinError 10038" in msg or "not a socket" in msg:
+            return False
+        return True
+
+# Apply the filter directly to Waitress's internal logger
+logging.getLogger("waitress").addFilter(SuppressWaitressSocketErrorFilter())
+logging.getLogger("waitress.queue").addFilter(SuppressWaitressSocketErrorFilter())
+
+# ----------------------------------------------------------
 
 try:
     from cheroot import wsgi as cheroot_wsgi
@@ -517,9 +543,10 @@ def log_event_clean(action_type, device_name, details, status_code):
     elif action_type == "CHECKIN": segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"CHECKIN  ", "log_checkin"), (f"{details} ", "log_default"), (f"[{status_code}]", status_tag)]
     else: segments = [(f"[{time_str}] ", "log_timestamp"), (f"[{device_name}] ", "log_device"), (f"{action_type} ", "log_default"), (f"[{status_code}]", status_tag)]
     if gui_log_callback: gui_log_callback(segments)
+    
     plain_msg = f"[{device_name}] {action_type}: {details} (status {status_code})"
+    # Treat 4xx errors as standard operation info to prevent false system warning logs
     if status_code >= 500: logging.error(plain_msg)
-    elif status_code >= 400: logging.warning(plain_msg)
     else: logging.info(plain_msg)
 
 def broadcast_scan(attendee, status, message, device_name, scan_time):
@@ -1025,14 +1052,34 @@ def get_all_attendees():
 
 class WaitressHttpThread(threading.Thread):
     def __init__(self, app, host, port):
-        super().__init__(daemon=True)  
-        self.server = create_server(app, host=host, port=port, threads=HTTP_WORKER_THREADS, connection_limit=8192, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
+        super().__init__(daemon=True, name="WaitressHttpServer")
+        self.app = app
+        self.host = host
+        self.port = port
+        self._is_shutting_down = False
+        self.server = None
         self.ctx = app.app_context()
         self.ctx.push()
+        
     def run(self):
-        try: self.server.run()
-        except Exception as e: logging.debug(f"Waitress server stopped: {e}")
-    def shutdown(self): self.server.close()
+        try:
+            self.server = create_server(self.app, host=self.host, port=self.port, threads=HTTP_WORKER_THREADS, connection_limit=8192, channel_timeout=60, cleanup_interval=30, outbuf_overflow=10485760)
+            self.server.run()
+        except OSError as e:
+            # Ignore Windows socket closure error if triggered by intentional shutdown
+            if not self._is_shutting_down and getattr(e, 'winerror', None) != 10038:
+                logging.error(f"Waitress Server OSError: {e}")
+        except Exception as e:
+            if not self._is_shutting_down:
+                logging.error(f"Waitress Server Exception: {e}")
+                
+    def shutdown(self):
+        self._is_shutting_down = True
+        if self.server:
+            try:
+                self.server.close()
+            except Exception as e:
+                logging.debug(f"Waitress close suppressed: {e}")
 
 class HttpsFlaskThread(threading.Thread):
     def __init__(self, app, host, port, numthreads=HTTP_WORKER_THREADS):
@@ -1366,11 +1413,16 @@ class ServerHub(QMainWindow):
             self._db_checked = True
 
     def _ping_local(self, session):
-        start = time.time()
+        if not self.http_thread or _flask_shutdown_event.is_set():
+            return 0, "OFFLINE"
+        start = time.perf_counter()
         try:
-            session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=1.5)
-            return int((time.time() - start) * 1000), "ONLINE"
-        except Exception: return 0, "OFFLINE"
+            resp = session.get(f"http://127.0.0.1:{HTTP_PORT}/api/status", timeout=0.8)
+            if resp.status_code == 200:
+                return int((time.perf_counter() - start) * 1000), "ONLINE"
+            return 0, "OFFLINE"
+        except Exception:
+            return 0, "OFFLINE"
 
     def _ping_cloud(self, session):
         with self.cf_lock: cf_url = self.cloudflare_url
@@ -1392,17 +1444,14 @@ class ServerHub(QMainWindow):
         global NETWORK_LATENCY
         session = requests.Session()
         session.headers.update({"User-Agent": "EventHub-PingDaemon/2.0"})
-        retry_strategy = Retry(total=2, backoff_factor=0.3, status_forcelist=[502, 503, 504])
-        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
         while not _global_shutdown_event.is_set():
             try:
                 future_local = self.ping_executor.submit(self._ping_local, session)
                 future_cloud = self.ping_executor.submit(self._ping_cloud, session)
-                l_ms, l_stat = future_local.result(timeout=4)
-                c_ms, c_stat = future_cloud.result(timeout=9)
-                with network_latency_lock: NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
+                l_ms, l_stat = future_local.result(timeout=2)
+                c_ms, c_stat = future_cloud.result(timeout=6)
+                with network_latency_lock:
+                    NETWORK_LATENCY.update({"local_ms": l_ms, "local_status": l_stat, "cloud_ms": c_ms, "cloud_status": c_stat})
             except Exception as e:
                 logging.debug(f"Ping daemon iteration error: {e}")
             _global_shutdown_event.wait(3.0)
@@ -1960,11 +2009,8 @@ class ServerHub(QMainWindow):
                 if not self.btn_start_flask.isEnabled(): 
                     self.update_qr(self.lbl_flask_qr, self.https_url)
                     self.lbl_flask_link.setText(self.https_url)
-                    self._append_log('flask', f"[WARNING] Network Topology Changed (New IPs detected).")
-                    self._append_log('flask', "[INFO] Auto-restarting engine to securely bind ALL current IPs to the SSL certificate...")
-                    
-                    self.stop_flask()
-                    QTimer.singleShot(2500, self.start_flask)
+                    self._append_log('flask', f"[INFO] Primary network IP updated to {self.local_ip}")
+                    # Auto-restarting engine is disabled here to prevent active scanner interruptions
 
             with network_latency_lock: snap_net = dict(NETWORK_LATENCY)
             loc_ms = snap_net["local_ms"]
