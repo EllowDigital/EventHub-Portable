@@ -360,7 +360,6 @@
       inset: 0;
     }
 
-    /* Force the video to act as a proper background and fill the box */
     #reader video {
       width: 100% !important;
       height: 100% !important;
@@ -372,27 +371,11 @@
       will-change: transform;
     }
 
-    /* Hide ugly html5-qrcode injected elements */
     #reader__dashboard_section_csr,
     #reader__dashboard_section_swap_link,
     #html5-qrcode-anchor-scan-type-change,
     #reader__header_message {
       display: none !important;
-    }
-
-    .ai-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      font-size: 0.68rem;
-      font-weight: 800;
-      color: #000;
-      background: var(--primary);
-      padding: 3px 8px;
-      border-radius: 20px;
-      box-shadow: 0 2px 8px var(--primary-glow);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
 
     .permission-overlay {
@@ -475,7 +458,7 @@
       border-radius: 12px;
       font-size: 0.65rem;
       opacity: 0;
-      transition: opacity 0.3s ease-in-out;
+      transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
       border: 1px solid var(--primary-glow);
     }
 
@@ -599,7 +582,48 @@
       letter-spacing: 1px;
     }
 
-    .input-group input {
+    /* --- PREFIX INPUT UI --- */
+    .prefix-input-wrapper {
+      display: flex;
+      align-items: center;
+      background: var(--bg-dark);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-md);
+      box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
+      transition: var(--transition);
+      overflow: hidden;
+    }
+
+    .prefix-input-wrapper:focus-within {
+      border-color: var(--primary);
+      box-shadow:
+        0 0 0 2px rgba(0, 210, 255, 0.2),
+        inset 0 2px 5px rgba(0, 0, 0, 0.3);
+    }
+
+    .prefix {
+      padding: 14px 0 14px 14px;
+      color: var(--text-muted);
+      font-family: monospace;
+      font-size: 1.1rem;
+      font-weight: 800;
+      background: transparent;
+      pointer-events: none;
+    }
+
+    .prefix-input-wrapper input {
+      background: transparent;
+      color: var(--text-main);
+      border: none !important;
+      padding: 14px 14px 14px 4px;
+      font-size: 1.1rem;
+      font-family: monospace;
+      width: 100%;
+      box-shadow: none !important;
+      outline: none;
+    }
+
+    .input-group input[type="tel"] {
       background: var(--bg-dark);
       color: var(--text-main);
       border: 1px solid rgba(255, 255, 255, 0.1);
@@ -612,7 +636,7 @@
       box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
     }
 
-    .input-group input:focus {
+    .input-group input[type="tel"]:focus {
       outline: none;
       border-color: var(--primary);
       box-shadow:
@@ -887,7 +911,7 @@
         </div>
       </div>
 
-      <!-- ZOOM CONTROLS (Updated with inline oninput for instant slider response) -->
+      <!-- ZOOM CONTROLS -->
       <div class="zoom-toolbar" id="zoom-controls" style="display: none">
         <div class="zoom-header">
           <span>Lens Zoom Controls</span>
@@ -912,7 +936,11 @@
     <div class="manual-wrapper" id="manual-view">
       <div class="input-group">
         <label>Find by Attendee ID</label>
-        <input type="text" id="manual-id" placeholder="TDE26-G-XXXXXX" oninput="formatID(this)" maxlength="14" />
+        <!-- PREFIX UI IMPLEMENTED HERE -->
+        <div class="prefix-input-wrapper">
+          <span class="prefix">TDE26-</span>
+          <input type="text" id="manual-id" placeholder="G-XXXXXX" oninput="formatID(this)" maxlength="10" />
+        </div>
         <button class="btn-submit" onclick="submitManual('id')">
           Verify ID Check-in
         </button>
@@ -1005,7 +1033,6 @@
       if (audioCtx.state === "suspended") audioCtx.resume().catch(() => { });
     }
 
-    // Modern, pleasant audio feedback system
     function playAudioTone(type) {
       try {
         initAudio();
@@ -1016,10 +1043,9 @@
         const now = audioCtx.currentTime;
 
         if (type === "SUCCESS" || type === "OFFLINE") {
-          // Premium 2-tone "Ding-Ding" success chime
           osc.type = "sine";
-          osc.frequency.setValueAtTime(1046.5, now); // C6
-          osc.frequency.setValueAtTime(1318.51, now + 0.1); // E6
+          osc.frequency.setValueAtTime(1046.5, now);
+          osc.frequency.setValueAtTime(1318.51, now + 0.1);
           gain.gain.setValueAtTime(0.5, now);
           gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
           osc.start(now);
@@ -1032,7 +1058,6 @@
           osc.start(now);
           osc.stop(now + 0.3);
         } else if (type === "DUPLICATE") {
-          // Double buzz
           osc.type = "square";
           osc.frequency.setValueAtTime(400, now);
           gain.gain.setValueAtTime(0.3, now);
@@ -1060,16 +1085,12 @@
       setTimeout(() => (modal.style.display = "none"), 250);
     }
 
-    // =========================================================================
-    // HIGH SPEED HARDWARE SCANNER GLOBALS
-    // =========================================================================
     let html5QrCode = null;
     let isCameraActive = false;
-    let isProcessing = false; // Scan Lock
+    let isProcessing = false;
     let isCameraTransitioning = false;
     let currentTrack = null;
 
-    // Auto-Focus & Zoom Globals
     let nativeZoomSupported = false;
     let nativeDetector =
       "BarcodeDetector" in window
@@ -1087,6 +1108,10 @@
     let lastScannedId = "";
     let lastScanTime = 0;
     const DEBOUNCE_MS = 2500;
+
+    // Cache the video element and DOM items for performance
+    let cachedVideoEl = null;
+    let autoZoomBadge = null;
 
     async function requestCameraPermissionNatively() {
       try {
@@ -1110,7 +1135,6 @@
           });
 
           if (backCameras.length === 0) backCameras = devices;
-
           camerasList = backCameras;
           const select = document.getElementById("camera-select");
           const previousValue = select.value;
@@ -1133,7 +1157,6 @@
     function onDeviceChange() {
       onCameraChange();
     }
-
     async function onCameraChange() {
       if (isCameraTransitioning) return;
       if (isCameraActive) {
@@ -1145,15 +1168,15 @@
     function onCameraStarted(btn) {
       isCameraActive = true;
       btn.innerHTML = "⏸ Pause Scanner";
-
       setTimeout(() => {
         initAdvancedCameraControls();
-        startAutoZoomWatcher(); // Lightweight 1-second interval AI Zoom
+        autoZoomBadge = document.getElementById("auto-zoom-badge");
+        startAutoZoomWatcher();
       }, 600);
     }
 
     // =========================================================================
-    // LIGHTWEIGHT HARDWARE AUTO-ZOOM (0% CPU OVERHEAD)
+    // IMPROVED AUTO-ZOOM WITH DYNAMIC UI FEEDBACK
     // =========================================================================
     function startAutoZoomWatcher() {
       clearInterval(autoZoomLoopId);
@@ -1165,35 +1188,41 @@
           !nativeZoomSupported
         )
           return;
-        const videoEl = document.querySelector("#reader video");
-        if (videoEl && videoEl.readyState >= 2) {
+
+        if (!cachedVideoEl)
+          cachedVideoEl = document.querySelector("#reader video");
+
+        if (cachedVideoEl && cachedVideoEl.readyState >= 2) {
           try {
-            const barcodes = await nativeDetector.detect(videoEl);
+            const barcodes = await nativeDetector.detect(cachedVideoEl);
             if (barcodes.length > 0) {
               const rect = barcodes[0].boundingBox;
               const qrWidth = rect.width;
-              const vidWidth = videoEl.videoWidth;
+              const vidWidth = cachedVideoEl.videoWidth;
 
               if (qrWidth < vidWidth * 0.2 && zoomTarget < maxZoom) {
-                triggerAIZoom(0.2); // Too far away -> Smooth Zoom In
+                triggerAIZoom(0.2, "⚡ Zooming In...");
               } else if (qrWidth > vidWidth * 0.6 && zoomTarget > minZoom) {
-                triggerAIZoom(-0.2); // Too close -> Smooth Zoom Out
+                triggerAIZoom(-0.2, "⚡ Zooming Out...");
               }
             }
           } catch (e) { }
         }
-      }, 1000); // Check only once per second to preserve battery!
+      }, 1000);
     }
 
-    function triggerAIZoom(delta) {
+    function triggerAIZoom(delta, actionText) {
       adjustZoom(delta);
-      // Show AI Badge to let the staff know the camera is auto-adjusting
-      const badge = document.getElementById("auto-zoom-badge");
-      if (badge) {
-        badge.style.opacity = 1;
-        setTimeout(() => {
-          badge.style.opacity = 0;
-        }, 1200);
+      if (autoZoomBadge) {
+        autoZoomBadge.innerHTML = actionText;
+        autoZoomBadge.style.opacity = 1;
+        autoZoomBadge.style.transform = "scale(1.05)";
+
+        clearTimeout(autoZoomBadge.timeoutId);
+        autoZoomBadge.timeoutId = setTimeout(() => {
+          autoZoomBadge.style.opacity = 0;
+          autoZoomBadge.style.transform = "scale(1)";
+        }, 1500);
       }
     }
 
@@ -1216,14 +1245,13 @@
           : { facingMode: "environment" };
 
         let currentScanConfig = {
-          fps: 20, // Sweet spot for performance and heat control
+          fps: 20,
           qrbox: { width: 280, height: 280 },
           aspectRatio: 1.0,
-          useBarCodeDetectorIfSupported: true, // Forces native hardware decoding
+          useBarCodeDetectorIfSupported: true,
         };
 
         try {
-          // Clear any messy DOM from previous instances
           document.getElementById("reader").innerHTML = "";
           await html5QrCode.start(
             cameraTarget,
@@ -1257,7 +1285,6 @@
       try {
         document.getElementById("zoom-controls").style.display = "flex";
         currentTrack = html5QrCode.getRunningTrack();
-
         nativeZoomSupported = false;
         minZoom = 1;
         maxZoom = 3;
@@ -1276,7 +1303,6 @@
           }
         }
 
-        // Initialize Slider
         setZoomAbsolute(minZoom);
         const slider = document.getElementById("zoom-slider");
         if (slider) {
@@ -1287,14 +1313,12 @@
       } catch (e) { }
     }
 
-    // Direct absolute setter (used by the slider instant oninput)
     function setZoomAbsolute(val) {
       zoomTarget = Math.max(minZoom, Math.min(maxZoom, parseFloat(val)));
 
       const slider = document.getElementById("zoom-slider");
-      if (slider && slider.value !== String(zoomTarget)) {
+      if (slider && slider.value !== String(zoomTarget))
         slider.value = zoomTarget;
-      }
 
       const display = document.getElementById("zoom-val-display");
       if (display) display.innerText = zoomTarget.toFixed(1) + "x";
@@ -1306,32 +1330,25 @@
             .catch(() => { });
         } catch (e) { }
       } else {
-        const videoEl = document.querySelector("#reader video");
-        if (videoEl) videoEl.style.transform = `scale(${zoomTarget})`;
+        if (!cachedVideoEl)
+          cachedVideoEl = document.querySelector("#reader video");
+        if (cachedVideoEl)
+          cachedVideoEl.style.transform = `scale(${zoomTarget})`;
       }
     }
 
-    // Relative delta setter (used by buttons, pinch, and scroll wheel)
     function adjustZoom(delta) {
       setZoomAbsolute(zoomTarget + delta);
     }
 
-    // =========================================================================
-    // IMPROVED SCROLL & PINCH TO ZOOM HANDLERS
-    // Attached directly to the broader qr-view to prevent bubbling issues.
-    // =========================================================================
     const qrViewWrapper = document.getElementById("qr-view");
-
     qrViewWrapper.addEventListener(
       "wheel",
       (e) => {
         if (!isCameraActive || isProcessing) return;
         e.preventDefault();
-
-        // Use Math.sign() to ensure consistent smooth zooming across different mice & trackpads
         const direction = Math.sign(e.deltaY);
         const scrollSpeed = 0.15;
-
         if (direction < 0) adjustZoom(scrollSpeed);
         else if (direction > 0) adjustZoom(-scrollSpeed);
       },
@@ -1370,9 +1387,7 @@
             e.touches[0].pageY - e.touches[1].pageY,
           );
           const distanceRatio = currentDistance / initialPinchDistance;
-          const newZoom = initialPinchZoom * distanceRatio;
-          const delta = newZoom - zoomTarget;
-          adjustZoom(delta);
+          adjustZoom(initialPinchZoom * distanceRatio - zoomTarget);
         }
       },
       { passive: false },
@@ -1395,11 +1410,12 @@
         try {
           if (html5QrCode.getState() === 2) await html5QrCode.stop();
           isCameraActive = false;
+          cachedVideoEl = null;
           const btn = document.getElementById("camera-toggle-btn");
           btn.innerHTML = "▶ Resume Scanner";
           btn.classList.add("paused");
           document.getElementById("zoom-controls").style.display = "none";
-          document.getElementById("reader").innerHTML = ""; // Clean DOM
+          document.getElementById("reader").innerHTML = "";
         } catch (e) {
         } finally {
           isCameraTransitioning = false;
@@ -1430,24 +1446,33 @@
       }
     }
 
+    // =========================================================================
+    // NEW PREFIX LOGIC
+    // =========================================================================
     function formatID(input) {
-      let val = input.value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
-      if (val.length > 0 && !val.startsWith("TDE26-")) {
-        if ("TDE26-".startsWith(val)) return;
-        val = "TDE26-" + val.replace(/-/g, "");
+      // Allow only letters and numbers
+      let val = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+      // Auto-insert the dash after the category letter (e.g., G -> G-)
+      if (val.length > 1) {
+        val = val.substring(0, 1) + "-" + val.substring(1);
       }
-      if (val.length === 7 && !val.endsWith("-")) val = val + "-";
+
       input.value = val;
     }
 
     function submitManual(type) {
       if (isProcessing) return;
-      let val =
-        type === "id"
-          ? document.getElementById("manual-id").value.trim()
-          : document.getElementById("manual-phone").value.trim();
 
-      if (type === "phone" && val.length !== 10) return;
+      let val = "";
+      if (type === "id") {
+        const suffix = document.getElementById("manual-id").value.trim();
+        if (suffix.length < 3) return; // Prevent submitting empty IDs
+        val = "TDE26-" + suffix; // Re-attach the TDE26 prefix before checking
+      } else {
+        val = document.getElementById("manual-phone").value.trim();
+        if (val.length !== 10) return;
+      }
 
       const now = Date.now();
       if (val === lastScannedId && now - lastScanTime < 1500) return;
@@ -1507,7 +1532,6 @@
     function getOfflineQueue() {
       return JSON.parse(localStorage.getItem("offline_scans") || "[]");
     }
-
     function saveOfflineQueue(queue) {
       localStorage.setItem("offline_scans", JSON.stringify(queue));
       updateOfflineBadge();
@@ -1592,7 +1616,6 @@
           signal: c.signal,
         });
         clearTimeout(id);
-
         const dur = performance.now() - start;
 
         if (dur < 400) {
@@ -1609,7 +1632,6 @@
         if (response.ok) {
           try {
             const data = await response.json();
-
             if (
               data.canonical_name &&
               data.canonical_name !== "Unknown Device"
@@ -1622,7 +1644,6 @@
                   data.canonical_name;
               }
             }
-
             if (data.test_mode) {
               testBanner.style.display = "block";
               testDate.textContent = escapeHTML(data.test_date) || "Unknown";
@@ -1638,7 +1659,6 @@
               setTimeout(() => msgBox.classList.add("show"), 10);
               playAudioTone("ALERT");
             }
-
             processOfflineQueue();
           } catch (err) { }
         }
@@ -1652,15 +1672,13 @@
 
     function processCheckin(identifier, type = "id") {
       if (isProcessing) return;
-      isProcessing = true; // Lock scanning
+      isProcessing = true;
 
-      // Trigger beautiful UI success flash instantly
       const box = document.getElementById("scanner-box");
       box.classList.remove("flash-success");
-      void box.offsetWidth; // trigger reflow
+      void box.offsetWidth;
       box.classList.add("flash-success");
 
-      // Stronger tactile haptic feedback for staff
       if (navigator.vibrate) navigator.vibrate([50, 50, 50]);
 
       const payload = {
@@ -1705,8 +1723,6 @@
       else card.className = "res-error show";
 
       playAudioTone(type);
-
-      // FIX: Unlock scanning almost immediately for high-throughput continuous scanning!
       setTimeout(() => {
         isProcessing = false;
       }, 500);
@@ -1717,41 +1733,28 @@
       }, 3000);
     }
 
-    // =========================================================================
-    // DUAL-FORMAT QR DECODER (Handles New Plain-Text AND Old JSON Passes)
-    // =========================================================================
     function onScanSuccess(decoded) {
       if (isProcessing) return;
-
       let rawText = String(decoded || "").trim();
       if (!rawText) return;
-
       let finalId = rawText;
-
-      // Backward Compatibility: Safely try to extract ID from older JSON passes
       if (rawText.startsWith("{")) {
         try {
           const payload = JSON.parse(rawText);
           if (payload && (payload.attendeeId || payload.id)) {
             finalId = payload.attendeeId || payload.id;
           }
-        } catch (e) {
-          // If JSON parse fails, gracefully fall back to using the raw text
-        }
+        } catch (e) { }
       }
-
       const now = Date.now();
       if (finalId === lastScannedId && now - lastScanTime < DEBOUNCE_MS)
         return;
-
       lastScannedId = finalId;
       lastScanTime = now;
-
       processCheckin(finalId, "id");
     }
 
     document.addEventListener("click", initAudio, { once: true });
-
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") syncServerStatus();
     });
