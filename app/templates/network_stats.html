@@ -64,8 +64,9 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
-      min-height: 100dvh;
+      /* Constrain to viewport height. Only scroll body if components hit min-height constraints */
+      height: 100dvh;
+      overflow-y: auto;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
       position: relative;
@@ -138,10 +139,16 @@
       }
     }
 
+    /* --- FLEXIBLE APP CONTAINER --- */
     .app-container {
       width: 100%;
       max-width: 1100px;
-      padding: 20px;
+      padding: clamp(10px, 2vh, 20px) 20px clamp(15px, 3vh, 20px) 20px;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      /* Allow container to fill the 100dvh */
+      min-height: 100%;
       position: relative;
       z-index: 1;
     }
@@ -202,10 +209,10 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 24px;
-      padding: 16px 24px;
+      margin-bottom: clamp(12px, 2.5vh, 24px);
+      padding: clamp(10px, 1.5vh, 16px) clamp(16px, 2vw, 24px);
       position: sticky;
-      top: 20px;
+      top: 10px;
       z-index: 100;
       background: rgba(10, 12, 16, 0.75);
       backdrop-filter: blur(20px);
@@ -214,7 +221,7 @@
       border: 1px solid var(--glass-border);
       box-shadow: var(--glass-shadow);
       flex-wrap: wrap;
-      gap: 16px;
+      gap: 12px;
       animation: fadeInDown 0.6s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
@@ -224,8 +231,8 @@
       justify-content: center;
       gap: 8px;
       font-weight: 600;
-      font-size: 0.85rem;
-      padding: 10px 18px;
+      font-size: clamp(0.75rem, 1.5vh, 0.85rem);
+      padding: clamp(8px, 1.5vh, 10px) clamp(14px, 2vw, 18px);
       border-radius: var(--radius-md);
       cursor: pointer;
       transition: var(--transition);
@@ -233,6 +240,11 @@
       border: 1px solid rgba(255, 255, 255, 0.1);
       color: var(--text-main);
       text-decoration: none;
+    }
+
+    .btn svg {
+      width: clamp(14px, 2.5vh, 18px);
+      height: clamp(14px, 2.5vh, 18px);
     }
 
     .btn:hover {
@@ -248,7 +260,7 @@
 
     .header-title {
       margin: 0;
-      font-size: 1.25rem;
+      font-size: clamp(1.05rem, 2vh, 1.25rem);
       display: flex;
       align-items: center;
       gap: 10px;
@@ -263,23 +275,23 @@
     .status-wrapper {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       background: rgba(0, 0, 0, 0.4);
-      padding: 8px 16px;
+      padding: clamp(6px, 1vh, 8px) clamp(12px, 2vw, 16px);
       border-radius: 30px;
       border: 1px solid rgba(255, 255, 255, 0.05);
     }
 
     .status-text {
-      font-size: 0.8rem;
+      font-size: clamp(0.7rem, 1.5vh, 0.8rem);
       font-weight: 700;
       letter-spacing: 1.5px;
       text-transform: uppercase;
     }
 
     .status-dot {
-      width: 10px;
-      height: 10px;
+      width: clamp(8px, 1.5vh, 10px);
+      height: clamp(8px, 1.5vh, 10px);
       border-radius: 50%;
       transition:
         background 0.4s,
@@ -302,11 +314,11 @@
     .banner {
       width: 100%;
       text-align: center;
-      padding: 14px;
-      font-size: 0.9rem;
+      padding: clamp(10px, 1.5vh, 14px);
+      font-size: clamp(0.8rem, 1.5vh, 0.9rem);
       font-weight: 700;
       border-radius: var(--radius-md);
-      margin-bottom: 24px;
+      margin-bottom: clamp(12px, 2.5vh, 24px);
       display: none;
       animation: fadeInDown 0.4s ease;
       letter-spacing: 0.5px;
@@ -325,12 +337,13 @@
       border: 1px solid rgba(255, 68, 68, 0.3);
     }
 
-    /* --- GRID & CARDS --- */
+    /* --- COMPACT GRID & CARDS --- */
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-      gap: 20px;
-      margin-bottom: 40px;
+      gap: clamp(12px, 2vh, 20px);
+      margin-bottom: clamp(20px, 3.5vh, 40px);
+      width: 100%;
     }
 
     .stat-card {
@@ -339,7 +352,7 @@
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
       border-radius: var(--radius-lg);
-      padding: 24px 20px;
+      padding: clamp(16px, 2.5vh, 24px) clamp(16px, 2vw, 20px);
       display: flex;
       flex-direction: column;
       justify-content: space-between;
@@ -419,12 +432,12 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-bottom: 16px;
+      margin-bottom: clamp(10px, 2vh, 16px);
     }
 
     .card-icon {
-      width: 32px;
-      height: 32px;
+      width: clamp(26px, 4.5vh, 32px);
+      height: clamp(26px, 4.5vh, 32px);
       border-radius: 8px;
       background: rgba(var(--card-color-rgb, 148, 163, 184), 0.15);
       display: flex;
@@ -433,10 +446,15 @@
       color: var(--card-color, var(--text-muted));
     }
 
+    .card-icon svg {
+      width: clamp(14px, 2.5vh, 18px);
+      height: clamp(14px, 2.5vh, 18px);
+    }
+
     .stat-card h3 {
       margin: 0;
       color: var(--text-muted);
-      font-size: 0.8rem;
+      font-size: clamp(0.7rem, 1.2vh, 0.8rem);
       text-transform: uppercase;
       letter-spacing: 1px;
       font-weight: 700;
@@ -444,7 +462,7 @@
 
     .stat-card p {
       margin: 0;
-      font-size: 2.5rem;
+      font-size: clamp(1.8rem, 4.5vh, 2.5rem);
       font-weight: 900;
       line-height: 1;
       color: var(--text-main);
@@ -456,7 +474,7 @@
     .speedometer {
       position: relative;
       width: 100%;
-      max-width: 130px;
+      max-width: clamp(90px, 18vh, 130px);
       aspect-ratio: 2 / 1.15;
       margin-top: auto;
       align-self: center;
@@ -496,33 +514,43 @@
     }
 
     .speedo-text .val {
-      font-size: 1.5rem;
+      font-size: clamp(1.2rem, 2.5vh, 1.5rem);
       font-weight: 800;
       font-family: var(--font-mono);
       color: var(--text-main);
     }
 
     .speedo-text .lbl {
-      font-size: 0.65rem;
+      font-size: clamp(0.55rem, 1.2vh, 0.65rem);
       color: var(--text-muted);
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1px;
     }
 
-    /* --- TABLE SECTION --- */
+    /* --- FLEXIBLE TABLE SECTION (Scroll internally) --- */
+    /* Target the container wrapping the table to take up remaining height */
+    section:last-of-type {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      width: 100%;
+      min-height: 250px;
+      /* Fallback for very small squeezed screens */
+    }
+
     .section-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
+      margin-bottom: clamp(12px, 2vh, 20px);
       flex-wrap: wrap;
       gap: 12px;
       animation: slideUpFade 0.6s 0.3s backwards;
     }
 
     .section-title {
-      font-size: 1.2rem;
+      font-size: clamp(1.05rem, 2.2vh, 1.2rem);
       font-weight: 800;
       margin: 0;
       color: var(--text-main);
@@ -532,8 +560,8 @@
     }
 
     .live-dot {
-      width: 10px;
-      height: 10px;
+      width: clamp(8px, 1.5vh, 10px);
+      height: clamp(8px, 1.5vh, 10px);
       border-radius: 50%;
       background: var(--success);
       box-shadow: 0 0 10px var(--success);
@@ -543,7 +571,10 @@
 
     .table-container {
       width: 100%;
-      overflow-x: auto;
+      flex: 1;
+      /* Consume remaining space in section */
+      overflow: auto;
+      /* Internal scrolling! */
       background: var(--surface);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
@@ -563,30 +594,38 @@
 
     th,
     td {
-      padding: 16px 20px;
+      padding: clamp(12px, 2vh, 16px) clamp(16px, 2vw, 20px);
       border-bottom: 1px solid rgba(255, 255, 255, 0.04);
       vertical-align: middle;
     }
 
+    /* Sticky Headers setup for internal scrolling */
     th {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: rgba(10, 12, 16, 0.95);
+      backdrop-filter: blur(10px);
       color: var(--text-muted);
-      font-size: 0.75rem;
+      font-size: clamp(0.65rem, 1.2vh, 0.75rem);
       text-transform: uppercase;
-      background: rgba(0, 0, 0, 0.2);
       letter-spacing: 1.5px;
       font-weight: 700;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+      /* Visual separation when scrolling */
     }
 
-    th:first-child,
+    /* First column needs to stick to the left, and top-left cell stays on top */
+    th:first-child {
+      z-index: 11;
+      left: 0;
+    }
+
     td:first-child {
       position: sticky;
       left: 0;
-      background: rgba(16, 19, 26, 0.95);
       z-index: 1;
-    }
-
-    th:first-child {
-      background: rgba(10, 12, 16, 0.95);
+      background: rgba(16, 19, 26, 0.95);
     }
 
     tbody tr {
@@ -607,14 +646,14 @@
 
     /* Dynamically Injected JS Classes Styling */
     .node-ident {
-      font-size: 1rem;
+      font-size: clamp(0.9rem, 1.8vh, 1rem);
       font-weight: 700;
       color: var(--text-main);
       margin-bottom: 4px;
     }
 
     .node-ip {
-      font-size: 0.75rem;
+      font-size: clamp(0.65rem, 1.3vh, 0.75rem);
       color: var(--primary);
       font-family: var(--font-mono);
       background: rgba(0, 210, 255, 0.1);
@@ -630,7 +669,7 @@
       gap: 8px;
       padding: 6px 12px;
       border-radius: 20px;
-      font-size: 0.75rem;
+      font-size: clamp(0.65rem, 1.2vh, 0.75rem);
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.5px;
@@ -678,7 +717,7 @@
 
     .battery-text {
       font-weight: 700;
-      font-size: 0.85rem;
+      font-size: clamp(0.75rem, 1.5vh, 0.85rem);
       font-family: var(--font-mono);
       color: var(--text-main);
       background: rgba(255, 255, 255, 0.05);
@@ -689,7 +728,7 @@
     }
 
     .latency-container {
-      width: 120px;
+      width: clamp(90px, 15vw, 120px);
       height: 6px;
       background: rgba(0, 0, 0, 0.5);
       border-radius: 10px;
@@ -707,7 +746,7 @@
     }
 
     .latency-text {
-      font-size: 0.75rem;
+      font-size: clamp(0.65rem, 1.3vh, 0.75rem);
       color: var(--text-muted);
       font-weight: 600;
     }
@@ -773,7 +812,6 @@
     @media (max-width: 768px) {
       .header {
         flex-direction: column;
-        padding: 20px;
         align-items: stretch;
       }
 
@@ -794,10 +832,6 @@
         grid-column: span 2;
         align-items: center;
       }
-
-      .speedometer {
-        max-width: 180px;
-      }
     }
 
     @media (max-width: 480px) {
@@ -807,6 +841,18 @@
 
       .stat-card:first-child {
         grid-column: span 1;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
       }
     }
   </style>
@@ -821,16 +867,16 @@
   <main class="app-container">
     <header class="header">
       <button class="btn" onclick="handleNavigation('/')">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
           <line x1="19" y1="12" x2="5" y2="12"></line>
           <polyline points="12 19 5 12 12 5"></polyline>
         </svg>
         Return to Hub
       </button>
       <h2 class="header-title">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-          stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+          stroke-linejoin="round" width="22" height="22">
           <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
         </svg>
         Network Intelligence
@@ -857,8 +903,8 @@
           ">
         <div class="card-header">
           <div class="card-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
               <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
               <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
               <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
@@ -890,8 +936,8 @@
       <div class="stat-card card-primary">
         <div class="card-header">
           <div class="card-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
               <line x1="8" y1="21" x2="16" y2="21"></line>
               <line x1="12" y1="17" x2="12" y2="21"></line>
@@ -906,8 +952,8 @@
       <div class="stat-card card-purple">
         <div class="card-header">
           <div class="card-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
               <line x1="16" y1="2" x2="16" y2="6"></line>
               <line x1="8" y1="2" x2="8" y2="6"></line>
@@ -923,8 +969,8 @@
       <div class="stat-card card-success">
         <div class="card-header">
           <div class="card-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
               <polyline points="22 4 12 14.01 9 11.01"></polyline>
             </svg>
@@ -938,8 +984,8 @@
       <div class="stat-card card-warning">
         <div class="card-header">
           <div class="card-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-              stroke-linecap="round" stroke-linejoin="round">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
               <circle cx="9" cy="7" r="4"></circle>
               <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
@@ -952,6 +998,7 @@
       </div>
     </section>
 
+    <!-- Wrap the table in a flex section that consumes remaining space -->
     <section>
       <div class="section-header">
         <h3 class="section-title">
@@ -959,8 +1006,8 @@
           Connected Devices Lifecycle
         </h3>
         <button class="btn" onclick="manualRefresh()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round" stroke-linejoin="round">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
+            stroke-linejoin="round">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.64-4.36" />
           </svg>
           Refresh Data
