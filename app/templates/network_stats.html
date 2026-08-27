@@ -271,10 +271,14 @@
       content: "";
       position: absolute;
       inset: 0;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.25), transparent 60%);
+      background: radial-gradient(circle,
+          rgba(255, 255, 255, 0.25),
+          transparent 60%);
       opacity: 0;
       transform: scale(0.4);
-      transition: opacity 0.4s, transform 0.4s;
+      transition:
+        opacity 0.4s,
+        transform 0.4s;
     }
 
     .btn:hover {
