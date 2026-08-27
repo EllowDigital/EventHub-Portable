@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#07080c" />
   <title>Live Scanner - TDE UP 2026</title>
 
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-96x96.png') }}?v=2.6"
@@ -18,21 +19,34 @@
   <!-- Single, highly optimized library for native hardware scanning -->
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+
   <style>
     :root {
       --bg-dark: #07080c;
       --surface: #12141c;
       --primary: #00d2ff;
+      --primary-rgb: 0, 210, 255;
       --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
+      --success-rgb: 0, 230, 118;
       --warning: #ffbb33;
+      --warning-rgb: 255, 187, 51;
       --danger: #ff4444;
+      --danger-rgb: 255, 68, 68;
       --text-main: #ffffff;
       --text-muted: #8b93a5;
       --radius-sm: 8px;
       --radius-md: 12px;
       --radius-lg: 16px;
       --transition: all 0.25s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    * {
+      -webkit-tap-highlight-color: transparent;
     }
 
     body {
@@ -48,8 +62,71 @@
       display: flex;
       justify-content: center;
       min-height: 100vh;
+      min-height: 100dvh;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
+      position: relative;
+      isolation: isolate;
+    }
+
+    /* --- AMBIENT ANIMATED BACKGROUND --- */
+    .ambient-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(90px);
+      will-change: transform;
+    }
+
+    .orb-cyan {
+      width: 60vw;
+      height: 60vw;
+      max-width: 460px;
+      max-height: 460px;
+      background: var(--primary);
+      opacity: 0.13;
+      top: -20%;
+      left: -20%;
+      animation: driftA 24s ease-in-out infinite alternate;
+    }
+
+    .orb-green {
+      width: 50vw;
+      height: 50vw;
+      max-width: 380px;
+      max-height: 380px;
+      background: var(--success);
+      opacity: 0.07;
+      bottom: -20%;
+      right: -18%;
+      animation: driftB 28s ease-in-out infinite alternate;
+    }
+
+    @keyframes driftA {
+      from {
+        transform: translate(0, 0) scale(1);
+      }
+
+      to {
+        transform: translate(5vw, 4vh) scale(1.1);
+      }
+    }
+
+    @keyframes driftB {
+      from {
+        transform: translate(0, 0) scale(1);
+      }
+
+      to {
+        transform: translate(-4vw, -3vh) scale(1.08);
+      }
     }
 
     .app-container {
@@ -61,6 +138,8 @@
       align-items: center;
       animation: fadeIn 0.3s ease-out;
       box-sizing: border-box;
+      position: relative;
+      z-index: 1;
     }
 
     @keyframes fadeIn {
@@ -84,6 +163,40 @@
       100% {
         transform: scale(1);
         opacity: 1;
+      }
+    }
+
+    @keyframes ringPulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(var(--ring-rgb, var(--success-rgb)), 0.45);
+      }
+
+      70% {
+        box-shadow: 0 0 0 8px rgba(var(--ring-rgb, var(--success-rgb)), 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(var(--ring-rgb, var(--success-rgb)), 0);
+      }
+    }
+
+    @keyframes scanSweep {
+      0% {
+        top: 6%;
+        opacity: 0;
+      }
+
+      10% {
+        opacity: 1;
+      }
+
+      90% {
+        opacity: 1;
+      }
+
+      100% {
+        top: 92%;
+        opacity: 0;
       }
     }
 
@@ -128,6 +241,7 @@
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
       border: 1px solid rgba(255, 255, 255, 0.05);
       box-sizing: border-box;
+      animation: fadeIn 0.3s ease-out;
     }
 
     .btn-back {
@@ -194,6 +308,8 @@
     .net-excellent {
       background: var(--success);
       box-shadow: 0 0 6px var(--success);
+      --ring-rgb: var(--success-rgb);
+      animation: ringPulse 2s infinite;
     }
 
     .net-fair {
@@ -250,6 +366,10 @@
       box-sizing: border-box;
       transition: var(--transition);
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    }
+
+    .device-identity:hover {
+      border-color: rgba(0, 210, 255, 0.25);
     }
 
     .device-identity:active {
@@ -324,6 +444,7 @@
       text-overflow: ellipsis;
       white-space: nowrap;
       overflow: hidden;
+      transition: var(--transition);
     }
 
     .camera-selector:focus {
@@ -376,6 +497,66 @@
     #html5-qrcode-anchor-scan-type-change,
     #reader__header_message {
       display: none !important;
+    }
+
+    /* Decorative viewfinder frame — purely cosmetic, sits above the video,
+       never touched by the scanner library (which only manages #reader). */
+    .viewfinder {
+      position: absolute;
+      inset: 8%;
+      z-index: 5;
+      pointer-events: none;
+    }
+
+    .viewfinder .corner {
+      position: absolute;
+      width: 26px;
+      height: 26px;
+      border: 3px solid var(--primary);
+      filter: drop-shadow(0 0 6px rgba(var(--primary-rgb), 0.6));
+      opacity: 0.85;
+    }
+
+    .viewfinder .tl {
+      top: 0;
+      left: 0;
+      border-right: none;
+      border-bottom: none;
+      border-top-left-radius: 6px;
+    }
+
+    .viewfinder .tr {
+      top: 0;
+      right: 0;
+      border-left: none;
+      border-bottom: none;
+      border-top-right-radius: 6px;
+    }
+
+    .viewfinder .bl {
+      bottom: 0;
+      left: 0;
+      border-right: none;
+      border-top: none;
+      border-bottom-left-radius: 6px;
+    }
+
+    .viewfinder .br {
+      bottom: 0;
+      right: 0;
+      border-left: none;
+      border-top: none;
+      border-bottom-right-radius: 6px;
+    }
+
+    .viewfinder .scan-line {
+      position: absolute;
+      left: 4%;
+      right: 4%;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--primary), transparent);
+      box-shadow: 0 0 10px 1px rgba(var(--primary-rgb), 0.7);
+      animation: scanSweep 2.8s ease-in-out infinite;
     }
 
     .permission-overlay {
@@ -530,6 +711,21 @@
       transform: scale(1.15);
     }
 
+    .zoom-slider::-moz-range-thumb {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--primary);
+      cursor: pointer;
+      border: none;
+      box-shadow: 0 0 10px var(--primary-glow);
+      transition: var(--transition);
+    }
+
+    .zoom-slider::-moz-range-thumb:active {
+      transform: scale(1.15);
+    }
+
     .camera-toggle-btn {
       width: 100%;
       padding: 14px;
@@ -604,7 +800,7 @@
     .prefix {
       padding: 14px 0 14px 14px;
       color: var(--text-muted);
-      font-family: monospace;
+      font-family: "SF Mono", "Cascadia Code", monospace;
       font-size: 1.1rem;
       font-weight: 800;
       background: transparent;
@@ -617,7 +813,7 @@
       border: none !important;
       padding: 14px 14px 14px 4px;
       font-size: 1.1rem;
-      font-family: monospace;
+      font-family: "SF Mono", "Cascadia Code", monospace;
       width: 100%;
       box-shadow: none !important;
       outline: none;
@@ -630,7 +826,7 @@
       padding: 14px;
       border-radius: var(--radius-md);
       font-size: 1.1rem;
-      font-family: monospace;
+      font-family: "SF Mono", "Cascadia Code", monospace;
       text-align: center;
       transition: var(--transition);
       box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.3);
@@ -833,10 +1029,80 @@
       color: #000;
       border: 2px solid #ff9100;
     }
+
+    /* --- ACCESSIBILITY & FINE-TUNING --- */
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    [onclick]:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 3px;
+      border-radius: var(--radius-sm);
+    }
+
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.22);
+    }
+
+    @media (max-width: 380px) {
+      .app-container {
+        padding: 8px;
+      }
+
+      .header {
+        padding: 8px 10px;
+      }
+
+      .scanner-box {
+        min-height: 220px;
+      }
+    }
+
+    @media (min-width: 650px) {
+      .app-container {
+        max-width: 520px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+      }
+
+      .viewfinder .scan-line {
+        display: none;
+      }
+    }
   </style>
 </head>
 
 <body>
+  <div class="ambient-bg" aria-hidden="true">
+    <span class="orb orb-cyan"></span>
+    <span class="orb orb-green"></span>
+  </div>
+
   <div class="app-container">
     <div class="header">
       <a href="/" class="btn-back" id="nav-hub-btn">
@@ -898,6 +1164,14 @@
       <div class="scanner-box" id="scanner-box">
         <div id="reader"></div>
 
+        <div class="viewfinder" aria-hidden="true">
+          <span class="corner tl"></span>
+          <span class="corner tr"></span>
+          <span class="corner bl"></span>
+          <span class="corner br"></span>
+          <span class="scan-line"></span>
+        </div>
+
         <div class="permission-overlay" id="permission-overlay">
           <div style="font-size: 2.5rem; margin-bottom: 5px">📸</div>
           <h4>Lens Access Required</h4>
@@ -958,9 +1232,9 @@
     </div>
   </div>
 
-  <div id="result-card"></div>
+  <div id="result-card" role="status" aria-live="polite"></div>
 
-  <div id="device-modal">
+  <div id="device-modal" role="dialog" aria-modal="true">
     <div class="dev-modal-content">
       <h3>Scanner Identity</h3>
       <p style="
@@ -977,7 +1251,7 @@
     </div>
   </div>
 
-  <div id="operator-msg-modal">
+  <div id="operator-msg-modal" role="dialog" aria-modal="true">
     <div class="msg-modal-content">
       <h2 style="margin-top: 0; color: #000; font-size: 1.3rem">
         📨 Hub Message

@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#050608" />
   <title>Kiosk Registration - TDE UP 2026</title>
 
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon/favicon-96x96.png') }}?v=2.6"
@@ -15,17 +16,27 @@
   <meta name="apple-mobile-web-app-title" content="EventHub" />
   <link rel="manifest" href="{{ url_for('static', filename='site.webmanifest') }}?v=2.6" />
 
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"
+    rel="stylesheet" />
+
   <style>
     :root {
       --bg-pure-black: #050608;
       --surface: #10131a;
       --surface-light: #1a1e29;
       --primary: #00d2ff;
+      --primary-rgb: 0, 210, 255;
       --primary-glow: rgba(0, 210, 255, 0.4);
       --success: #00e676;
+      --success-rgb: 0, 230, 118;
       --warning: #ffaa00;
+      --warning-rgb: 255, 170, 0;
       --danger: #ff4444;
+      --danger-rgb: 255, 68, 68;
       --purple: #c792ea;
+      --purple-rgb: 199, 146, 234;
       --text-main: #ffffff;
       --text-muted: #8b93a5;
       --font-ui: "Inter", system-ui, -apple-system, sans-serif;
@@ -37,16 +48,13 @@
       --glass-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
     }
 
+    * {
+      -webkit-tap-highlight-color: transparent;
+    }
+
     body {
       font-family: var(--font-ui);
       background-color: var(--bg-pure-black);
-      background-image:
-        radial-gradient(circle at 50% -20%,
-          rgba(0, 210, 255, 0.12),
-          transparent 50%),
-        radial-gradient(circle at 50% 120%,
-          rgba(0, 230, 118, 0.05),
-          transparent 50%);
       color: var(--text-main);
       margin: 0;
       padding: 0;
@@ -54,8 +62,79 @@
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
+      min-height: 100dvh;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
+      position: relative;
+      isolation: isolate;
+    }
+
+    /* --- AMBIENT ANIMATED BACKGROUND --- */
+    .ambient-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    .orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(90px);
+      will-change: transform;
+    }
+
+    .orb-cyan {
+      width: 46vw;
+      height: 46vw;
+      max-width: 500px;
+      max-height: 500px;
+      background: var(--primary);
+      opacity: 0.15;
+      top: -16%;
+      left: -14%;
+      animation: driftA 24s ease-in-out infinite alternate;
+    }
+
+    .orb-green {
+      width: 36vw;
+      height: 36vw;
+      max-width: 400px;
+      max-height: 400px;
+      background: var(--success);
+      opacity: 0.07;
+      bottom: -16%;
+      right: -10%;
+      animation: driftB 27s ease-in-out infinite alternate;
+    }
+
+    .grain {
+      position: absolute;
+      inset: -10%;
+      opacity: 0.03;
+      mix-blend-mode: overlay;
+      background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    @keyframes driftA {
+      from {
+        transform: translate(0, 0) scale(1);
+      }
+
+      to {
+        transform: translate(5vw, 4vh) scale(1.12);
+      }
+    }
+
+    @keyframes driftB {
+      from {
+        transform: translate(0, 0) scale(1);
+      }
+
+      to {
+        transform: translate(-4vw, -3vh) scale(1.08);
+      }
     }
 
     /* --- COMPACT PRELOADER --- */
@@ -79,14 +158,15 @@
     }
 
     .loader-ring {
-      width: 45px;
-      height: 45px;
-      border: 3px solid rgba(0, 210, 255, 0.15);
-      border-top-color: var(--primary);
+      width: 50px;
+      height: 50px;
       border-radius: 50%;
-      animation: spin 1s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+      background: conic-gradient(from 0deg, transparent, var(--primary));
+      -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+      mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+      animation: spin 0.9s linear infinite;
       margin-bottom: 20px;
-      box-shadow: 0 0 15px rgba(0, 210, 255, 0.2);
+      filter: drop-shadow(0 0 12px rgba(0, 210, 255, 0.5));
     }
 
     .loader-text {
@@ -172,6 +252,30 @@
       }
     }
 
+    @keyframes ringPulse {
+      0% {
+        box-shadow: 0 0 0 0 rgba(var(--ring-rgb, var(--success-rgb)), 0.45);
+      }
+
+      70% {
+        box-shadow: 0 0 0 8px rgba(var(--ring-rgb, var(--success-rgb)), 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(var(--ring-rgb, var(--success-rgb)), 0);
+      }
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: -200% 0;
+      }
+
+      100% {
+        background-position: 200% 0;
+      }
+    }
+
     /* --- LAYOUT --- */
     .app-container {
       width: 100%;
@@ -181,6 +285,8 @@
       flex-direction: column;
       align-items: center;
       box-sizing: border-box;
+      position: relative;
+      z-index: 1;
     }
 
     /* --- COMPACT HEADER --- */
@@ -239,6 +345,7 @@
       letter-spacing: 0.5px;
       background: linear-gradient(to right, #fff, #8b93a5);
       -webkit-background-clip: text;
+      background-clip: text;
       -webkit-text-fill-color: transparent;
     }
 
@@ -279,6 +386,8 @@
     .net-excellent {
       background: var(--success);
       box-shadow: 0 0 8px var(--success);
+      --ring-rgb: var(--success-rgb);
+      animation: ringPulse 2s infinite;
     }
 
     .net-fair {
@@ -347,6 +456,10 @@
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
     }
 
+    .device-identity:active {
+      transform: translateY(0) scale(0.99);
+    }
+
     .device-identity span {
       color: var(--primary);
       font-weight: 800;
@@ -376,6 +489,9 @@
       padding-bottom: 8px;
       text-transform: uppercase;
       letter-spacing: 1.5px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
 
     .section-title:first-child {
@@ -434,6 +550,11 @@
       padding-right: 36px;
     }
 
+    .input-group input:hover:not(:focus):not(:disabled),
+    .input-group select:hover:not(:focus) {
+      border-color: rgba(255, 255, 255, 0.22);
+    }
+
     .input-group input:focus,
     .input-group select:focus {
       outline: none;
@@ -455,6 +576,31 @@
     .input-group select.err {
       border-color: var(--danger);
       box-shadow: 0 0 0 3px rgba(255, 68, 68, 0.2);
+      animation: shakeErr 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97);
+    }
+
+    @keyframes shakeErr {
+
+      10%,
+      90% {
+        transform: translateX(-1px);
+      }
+
+      20%,
+      80% {
+        transform: translateX(2px);
+      }
+
+      30%,
+      50%,
+      70% {
+        transform: translateX(-3px);
+      }
+
+      40%,
+      60% {
+        transform: translateX(3px);
+      }
     }
 
     .err-msg {
@@ -464,6 +610,7 @@
       min-height: 16px;
       font-weight: 800;
       display: block;
+      transition: color 0.2s;
     }
 
     .msg-info {
@@ -505,11 +652,13 @@
       font-size: 0.9rem;
       color: var(--text-muted);
       box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3);
+      position: relative;
     }
 
     .day-chip-label:hover .chip-content {
       border-color: rgba(0, 210, 255, 0.3);
       color: #fff;
+      transform: translateY(-1px);
     }
 
     .day-chip-label input:checked+.chip-content {
@@ -517,6 +666,12 @@
       border-color: var(--primary);
       color: var(--primary);
       box-shadow: 0 4px 15px var(--primary-glow);
+    }
+
+    .day-chip-label input:checked+.chip-content::before {
+      content: "✓";
+      margin-right: 6px;
+      font-weight: 900;
     }
 
     .btn-submit {
@@ -534,11 +689,27 @@
       box-shadow: 0 6px 20px rgba(0, 210, 255, 0.3);
       text-transform: uppercase;
       letter-spacing: 1px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .btn-submit::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+      background-size: 200% 100%;
+      opacity: 0;
     }
 
     .btn-submit:hover {
       transform: translateY(-2px);
       box-shadow: 0 8px 25px rgba(0, 210, 255, 0.5);
+    }
+
+    .btn-submit:hover::after {
+      opacity: 1;
+      animation: shimmer 1.4s linear infinite;
     }
 
     .btn-submit:active {
@@ -552,6 +723,10 @@
       box-shadow: none;
       cursor: not-allowed;
       transform: none;
+    }
+
+    .btn-submit:disabled::after {
+      display: none;
     }
 
     /* --- TOAST & MODALS (Proportional) --- */
@@ -616,7 +791,7 @@
     .modal-id {
       font-size: 2rem;
       color: #ffffff;
-      font-family: monospace;
+      font-family: "SF Mono", "Cascadia Code", monospace;
       font-weight: 900;
       margin: 20px 0;
       background: rgba(0, 0, 0, 0.5);
@@ -625,6 +800,7 @@
       letter-spacing: 2px;
       border: 1px solid rgba(255, 255, 255, 0.1);
       box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
+      animation: pulseBg 2s infinite;
     }
 
     .dev-modal-content {
@@ -724,6 +900,35 @@
       transform: scale(1);
     }
 
+    /* --- ACCESSIBILITY & FINE-TUNING --- */
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    [onclick]:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 3px;
+      border-radius: var(--radius-sm);
+    }
+
+    ::-webkit-scrollbar {
+      width: 10px;
+      height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.22);
+    }
+
     @media (max-width: 768px) {
       .header {
         padding: 12px 14px;
@@ -739,10 +944,48 @@
         padding: 14px;
       }
     }
+
+    @media (max-width: 380px) {
+      .app-container {
+        padding: 10px 8px 30px 8px;
+      }
+
+      .form-container {
+        padding: 16px 12px;
+      }
+
+      .header {
+        padding: 10px 12px;
+      }
+    }
+
+    @media (min-width: 1000px) {
+      .app-container {
+        max-width: 820px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
   </style>
 </head>
 
 <body>
+  <div class="ambient-bg" aria-hidden="true">
+    <span class="orb orb-cyan"></span>
+    <span class="orb orb-green"></span>
+    <div class="grain"></div>
+  </div>
+
   <!-- Smooth Compact Preloader -->
   <div id="preloader">
     <div class="loader-ring"></div>
@@ -896,9 +1139,9 @@
     </div>
   </div>
 
-  <div id="toast">Error Message</div>
+  <div id="toast" role="status" aria-live="polite">Error Message</div>
 
-  <div id="success-modal">
+  <div id="success-modal" role="dialog" aria-modal="true">
     <div class="modal-content" id="modal-box">
       <h2 id="modal-title" style="margin-top: 0; font-weight: 900; font-size: 1.6rem">
         Registration Saved!
@@ -931,7 +1174,7 @@
     </div>
   </div>
 
-  <div id="device-modal">
+  <div id="device-modal" role="dialog" aria-modal="true">
     <div class="dev-modal-content">
       <h3>Identify Kiosk</h3>
       <p style="
@@ -948,7 +1191,7 @@
     </div>
   </div>
 
-  <div id="operator-msg-modal">
+  <div id="operator-msg-modal" role="dialog" aria-modal="true">
     <div class="msg-modal-content">
       <h2 style="margin-top: 0; color: #000; font-size: 1.3rem">
         📨 Hub Message
