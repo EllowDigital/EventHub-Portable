@@ -10,6 +10,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import urllib3
 import ctypes
+from collections import OrderedDict
 from datetime import datetime
 
 from sqlalchemy import create_engine, text
@@ -47,9 +48,9 @@ EXPLORER_CONFIG = os.path.join(CONFIG_DIR, 'explorer.json')
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 os.makedirs(CONFIG_DIR, exist_ok=True)
 
-# Theme Colors Map
 COLORS = {
     "PRIMARY": "#375a7f",
+    "PRIMARY_HOVER": "#4a739e",
     "INFO": "#0dcaf0",
     "SUCCESS": "#00bc8c",
     "WARNING": "#f39c12",
@@ -58,8 +59,10 @@ COLORS = {
     "PURPLE": "#9b59b6",
     "BG_DARK": "#141414",
     "CARD_BG": "#242424",
+    "CARD_BG_ALT": "#1c1c1c",
     "BORDER": "#333333",
-    "TEXT": "#e0e0e0"
+    "TEXT": "#e0e0e0",
+    "TEXT_MUTED": "#8a8a8a",
 }
 
 
@@ -92,12 +95,9 @@ class APIRecord:
         except Exception:
             self.created_at = datetime.min
 
-# ==============================================================================
-# UI COMPONENTS
-# ==============================================================================
-
 
 class ProfileImageLabel(QLabel):
+
     def __init__(self):
         super().__init__()
         self.setAlignment(Qt.AlignCenter)
@@ -106,19 +106,26 @@ class ProfileImageLabel(QLabel):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._original_pixmap = None
 
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(30)
+        self._resize_timer.timeout.connect(self._update_pixmap)
+
     def set_image(self, pixmap):
         self._original_pixmap = pixmap
         self._update_pixmap()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._update_pixmap()
+        self._resize_timer.start()
 
     def _update_pixmap(self):
         if not self._original_pixmap or self._original_pixmap.isNull():
             super().setPixmap(QPixmap())
             return
         size = min(self.width(), self.height())
+        if size <= 0:
+            return
         scaled = self._original_pixmap.scaled(
             size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         super().setPixmap(scaled)
@@ -128,7 +135,8 @@ class DatabaseConfigDialog(QDialog):
     def __init__(self, parent, current_uri, on_save_callback):
         super().__init__(parent)
         self.setWindowTitle("MySQL Database Configuration")
-        self.setFixedSize(450, 420)
+        self.setMinimumSize(450, 420)
+        self.resize(450, 420)
         self.on_save_callback = on_save_callback
 
         host, port, user, pwd, db = "localhost", "3306", "root", "", "tde_database"
@@ -152,7 +160,7 @@ class DatabaseConfigDialog(QDialog):
         layout.addWidget(lbl_title)
 
         lbl_sub = QLabel("Enter your database credentials below.")
-        lbl_sub.setStyleSheet("color: gray;")
+        lbl_sub.setStyleSheet(f"color: {COLORS['TEXT_MUTED']};")
         layout.addWidget(lbl_sub)
         layout.addSpacing(15)
 
@@ -172,14 +180,17 @@ class DatabaseConfigDialog(QDialog):
         btn_test = QPushButton("Test Connection")
         btn_test.setStyleSheet(
             f"border: 1px solid {COLORS['INFO']}; color: {COLORS['INFO']}; background: transparent; padding: 6px;")
+        btn_test.setCursor(Qt.PointingHandCursor)
         btn_test.clicked.connect(self.test_connection)
 
         btn_cancel = QPushButton("Cancel")
+        btn_cancel.setCursor(Qt.PointingHandCursor)
         btn_cancel.clicked.connect(self.reject)
 
         btn_save = QPushButton("Save Settings")
         btn_save.setStyleSheet(
             f"background-color: {COLORS['SUCCESS']}; color: white; padding: 6px; font-weight: bold;")
+        btn_save.setCursor(Qt.PointingHandCursor)
         btn_save.clicked.connect(self.save_settings)
 
         btn_layout.addWidget(btn_test)
@@ -226,18 +237,17 @@ class DatabaseConfigDialog(QDialog):
         self.on_save_callback(uri)
         self.accept()
 
-# ==============================================================================
-# MAIN APPLICATION
-# ==============================================================================
-
 
 class AttendeeExplorer(QMainWindow):
+    PHOTO_RENDER_SIDE = 320
+    PHOTO_CACHE_LIMIT = 80
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(
             "EventHub Portable (v2.6) — Attendee Explorer (TDE UP 2026)")
         self.resize(1400, 900)
-        self.setMinimumSize(1150, 750)
+        self.setMinimumSize(1080, 700)
 
         icon_path = os.path.join(BASE_DIR, "assets", "EventHub.ico")
         if os.path.exists(icon_path):
@@ -255,6 +265,9 @@ class AttendeeExplorer(QMainWindow):
         self.current_page = 1
         self.page_size = 100
         self.total_pages = 1
+
+        self._photo_cache = OrderedDict()
+        self._photo_request_token = 0
 
         self.api_session = requests.Session()
         retries = Retry(total=5, backoff_factor=0.5, status_forcelist=[
@@ -280,12 +293,33 @@ class AttendeeExplorer(QMainWindow):
         self.setStyleSheet(f"""
             QMainWindow, QWidget {{ background-color: {COLORS['BG_DARK']}; color: {COLORS['TEXT']}; font-family: 'Segoe UI', Arial; font-size: 10pt; }}
             QFrame#Card {{ background-color: {COLORS['CARD_BG']}; border: 1px solid {COLORS['BORDER']}; border-radius: 6px; }}
+            QFrame#Toolbar {{ background-color: {COLORS['CARD_BG_ALT']}; border: 1px solid {COLORS['BORDER']}; border-radius: 6px; }}
             QFrame#Flat {{ background-color: {COLORS['CARD_BG']}; border: none; }}
             QLabel {{ background: transparent; border: none; }}
             QLineEdit, QComboBox {{ background-color: #1a1a1a; border: 1px solid #444; color: white; border-radius: 4px; padding: 6px; }}
-            QLineEdit:focus, QComboBox:focus {{ border: 1px solid {COLORS['PRIMARY']}; }}
+            QLineEdit:focus, QComboBox:focus {{ border: 1px solid {COLORS['PRIMARY']}; outline: none; }}
+            QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox QAbstractItemView {{
+                background-color: #1a1a1a;
+                color: {COLORS['TEXT']};
+                border: 1px solid {COLORS['BORDER']};
+                selection-background-color: {COLORS['PRIMARY']};
+                selection-color: white;
+                outline: none;
+                padding: 4px;
+            }}
+            QCheckBox {{ spacing: 8px; }}
+            QCheckBox::indicator {{
+                width: 16px; height: 16px;
+                border: 1px solid #555;
+                border-radius: 3px;
+                background: #1a1a1a;
+            }}
+            QCheckBox::indicator:hover {{ border: 1px solid {COLORS['PRIMARY']}; }}
+            QCheckBox::indicator:checked {{ background-color: {COLORS['SUCCESS']}; border: 1px solid {COLORS['SUCCESS']}; }}
             QPushButton {{ background-color: #333; color: white; border: 1px solid #555; padding: 6px 12px; border-radius: 4px; font-weight: bold; }}
             QPushButton:hover {{ background-color: #444; }}
+            QPushButton:pressed {{ background-color: #2a2a2a; }}
             QPushButton:disabled {{ background-color: #222; color: #666; border: 1px solid #333; }}
             QTableWidget {{ 
                 background-color: {COLORS['CARD_BG']}; 
@@ -307,9 +341,22 @@ class AttendeeExplorer(QMainWindow):
             }}
             QScrollBar:vertical {{ background: #1a1a1a; width: 14px; border-radius: 7px; }}
             QScrollBar::handle:vertical {{ background: #444; min-height: 20px; border-radius: 7px; margin: 2px; }}
+            QScrollBar::handle:vertical:hover {{ background: #555; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+            QScrollBar:horizontal {{ background: #1a1a1a; height: 14px; border-radius: 7px; }}
+            QScrollBar::handle:horizontal {{ background: #444; min-width: 20px; border-radius: 7px; margin: 2px; }}
+            QScrollBar::handle:horizontal:hover {{ background: #555; }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
             QSplitter::handle {{ background-color: {COLORS['BORDER']}; width: 3px; }}
+            QSplitter::handle:hover {{ background-color: {COLORS['PRIMARY']}; }}
             QScrollArea {{ border: none; background: transparent; }}
+            QToolTip {{
+                background-color: #1a1a1a;
+                color: {COLORS['TEXT']};
+                border: 1px solid {COLORS['BORDER']};
+                padding: 4px 8px;
+                border-radius: 4px;
+            }}
         """)
 
     def connect_db(self):
@@ -401,33 +448,49 @@ class AttendeeExplorer(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(25, 25, 25, 25)
 
-        # HEADER - Uses standard addStretch to elegantly divide sections without squishing
         header_row = QHBoxLayout()
         title_box = QVBoxLayout()
+        title_box.setSpacing(2)
         t1 = QLabel("Attendee Explorer")
         t1.setFont(QFont("Segoe UI", 26, QFont.Bold))
         t1.setStyleSheet(f"color: {COLORS['PRIMARY']}; border: none;")
         t2 = QLabel("SEARCH, INSPECT & EXPORT PROFILES")
         t2.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        t2.setStyleSheet(f"color: {COLORS['SECONDARY']}; border: none;")
+        t2.setStyleSheet(f"color: {COLORS['TEXT_MUTED']}; border: none;")
         title_box.addWidget(t1)
         title_box.addWidget(t2)
-
         header_row.addLayout(title_box)
-        header_row.addStretch(1)  # Pushes the action box to the right natively
+        header_row.addStretch(1)
 
-        # Action Box config - Strict size enforcement prevents UI truncation
-        action_box = QHBoxLayout()
-        action_box.setSpacing(12)
-        action_box.setAlignment(Qt.AlignBottom | Qt.AlignRight)
-
-        self.lbl_record_count = QLabel("Loading records...")
-        self.lbl_record_count.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        self.lbl_record_count.setStyleSheet(f"color: {COLORS['INFO']};")
+        status_box = QVBoxLayout()
+        status_box.setSpacing(4)
+        status_box.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self.lbl_conn_status = QLabel("● Syncing...")
         self.lbl_conn_status.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self.lbl_conn_status.setStyleSheet(f"color: {COLORS['SECONDARY']};")
+        self.lbl_conn_status.setAlignment(Qt.AlignRight)
+
+        self.lbl_record_count = QLabel("Loading records...")
+        self.lbl_record_count.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        self.lbl_record_count.setStyleSheet(f"color: {COLORS['INFO']};")
+        self.lbl_record_count.setAlignment(Qt.AlignRight)
+
+        status_box.addWidget(self.lbl_conn_status)
+        status_box.addWidget(self.lbl_record_count)
+        header_row.addLayout(status_box)
+        main_layout.addLayout(header_row)
+        main_layout.addSpacing(12)
+
+        toolbar_card = QFrame()
+        toolbar_card.setObjectName("Toolbar")
+        t_lyt = QHBoxLayout(toolbar_card)
+        t_lyt.setContentsMargins(14, 10, 14, 10)
+        t_lyt.setSpacing(10)
+
+        lbl_source = QLabel("Source:")
+        lbl_source.setStyleSheet(
+            f"color: {COLORS['TEXT_MUTED']}; font-weight: bold;")
 
         self.combo_source = QComboBox()
         self.combo_source.addItems(
@@ -448,6 +511,7 @@ class AttendeeExplorer(QMainWindow):
 
         self.chk_auto = QCheckBox("Auto-Refresh")
         self.chk_auto.setChecked(True)
+        self.chk_auto.setCursor(Qt.PointingHandCursor)
 
         btn_export = QPushButton("📥 Export CSV")
         btn_export.setStyleSheet(
@@ -455,22 +519,37 @@ class AttendeeExplorer(QMainWindow):
         btn_export.clicked.connect(self.export_csv)
 
         self.btn_refresh = QPushButton("⟳ Refresh Data")
-        self.btn_refresh.setStyleSheet(
-            f"background-color: {COLORS['PRIMARY']}; color: white;")
+        self.btn_refresh.setStyleSheet(f"""
+            QPushButton {{ background-color: {COLORS['PRIMARY']}; color: white; border: 1px solid {COLORS['PRIMARY']}; }}
+            QPushButton:hover {{ background-color: {COLORS['PRIMARY_HOVER']}; border: 1px solid {COLORS['PRIMARY_HOVER']}; }}
+            QPushButton:pressed {{ background-color: #2c4763; border: 1px solid #2c4763; }}
+            QPushButton:disabled {{ background-color: #223347; color: #7f97ab; border: 1px solid #223347; }}
+        """)
         self.btn_refresh.clicked.connect(
             lambda: self.load_data_async(is_manual=True))
 
-        # Enforce Minimum policy: Qt will calculate text size + padding and physically prohibit shrinking below it
-        for w in [self.lbl_record_count, self.lbl_conn_status, self.combo_source, btn_db_cfg, btn_api_cfg, self.chk_auto, btn_export, self.btn_refresh]:
+        for w in [lbl_source, self.combo_source, btn_db_cfg, btn_api_cfg, self.chk_auto,
+                  btn_export, self.btn_refresh]:
             w.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-            action_box.addWidget(w)
+        for w in [btn_db_cfg, btn_api_cfg, btn_export, self.btn_refresh]:
+            w.setCursor(Qt.PointingHandCursor)
 
-        header_row.addLayout(action_box)
-        main_layout.addLayout(header_row)
+        t_lyt.addWidget(lbl_source)
+        t_lyt.addWidget(self.combo_source)
+        t_lyt.addSpacing(6)
+        t_lyt.addWidget(btn_db_cfg)
+        t_lyt.addWidget(btn_api_cfg)
+        t_lyt.addSpacing(6)
+        t_lyt.addWidget(self.chk_auto)
+        t_lyt.addStretch(1)
+        t_lyt.addWidget(btn_export)
+        t_lyt.addWidget(self.btn_refresh)
+
+        main_layout.addWidget(toolbar_card)
         main_layout.addSpacing(15)
 
-        # STATS ROW
         stats_frame = QHBoxLayout()
+        stats_frame.setSpacing(15)
         self.lbl_stat_gen = self._build_mini_stat(
             stats_frame, "GENERAL PASS", COLORS["PRIMARY"])
         self.lbl_stat_biz = self._build_mini_stat(
@@ -482,15 +561,14 @@ class AttendeeExplorer(QMainWindow):
         main_layout.addLayout(stats_frame)
         main_layout.addSpacing(15)
 
-        # RESPONSIVE SPLITTER
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
 
-        # Left Panel (Table & Filters)
         left_widget = QWidget()
+        left_widget.setMinimumWidth(400)
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 10, 0)
 
-        # Filters
         filter_card = QFrame()
         filter_card.setObjectName("Card")
         f_lyt = QHBoxLayout(filter_card)
@@ -501,29 +579,40 @@ class AttendeeExplorer(QMainWindow):
         self.ent_search = QLineEdit()
         self.ent_search.setPlaceholderText(
             "Search names, IDs, email, mobile...")
+        self.ent_search.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.ent_search.textChanged.connect(lambda: self.apply_filters())
 
         lbl_t = QLabel("Type:")
-        lbl_t.setStyleSheet("color: gray; font-weight: bold;")
+        lbl_t.setStyleSheet(
+            f"color: {COLORS['TEXT_MUTED']}; font-weight: bold;")
         self.combo_type = QComboBox()
         self.combo_type.addItems(
             ["All Types", "GENERAL", "BUSINESS", "MEDIA", "EXHIBITOR"])
         self.combo_type.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.combo_type.setSizePolicy(
+            QSizePolicy.Minimum, QSizePolicy.Fixed)
         self.combo_type.currentIndexChanged.connect(
             lambda: self.apply_filters())
 
         lbl_sort = QLabel("Sort By:")
-        lbl_sort.setStyleSheet("color: gray; font-weight: bold;")
+        lbl_sort.setStyleSheet(
+            f"color: {COLORS['TEXT_MUTED']}; font-weight: bold;")
         self.combo_sort = QComboBox()
         self.combo_sort.addItems(
             ["Latest First", "Oldest First", "Name (A-Z)", "Name (Z-A)"])
         self.combo_sort.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.combo_sort.setSizePolicy(
+            QSizePolicy.Minimum, QSizePolicy.Fixed)
         self.combo_sort.currentIndexChanged.connect(
             lambda: self.apply_filters())
 
         btn_clear = QPushButton("Clear Filters")
+        btn_clear.setCursor(Qt.PointingHandCursor)
         btn_clear.setStyleSheet(
-            "background: transparent; color: #888; border: none; text-decoration: underline;")
+            f"QPushButton {{ background: transparent; color: {COLORS['TEXT_MUTED']}; border: none; text-decoration: underline; padding: 4px; }}"
+            f"QPushButton:hover {{ color: {COLORS['TEXT']}; }}"
+        )
         btn_clear.clicked.connect(self.clear_filters)
 
         for w in [lbl_s, self.ent_search, lbl_t, self.combo_type, lbl_sort, self.combo_sort]:
@@ -533,38 +622,44 @@ class AttendeeExplorer(QMainWindow):
         f_lyt.addWidget(btn_clear)
         left_layout.addWidget(filter_card)
 
-        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
             ["ATTENDEE ID", "FULL NAME", "MOBILE", "TYPE", "CITY", "CLOUD SYNC"])
 
+        self._column_resize_modes = [
+            QHeaderView.ResizeToContents,
+            QHeaderView.Stretch,
+            QHeaderView.ResizeToContents,
+            QHeaderView.ResizeToContents,
+            QHeaderView.Stretch,
+            QHeaderView.ResizeToContents,
+        ]
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        for col, mode in enumerate(self._column_resize_modes):
+            header.setSectionResizeMode(col, mode)
 
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.table.verticalHeader().setDefaultSectionSize(34)
         self.table.horizontalHeader().sectionClicked.connect(self.sort_table_column)
         self.table.itemSelectionChanged.connect(self.on_row_select)
 
         left_layout.addWidget(self.table, 1)
 
-        # Pagination
         pagi_card = QFrame()
         pagi_card.setObjectName("Card")
         p_lyt = QHBoxLayout(pagi_card)
         p_lyt.setContentsMargins(10, 10, 10, 10)
 
         lbl_rpp = QLabel("Rows per page:")
-        lbl_rpp.setStyleSheet("color: gray; font-weight: bold;")
+        lbl_rpp.setStyleSheet(
+            f"color: {COLORS['TEXT_MUTED']}; font-weight: bold;")
         self.combo_page_size = QComboBox()
         self.combo_page_size.addItems(
             ["50", "100", "500", "1000", "1500", "2000"])
@@ -588,6 +683,7 @@ class AttendeeExplorer(QMainWindow):
         for btn in [self.btn_first, self.btn_prev, self.btn_next, self.btn_last]:
             btn.setStyleSheet(
                 "background: transparent; color: #e0e0e0; border: 1px solid #555;")
+            btn.setCursor(Qt.PointingHandCursor)
 
         p_lyt.addWidget(lbl_rpp)
         p_lyt.addWidget(self.combo_page_size)
@@ -605,7 +701,6 @@ class AttendeeExplorer(QMainWindow):
 
         self.splitter.addWidget(left_widget)
 
-        # Right Panel Container
         right_panel = QFrame()
         right_panel.setObjectName("Card")
         right_panel.setMinimumWidth(350)
@@ -623,12 +718,13 @@ class AttendeeExplorer(QMainWindow):
 
         lbl_p_title = QLabel("ATTENDEE PROFILE")
         lbl_p_title.setStyleSheet(
-            "color: gray; font-weight: bold; font-size: 12px;")
+            f"color: {COLORS['TEXT_MUTED']}; font-weight: bold; font-size: 12px;")
         r_lyt.addWidget(lbl_p_title)
 
         self.lbl_photo = ProfileImageLabel()
         self.lbl_photo.setText("Select an attendee to\nview profile details.")
-        self.lbl_photo.setStyleSheet("color: gray; font-size: 11px;")
+        self.lbl_photo.setStyleSheet(
+            f"color: {COLORS['TEXT_MUTED']}; font-size: 11px;")
         r_lyt.addWidget(self.lbl_photo, 0, Qt.AlignCenter)
 
         self.lbl_profile_name = QLabel("--")
@@ -652,10 +748,10 @@ class AttendeeExplorer(QMainWindow):
         self.btn_copy_id.setToolTip("Copy Attendee ID")
         self.btn_copy_id.setStyleSheet(
             f"background: #333333; color: {COLORS['INFO']}; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
-        # No fixed width applied. Minimum policy guarantees text will fit perfectly regardless of scale.
         self.btn_copy_id.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        self.btn_copy_id.clicked.connect(lambda *args: QApplication.clipboard().setText(
-            self.lbl_profile_id.text()) if self.lbl_profile_id.text() != "--" else None)
+        self.btn_copy_id.setCursor(Qt.PointingHandCursor)
+        self.btn_copy_id.clicked.connect(
+            lambda: self._copy_to_clipboard(self.lbl_profile_id.text(), self.btn_copy_id))
 
         id_row.addWidget(self.lbl_profile_id, stretch=1)
         id_row.addWidget(self.btn_copy_id, stretch=0)
@@ -663,11 +759,9 @@ class AttendeeExplorer(QMainWindow):
 
         badge_row = QHBoxLayout()
         self.lbl_badge_type = QLabel("TYPE")
-        self.lbl_badge_type.setStyleSheet(
-            "background-color: #555; color: white; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10px;")
+        self._style_status_badge(self.lbl_badge_type, "#555555")
         self.lbl_badge_sync = QLabel("SYNC")
-        self.lbl_badge_sync.setStyleSheet(
-            "background-color: #555; color: white; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10px;")
+        self._style_status_badge(self.lbl_badge_sync, "#555555")
         badge_row.addWidget(self.lbl_badge_type)
         badge_row.addWidget(self.lbl_badge_sync)
         badge_row.addStretch()
@@ -688,9 +782,9 @@ class AttendeeExplorer(QMainWindow):
             row.setAlignment(Qt.AlignTop)
 
             lf = QLabel(f.upper())
-            lf.setMinimumWidth(90)  # Prevents title overlap in small windows
+            lf.setMinimumWidth(90)
             lf.setStyleSheet(
-                "color: gray; font-weight: bold; font-size: 11px;")
+                f"color: {COLORS['TEXT_MUTED']}; font-weight: bold; font-size: 11px;")
 
             lv = QLabel("--")
             lv.setWordWrap(True)
@@ -708,8 +802,9 @@ class AttendeeExplorer(QMainWindow):
                     f"background: #333333; color: {COLORS['INFO']}; border-radius: 4px; padding: 4px 10px; font-weight: bold;")
                 btn_copy_mob.setSizePolicy(
                     QSizePolicy.Minimum, QSizePolicy.Fixed)
-                btn_copy_mob.clicked.connect(lambda *args, label=lv: QApplication.clipboard(
-                ).setText(label.text()) if label.text() != "--" else None)
+                btn_copy_mob.setCursor(Qt.PointingHandCursor)
+                btn_copy_mob.clicked.connect(
+                    lambda *_, label=lv, btn=btn_copy_mob: self._copy_to_clipboard(label.text(), btn))
                 row.addWidget(btn_copy_mob, stretch=0)
 
             r_lyt.addLayout(row)
@@ -728,16 +823,21 @@ class AttendeeExplorer(QMainWindow):
 
         self.splitter.addWidget(right_panel)
         self.splitter.setSizes([950, 400])
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
         main_layout.addWidget(self.splitter, 1)
 
     def _build_mini_stat(self, parent_layout, title, color):
         card = QFrame()
         card.setObjectName("Card")
+        card.setStyleSheet(f"QFrame#Card {{ border-top: 3px solid {color}; }}")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lyt = QVBoxLayout(card)
-        lyt.setContentsMargins(20, 12, 20, 12)
+        lyt.setContentsMargins(20, 14, 20, 14)
 
         t_lbl = QLabel(title)
-        t_lbl.setStyleSheet("color: gray; font-weight: bold; font-size: 11px;")
+        t_lbl.setStyleSheet(
+            f"color: {COLORS['TEXT_MUTED']}; font-weight: bold; font-size: 11px;")
         lyt.addWidget(t_lbl)
 
         v_lbl = QLabel("0")
@@ -747,6 +847,25 @@ class AttendeeExplorer(QMainWindow):
 
         parent_layout.addWidget(card)
         return v_lbl
+
+    def _style_status_badge(self, label, color):
+        label.setStyleSheet(
+            f"background-color: {color}; color: white; padding: 4px 10px; "
+            f"border-radius: 4px; font-weight: bold; font-size: 10px;")
+
+    def _copy_to_clipboard(self, value, button):
+        if not value or value == "--":
+            return
+        QApplication.clipboard().setText(value)
+        original_text = button.text()
+        button.setEnabled(False)
+        button.setText("✓ Copied")
+        QTimer.singleShot(
+            1200, lambda: self._restore_copy_button(button, original_text))
+
+    def _restore_copy_button(self, button, original_text):
+        button.setText(original_text)
+        button.setEnabled(True)
 
     def _process_gui_queue(self):
         for _ in range(50):
@@ -985,64 +1104,84 @@ class AttendeeExplorer(QMainWindow):
             self.render_page()
 
     def render_page(self, preserve_selection=None):
-        self.table.setRowCount(0)
-        self.table.clearSpans()
+        header = self.table.horizontalHeader()
+        self.table.setUpdatesEnabled(False)
+        try:
+            for col in range(self.table.columnCount()):
+                header.setSectionResizeMode(col, QHeaderView.Interactive)
 
-        total_items = len(self.filtered_attendees)
-        if total_items == 0:
-            self.lbl_page_info.setText("Page 0 of 0 (0 records)")
-            self.lbl_record_count.setText("Showing 0 records")
-            for btn in [self.btn_first, self.btn_prev, self.btn_next, self.btn_last]:
-                btn.setEnabled(False)
-            return
+            self.table.setRowCount(0)
+            self.table.clearSpans()
 
-        self.total_pages = max(
-            1, (total_items + self.page_size - 1) // self.page_size)
-        if self.current_page > self.total_pages:
-            self.current_page = self.total_pages
-        if self.current_page < 1:
-            self.current_page = 1
+            total_items = len(self.filtered_attendees)
+            if total_items == 0:
+                self.table.setRowCount(1)
+                empty_item = QTableWidgetItem(
+                    "No matching records. Try adjusting your search or filters.")
+                empty_item.setTextAlignment(Qt.AlignCenter)
+                empty_item.setForeground(QBrush(QColor(COLORS["TEXT_MUTED"])))
+                self.table.setSpan(0, 0, 1, self.table.columnCount())
+                self.table.setItem(0, 0, empty_item)
 
-        start_idx = (self.current_page - 1) * self.page_size
-        end_idx = min(start_idx + self.page_size, total_items)
-        page_items = self.filtered_attendees[start_idx:end_idx]
+                self.lbl_page_info.setText("Page 0 of 0 (0 records)")
+                self.lbl_record_count.setText("Showing 0 records")
+                for btn in [self.btn_first, self.btn_prev, self.btn_next, self.btn_last]:
+                    btn.setEnabled(False)
+                return
 
-        self.table.setRowCount(len(page_items))
-        target_row_idx = -1
+            self.total_pages = max(
+                1, (total_items + self.page_size - 1) // self.page_size)
+            if self.current_page > self.total_pages:
+                self.current_page = self.total_pages
+            if self.current_page < 1:
+                self.current_page = 1
 
-        for i, att in enumerate(page_items):
-            sync_status = "Pending ⏳" if getattr(
-                att, 'needs_cloud_sync', False) else "Synced ✓"
-            att_type = att.attendee_type.name if hasattr(
-                att.attendee_type, 'name') else str(att.attendee_type)
+            start_idx = (self.current_page - 1) * self.page_size
+            end_idx = min(start_idx + self.page_size, total_items)
+            page_items = self.filtered_attendees[start_idx:end_idx]
 
-            row_data = [
-                att.attendee_id, att.full_name, att.mobile, att_type,
-                f"{att.city}, {att.state}", sync_status
-            ]
-            for col, val in enumerate(row_data):
-                item = QTableWidgetItem(str(val))
-                item.setData(Qt.UserRole, att.attendee_id)
-                if col == 5:
-                    item.setForeground(QBrush(
-                        QColor(COLORS["WARNING"] if "Pending" in sync_status else COLORS["SUCCESS"])))
-                self.table.setItem(i, col, item)
+            self.table.setRowCount(len(page_items))
+            target_row_idx = -1
+            pending_brush = QBrush(QColor(COLORS["WARNING"]))
+            synced_brush = QBrush(QColor(COLORS["SUCCESS"]))
 
-            if preserve_selection and att.attendee_id == preserve_selection:
-                target_row_idx = i
+            for i, att in enumerate(page_items):
+                sync_status = "Pending ⏳" if getattr(
+                    att, 'needs_cloud_sync', False) else "Synced ✓"
+                att_type = att.attendee_type.name if hasattr(
+                    att.attendee_type, 'name') else str(att.attendee_type)
 
-        self.lbl_page_info.setText(
-            f"Page {self.current_page} of {self.total_pages:,} (Total: {total_items:,})")
-        self.lbl_record_count.setText(
-            f"Showing {start_idx+1:,}-{end_idx:,} of {total_items:,} records")
+                row_data = [
+                    att.attendee_id, att.full_name, att.mobile, att_type,
+                    f"{att.city}, {att.state}", sync_status
+                ]
+                for col, val in enumerate(row_data):
+                    item = QTableWidgetItem(str(val))
+                    item.setData(Qt.UserRole, att.attendee_id)
+                    if col == 5:
+                        item.setForeground(
+                            pending_brush if "Pending" in sync_status else synced_brush)
+                    self.table.setItem(i, col, item)
 
-        self.btn_first.setEnabled(self.current_page > 1)
-        self.btn_prev.setEnabled(self.current_page > 1)
-        self.btn_next.setEnabled(self.current_page < self.total_pages)
-        self.btn_last.setEnabled(self.current_page < self.total_pages)
+                if preserve_selection and att.attendee_id == preserve_selection:
+                    target_row_idx = i
 
-        if target_row_idx >= 0:
-            self.table.selectRow(target_row_idx)
+            self.lbl_page_info.setText(
+                f"Page {self.current_page} of {self.total_pages:,} (Total: {total_items:,})")
+            self.lbl_record_count.setText(
+                f"Showing {start_idx+1:,}-{end_idx:,} of {total_items:,} records")
+
+            self.btn_first.setEnabled(self.current_page > 1)
+            self.btn_prev.setEnabled(self.current_page > 1)
+            self.btn_next.setEnabled(self.current_page < self.total_pages)
+            self.btn_last.setEnabled(self.current_page < self.total_pages)
+
+            if target_row_idx >= 0:
+                self.table.selectRow(target_row_idx)
+        finally:
+            for col, mode in enumerate(self._column_resize_modes):
+                header.setSectionResizeMode(col, mode)
+            self.table.setUpdatesEnabled(True)
 
     def sort_table_column(self, col):
         if self.current_sort_col == col:
@@ -1093,17 +1232,14 @@ class AttendeeExplorer(QMainWindow):
         }.get(att_type_upper, COLORS["SECONDARY"])
 
         self.lbl_badge_type.setText(att_type_upper)
-        self.lbl_badge_type.setStyleSheet(
-            f"background-color: {type_color}; color: white; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10px;")
+        self._style_status_badge(self.lbl_badge_type, type_color)
 
         if getattr(attendee, 'needs_cloud_sync', False):
             self.lbl_badge_sync.setText("PENDING SYNC")
-            self.lbl_badge_sync.setStyleSheet(
-                f"background-color: {COLORS['WARNING']}; color: white; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10px;")
+            self._style_status_badge(self.lbl_badge_sync, COLORS['WARNING'])
         else:
             self.lbl_badge_sync.setText("CLOUD SYNCED")
-            self.lbl_badge_sync.setStyleSheet(
-                f"background-color: {COLORS['SUCCESS']}; color: white; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 10px;")
+            self._style_status_badge(self.lbl_badge_sync, COLORS['SUCCESS'])
 
         self.profile_labels["Mobile"].setText(attendee.mobile)
         self.profile_labels["Email"].setText(attendee.email or "N/A")
@@ -1137,49 +1273,94 @@ class AttendeeExplorer(QMainWindow):
         self.profile_labels["Check-ins"].setText(checkin_text)
 
         photo_path = os.path.join(PHOTOS_DIR, f"{attendee.attendee_id}.jpg")
-        if os.path.exists(photo_path):
-            self.render_image(photo_path)
-        else:
+        self._load_photo(attendee.attendee_id, photo_path)
+
+    def _load_photo(self, attendee_id, photo_path):
+        cached = self._photo_cache.get(attendee_id)
+        if cached is not None:
+            self._photo_cache.move_to_end(attendee_id)
+            self.lbl_photo.set_image(cached)
+            self.lbl_photo.setText("")
+            return
+
+        if not os.path.exists(photo_path):
             self.lbl_photo.set_image(QPixmap())
             self.lbl_photo.setText("📸\nNo Photo Found")
+            return
 
-    def render_image(self, path):
-        try:
-            pixmap = QPixmap(path)
-            if pixmap.isNull():
-                raise Exception("Invalid image")
+        self._photo_request_token += 1
+        token = self._photo_request_token
+        self.lbl_photo.set_image(QPixmap())
+        self.lbl_photo.setText("Loading photo…")
 
-            side = min(pixmap.width(), pixmap.height())
-            crop_rect = QRect(0, 0, side, side)
-            crop_rect.moveCenter(pixmap.rect().center())
-            cropped = pixmap.copy(crop_rect.intersected(pixmap.rect()))
+        def _worker():
+            try:
+                rounded_image = self._build_rounded_photo(photo_path)
+            except Exception as e:
+                logging.error(f"Failed to load image for profile: {e}")
+                rounded_image = None
+            self.gui_queue.put(
+                lambda: self._finish_photo_load(token, attendee_id, rounded_image))
 
-            final_img = QPixmap(side, side)
-            final_img.fill(Qt.transparent)
+        threading.Thread(target=_worker, daemon=True).start()
 
-            painter = QPainter(final_img)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+    def _build_rounded_photo(self, path):
+        image = QImage(path)
+        if image.isNull():
+            return None
 
-            path = QPainterPath()
-            corner_radius = side * 0.08
-            path.addRoundedRect(0, 0, side, side, corner_radius, corner_radius)
-            painter.setClipPath(path)
-            painter.drawPixmap(0, 0, cropped)
+        side = min(image.width(), image.height())
+        if side > self.PHOTO_RENDER_SIDE:
+            image = image.scaled(
+                max(1, int(image.width() * self.PHOTO_RENDER_SIDE / side)),
+                max(1, int(image.height() * self.PHOTO_RENDER_SIDE / side)),
+                Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            side = min(image.width(), image.height())
 
-            painter.setClipping(False)
-            painter.setPen(QColor(COLORS["BORDER"]))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRoundedRect(
-                0, 0, side-1, side-1, corner_radius, corner_radius)
-            painter.end()
+        crop_rect = QRect(0, 0, side, side)
+        crop_rect.moveCenter(image.rect().center())
+        cropped = image.copy(crop_rect.intersected(image.rect()))
 
-            self.lbl_photo.set_image(final_img)
-            self.lbl_photo.setText("")
-        except Exception as e:
+        rounded = QImage(side, side, QImage.Format_ARGB32_Premultiplied)
+        rounded.fill(Qt.transparent)
+
+        painter = QPainter(rounded)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        clip_path = QPainterPath()
+        corner_radius = side * 0.08
+        clip_path.addRoundedRect(
+            0, 0, side, side, corner_radius, corner_radius)
+        painter.setClipPath(clip_path)
+        painter.drawImage(0, 0, cropped)
+
+        painter.setClipping(False)
+        painter.setPen(QColor(COLORS["BORDER"]))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(
+            0, 0, side - 1, side - 1, corner_radius, corner_radius)
+        painter.end()
+        return rounded
+
+    def _finish_photo_load(self, token, attendee_id, rounded_image):
+        if token != self._photo_request_token:
+            return
+        if rounded_image is None or rounded_image.isNull():
             self.lbl_photo.set_image(QPixmap())
-            self.lbl_photo.setText(f"Error loading image")
-            logging.error(f"Failed to load image for profile: {e}")
+            self.lbl_photo.setText("Error loading image")
+            return
+        pixmap = QPixmap.fromImage(rounded_image)
+        self._cache_photo(attendee_id, pixmap)
+        self.lbl_photo.set_image(pixmap)
+        self.lbl_photo.setText("")
+
+    def _cache_photo(self, attendee_id, pixmap):
+        cache = self._photo_cache
+        cache[attendee_id] = pixmap
+        cache.move_to_end(attendee_id)
+        while len(cache) > self.PHOTO_CACHE_LIMIT:
+            cache.popitem(last=False)
 
     def export_csv(self):
         if not self.filtered_attendees:
@@ -1227,16 +1408,24 @@ if __name__ == "__main__":
                 "EVENTHUB_TOOL_ID", "EventHub.Tool.explorer")
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
                 my_app_id)
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except Exception:
             pass
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
 
     os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "1"
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
 
-    app = QApplication(sys.argv)
-    app.setHighDpiScaleFactorRoundingPolicy(
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
 
     window = AttendeeExplorer()
     window.show()
