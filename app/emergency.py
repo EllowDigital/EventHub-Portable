@@ -18,7 +18,7 @@ from sqlalchemy.dialects.mysql import insert
 
 # Import database models and configurations directly from schema.py
 from schema import (
-    Attendee, OfflineKioskAttendee, DownloadedPhoto, 
+    Attendee, OfflineKioskAttendee, DownloadedPhoto,
     load_db_config, init_database
 )
 
@@ -35,18 +35,21 @@ class DBValidatorWorker(QThread):
         self.sqlite_path = sqlite_path
 
     def run(self):
-        self.log_signal.emit(f"Validating database file: {self.sqlite_path}...")
-        
+        self.log_signal.emit(
+            f"Validating database file: {self.sqlite_path}...")
+
         # 1. File existence and header validation
         if not os.path.exists(self.sqlite_path):
-            self.validation_done.emit(False, {}, "Selected SQLite file does not exist.")
+            self.validation_done.emit(
+                False, {}, "Selected SQLite file does not exist.")
             return
 
         try:
             with open(self.sqlite_path, 'rb') as f:
                 header = f.read(16)
                 if header != b'SQLite format 3\x00':
-                    self.validation_done.emit(False, {}, "File is not a valid SQLite 3 database.")
+                    self.validation_done.emit(
+                        False, {}, "File is not a valid SQLite 3 database.")
                     return
         except Exception as e:
             self.validation_done.emit(False, {}, f"Unable to read file: {e}")
@@ -55,7 +58,8 @@ class DBValidatorWorker(QThread):
         # 2. SQLite schema and row count verification
         try:
             sqlite_url = f"sqlite:///{os.path.abspath(self.sqlite_path)}"
-            sqlite_engine = create_engine(sqlite_url, connect_args={'check_same_thread': False})
+            sqlite_engine = create_engine(sqlite_url, connect_args={
+                                          'check_same_thread': False})
             sqlite_session = sessionmaker(bind=sqlite_engine)()
 
             inspector = inspect(sqlite_engine)
@@ -71,10 +75,12 @@ class DBValidatorWorker(QThread):
                     count = sqlite_session.query(model).count()
                     stats[tbl_name] = count
                     total_records += count
-                    self.log_signal.emit(f"Found table '{tbl_name}' -> {count:,} rows")
+                    self.log_signal.emit(
+                        f"Found table '{tbl_name}' -> {count:,} rows")
                 else:
                     stats[tbl_name] = 0
-                    self.log_signal.emit(f"Warning: Table '{tbl_name}' not found in source SQLite.")
+                    self.log_signal.emit(
+                        f"Warning: Table '{tbl_name}' not found in source SQLite.")
 
             stats['total_records'] = total_records
             sqlite_session.close()
@@ -82,20 +88,24 @@ class DBValidatorWorker(QThread):
             # 3. Test Target MySQL Connection
             config = load_db_config()
             if not config.get("mysql", {}).get("enabled", False):
-                self.validation_done.emit(False, stats, "MySQL is not enabled in schema.json.")
+                self.validation_done.emit(
+                    False, stats, "MySQL is not enabled in schema.json.")
                 return
 
             my_config = config["mysql"]
             db_name = my_config["database"]
             mysql_url = f"mysql+mysqldb://{my_config['user']}:{my_config['password']}@{my_config['host']}:{my_config['port']}/{db_name}"
-            
-            mysql_session_maker = init_database(mysql_url, db_name=db_name, is_mysql=True)
+
+            mysql_session_maker = init_database(
+                mysql_url, db_name=db_name, is_mysql=True)
             mysql_session = mysql_session_maker()
             mysql_session.execute(text("SELECT 1"))
             mysql_session.close()
 
-            self.log_signal.emit(f"MySQL Hub target database '{db_name}' verified and accessible.")
-            self.validation_done.emit(True, stats, "Validation successful. Ready for restoration.")
+            self.log_signal.emit(
+                f"MySQL Hub target database '{db_name}' verified and accessible.")
+            self.validation_done.emit(
+                True, stats, "Validation successful. Ready for restoration.")
 
         except Exception as e:
             self.log_signal.emit(f"Validation Error: {str(e)}")
@@ -120,23 +130,25 @@ class DatabaseRestoreWorker(QThread):
     def run(self):
         start_time = time.time()
         self.log_signal.emit("Initializing bulk migration engine...")
-        
+
         try:
             # 1. Connect Sources
             sqlite_url = f"sqlite:///{os.path.abspath(self.sqlite_path)}"
-            sqlite_engine = create_engine(sqlite_url, connect_args={'check_same_thread': False})
+            sqlite_engine = create_engine(sqlite_url, connect_args={
+                                          'check_same_thread': False})
             sqlite_db = sessionmaker(bind=sqlite_engine)()
 
             config = load_db_config()
             my_config = config["mysql"]
             db_name = my_config["database"]
             mysql_url = f"mysql+mysqldb://{my_config['user']}:{my_config['password']}@{my_config['host']}:{my_config['port']}/{db_name}"
-            
-            mysql_session_maker = init_database(mysql_url, db_name=db_name, is_mysql=True)
+
+            mysql_session_maker = init_database(
+                mysql_url, db_name=db_name, is_mysql=True)
             mysql_db = mysql_session_maker()
 
             tables_to_sync = [Attendee, OfflineKioskAttendee, DownloadedPhoto]
-            
+
             # Pre-calculate counts
             table_counts = {}
             total_records_all_tables = 0
@@ -149,10 +161,12 @@ class DatabaseRestoreWorker(QThread):
                 total_records_all_tables += count
 
             if total_records_all_tables == 0:
-                self.finished_signal.emit(True, "Source database contains 0 syncable records.")
+                self.finished_signal.emit(
+                    True, "Source database contains 0 syncable records.")
                 return
 
-            self.log_signal.emit(f"Total workload: {total_records_all_tables:,} records across 3 tables.")
+            self.log_signal.emit(
+                f"Total workload: {total_records_all_tables:,} records across 3 tables.")
             records_processed = 0
 
             # 2. Chunk-stream and bulk UPSERT
@@ -165,27 +179,31 @@ class DatabaseRestoreWorker(QThread):
                 if total_table_records == 0:
                     continue
 
-                self.log_signal.emit(f"\n--- Migrating {model.__tablename__} ({total_table_records:,} rows) ---")
-                
+                self.log_signal.emit(
+                    f"\n--- Migrating {model.__tablename__} ({total_table_records:,} rows) ---")
+
                 chunk = []
                 for record in sqlite_db.query(model).yield_per(CHUNK_SIZE):
                     if not self._is_running:
                         break
 
-                    row_dict = {col.name: getattr(record, col.name) for col in model.__table__.columns}
+                    row_dict = {col.name: getattr(
+                        record, col.name) for col in model.__table__.columns}
                     chunk.append(row_dict)
 
                     if len(chunk) >= CHUNK_SIZE:
                         self._process_chunk(mysql_db, model, chunk)
                         records_processed += len(chunk)
-                        
+
                         elapsed = max(time.time() - start_time, 0.001)
                         rps = records_processed / elapsed
-                        progress = int((records_processed / total_records_all_tables) * 100)
+                        progress = int(
+                            (records_processed / total_records_all_tables) * 100)
 
                         self.progress_signal.emit(progress)
                         self.stats_signal.emit(records_processed, rps)
-                        self.log_signal.emit(f"[{records_processed:,}/{total_records_all_tables:,}] Batched {CHUNK_SIZE} rows ({rps:.0f} rows/sec)")
+                        self.log_signal.emit(
+                            f"[{records_processed:,}/{total_records_all_tables:,}] Batched {CHUNK_SIZE} rows ({rps:.0f} rows/sec)")
                         chunk = []
 
                 if chunk and self._is_running:
@@ -193,18 +211,21 @@ class DatabaseRestoreWorker(QThread):
                     records_processed += len(chunk)
                     elapsed = max(time.time() - start_time, 0.001)
                     rps = records_processed / elapsed
-                    progress = int((records_processed / total_records_all_tables) * 100)
-                    
+                    progress = int(
+                        (records_processed / total_records_all_tables) * 100)
+
                     self.progress_signal.emit(progress)
                     self.stats_signal.emit(records_processed, rps)
-                    self.log_signal.emit(f"Completed table {model.__tablename__}.")
+                    self.log_signal.emit(
+                        f"Completed table {model.__tablename__}.")
 
             sqlite_db.close()
             mysql_db.close()
 
             if self._is_running:
                 total_time = time.time() - start_time
-                self.finished_signal.emit(True, f"Successfully restored {records_processed:,} records in {total_time:.2f}s!")
+                self.finished_signal.emit(
+                    True, f"Successfully restored {records_processed:,} records in {total_time:.2f}s!")
             else:
                 self.finished_signal.emit(False, "Operation aborted.")
 
@@ -217,14 +238,15 @@ class DatabaseRestoreWorker(QThread):
         try:
             stmt = insert(model).values(chunk)
             primary_keys = [key.name for key in inspect(model).primary_key]
-            update_dict = {c.name: c for c in stmt.inserted if c.name not in primary_keys}
-            
+            update_dict = {
+                c.name: c for c in stmt.inserted if c.name not in primary_keys}
+
             if update_dict:
                 stmt = stmt.on_duplicate_key_update(**update_dict)
-                
+
             mysql_db.execute(stmt)
             mysql_db.commit()  # Atomically commit if clean
-            
+
         except Exception as e:
             mysql_db.rollback()  # Instantly wipe chunk on failure to prevent partial writes
             raise e
@@ -347,13 +369,14 @@ class ModernRecoveryApp(QWidget):
         # 2. Database Selection Box
         source_box = QGroupBox("Source SQLite Database Location")
         source_layout = QGridLayout(source_box)
-        
+
         self.path_input = QLineEdit()
-        self.path_input.setPlaceholderText("Select any .db3, .sqlite, or .db backup file...")
-        
+        self.path_input.setPlaceholderText(
+            "Select any .db3, .sqlite, or .db backup file...")
+
         browse_btn = QPushButton("📁 Browse")
         browse_btn.clicked.connect(self.browse_file)
-        
+
         self.verify_btn = QPushButton("🔍 Check & Inspect")
         self.verify_btn.setObjectName("VerifyBtn")
         self.verify_btn.clicked.connect(self.run_verification)
@@ -383,7 +406,7 @@ class ModernRecoveryApp(QWidget):
         log_label = QLabel("Live Execution Terminal:")
         log_label.setStyleSheet("color: #8b949e; font-weight: bold;")
         console_header.addWidget(log_label)
-        
+
         clear_btn = QPushButton("Clear")
         clear_btn.setFixedHeight(22)
         clear_btn.setStyleSheet("padding: 2px 8px; font-size: 8pt;")
@@ -410,7 +433,8 @@ class ModernRecoveryApp(QWidget):
 
         self.abort_btn = QPushButton("⏹ Cancel")
         self.abort_btn.setEnabled(False)
-        self.abort_btn.setStyleSheet("background-color: #da3633; color: white;")
+        self.abort_btn.setStyleSheet(
+            "background-color: #da3633; color: white;")
         self.abort_btn.clicked.connect(self.abort_restoration)
 
         btn_layout.addWidget(self.start_btn, 4)
@@ -419,7 +443,8 @@ class ModernRecoveryApp(QWidget):
 
     def _create_metric_card(self, title, default_val):
         frame = QFrame()
-        frame.setStyleSheet("background-color: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 4px;")
+        frame.setStyleSheet(
+            "background-color: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 4px;")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(4, 4, 4, 4)
 
@@ -429,7 +454,8 @@ class ModernRecoveryApp(QWidget):
 
         v_lbl = QLabel(default_val)
         v_lbl.setObjectName("ValLabel")
-        v_lbl.setStyleSheet("color: #58a6ff; font-size: 12pt; font-weight: bold; border: none;")
+        v_lbl.setStyleSheet(
+            "color: #58a6ff; font-size: 12pt; font-weight: bold; border: none;")
         v_lbl.setAlignment(Qt.AlignCenter)
 
         layout.addWidget(t_lbl)
@@ -443,7 +469,7 @@ class ModernRecoveryApp(QWidget):
 
     def browse_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select SQLite Mirror File", "", 
+            self, "Select SQLite Mirror File", "",
             "SQLite Databases (*.db *.sqlite *.sqlite3 *.db3);;All Files (*.*)"
         )
         if file_path:
@@ -457,25 +483,31 @@ class ModernRecoveryApp(QWidget):
     def run_verification(self):
         db_path = self.path_input.text().strip()
         if not db_path:
-            QMessageBox.warning(self, "Path Missing", "Please select or type a path to an SQLite database.")
+            QMessageBox.warning(
+                self, "Path Missing", "Please select or type a path to an SQLite database.")
             return
 
         self.verify_btn.setEnabled(False)
         self.start_btn.setEnabled(False)
         self.console.clear()
-        self.log_message("Starting environment and database integrity check...")
+        self.log_message(
+            "Starting environment and database integrity check...")
 
         self.validator_worker = DBValidatorWorker(db_path)
         self.validator_worker.log_signal.connect(self.log_message)
-        self.validator_worker.validation_done.connect(self.on_validation_finished)
+        self.validator_worker.validation_done.connect(
+            self.on_validation_finished)
         self.validator_worker.start()
 
     def on_validation_finished(self, success, stats, message):
         self.verify_btn.setEnabled(True)
         if success:
-            self._update_card_val(self.card_attendees, f"{stats.get('attendees', 0):,}")
-            self._update_card_val(self.card_kiosk, f"{stats.get('offline_kiosk_attendees', 0):,}")
-            self._update_card_val(self.card_photos, f"{stats.get('downloaded_photos', 0):,}")
+            self._update_card_val(self.card_attendees,
+                                  f"{stats.get('attendees', 0):,}")
+            self._update_card_val(
+                self.card_kiosk, f"{stats.get('offline_kiosk_attendees', 0):,}")
+            self._update_card_val(
+                self.card_photos, f"{stats.get('downloaded_photos', 0):,}")
             self.start_btn.setEnabled(True)
             self.log_message(f"READY: {message}")
         else:
@@ -504,13 +536,14 @@ class ModernRecoveryApp(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.abort_btn.setEnabled(False)
-            self.log_message("Abort signal transmitted. Terminating current batch...")
+            self.log_message(
+                "Abort signal transmitted. Terminating current batch...")
 
     def on_restore_finished(self, success, msg):
         self.start_btn.setEnabled(True)
         self.verify_btn.setEnabled(True)
         self.abort_btn.setEnabled(False)
-        
+
         if success:
             self.log_message(f"SUCCESS: {msg}")
             QMessageBox.information(self, "Restoration Complete", msg)
