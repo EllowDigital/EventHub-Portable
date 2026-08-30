@@ -12,9 +12,6 @@ app/config/*
 # =========================
 # Ignore the live offline databases to prevent merge conflicts and data leaks
 # The .keep file ensures the empty 'db' folder is still copied to new PCs
-app/db/*
-!app/db/.keep
-*.db
 *.sqlite
 *.sqlite3
 
